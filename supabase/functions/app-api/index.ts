@@ -97,6 +97,30 @@ async function auth(sessionToken:unknown,deviceName?:unknown){
   return {session,account};
 }
 
+
+function num(v:unknown){ const n=Number(v); return Number.isFinite(n)?n:0; }
+function stateMetrics(state:any){
+  const s=(state && typeof state==='object' && !Array.isArray(state))?state:{};
+  const days=(s.days && typeof s.days==='object' && !Array.isArray(s.days))?s.days:{};
+  let workSeconds=0,workSessions=0;
+  for(const d of Object.values(days) as any[]){
+    if(!d || typeof d!=='object') continue;
+    workSeconds+=Math.max(0,num(d.workSeconds));
+    workSessions+=Math.max(0,num(d.sessions));
+  }
+  if(!workSessions && s.sessionLog && typeof s.sessionLog==='object'){
+    workSessions=Object.values(s.sessionLog).reduce((sum:number,v:any)=>sum+(Array.isArray(v)?v.length:0),0);
+  }
+  const tasks=Array.isArray(s.tasks)?s.tasks:[];
+  return {
+    workSeconds:Math.round(workSeconds),
+    workSessions:Math.round(workSessions),
+    totalTasks:tasks.length,
+    completedTasks:tasks.filter((t:any)=>!!t?.done).length,
+    events:Array.isArray(s.events)?s.events.length:0
+  };
+}
+
 async function handle(req:Request,body:any){
   const action=String(body?.action||'');
   if(action==='login'){
@@ -138,6 +162,75 @@ async function handle(req:Request,body:any){
     if(disabled) await patch(`app_sessions?account_id=eq.${rows[0].id}`,{revoked:true},false);
     return json({ok:true});
   }
+
+  if(action==='admin-overview'){
+    if(!adminOk(body.adminSecret)) return json({error:'Yönetici anahtarı geçersiz.'},401);
+    const [accounts,sessions,states]=await Promise.all([
+      select('app_accounts?select=id,username,disabled,created_at,last_login_at&order=created_at.desc&limit=500'),
+      select('app_sessions?select=id,account_id,device_name,created_at,last_seen_at,expires_at,revoked&order=last_seen_at.desc&limit=5000'),
+      select('app_states?select=account_id,state,revision,updated_at&limit=500')
+    ]);
+    const now=Date.now(),day=86400000;
+    const sessionsByAccount=new Map<string,any[]>();
+    for(const s of sessions){
+      if(!sessionsByAccount.has(s.account_id))sessionsByAccount.set(s.account_id,[]);
+      sessionsByAccount.get(s.account_id)!.push(s);
+    }
+    const statesByAccount=new Map<string,any>();
+    for(const s of states)statesByAccount.set(s.account_id,s);
+    const uniqueDevices=new Set<string>();
+    let activeSessions=0;
+    for(const s of sessions){
+      uniqueDevices.add(`${s.account_id}\0${String(s.device_name||'Cihaz')}`);
+      if(!s.revoked && new Date(s.expires_at).getTime()>now)activeSessions++;
+    }
+    const activeAccountWithin=(ms:number)=>{
+      const set=new Set<string>();
+      for(const s of sessions){
+        if(new Date(s.last_seen_at).getTime()>=now-ms)set.add(s.account_id);
+      }
+      return set.size;
+    };
+    let totalWorkSeconds=0,totalWorkSessions=0,totalTasks=0,completedTasks=0,totalEvents=0;
+    const users=accounts.map((a:any)=>{
+      const st=statesByAccount.get(a.id)||null, metrics=stateMetrics(st?.state);
+      totalWorkSeconds+=metrics.workSeconds; totalWorkSessions+=metrics.workSessions;
+      totalTasks+=metrics.totalTasks; completedTasks+=metrics.completedTasks; totalEvents+=metrics.events;
+      const devs=(sessionsByAccount.get(a.id)||[]).map((s:any)=>({
+        id:s.id,deviceName:s.device_name,createdAt:s.created_at,lastSeenAt:s.last_seen_at,expiresAt:s.expires_at,
+        revoked:!!s.revoked,expired:new Date(s.expires_at).getTime()<=now
+      }));
+      const activeDeviceCount=devs.filter((d:any)=>!d.revoked&&!d.expired).length;
+      return {...a,username:String(a.username).toUpperCase(),activeDeviceCount,devices:devs,metrics,stateUpdatedAt:st?.updated_at||null,stateRevision:Number(st?.revision||0)};
+    });
+    return json({
+      summary:{
+        totalAccounts:accounts.length,
+        enabledAccounts:accounts.filter((a:any)=>!a.disabled).length,
+        disabledAccounts:accounts.filter((a:any)=>!!a.disabled).length,
+        active24h:activeAccountWithin(day),
+        active7d:activeAccountWithin(7*day),
+        totalDevices:uniqueDevices.size,
+        activeSessions,
+        syncedAccounts:states.length,
+        totalWorkSeconds,
+        totalWorkSessions,
+        totalTasks,
+        completedTasks,
+        totalEvents
+      },
+      users
+    });
+  }
+  if(action==='admin-revoke-session'){
+    if(!adminOk(body.adminSecret)) return json({error:'Yönetici anahtarı geçersiz.'},401);
+    const sessionId=String(body.sessionId||'').trim();
+    if(!sessionId) return json({error:'Oturum kimliği gerekli.'},400);
+    const rows=await patch(`app_sessions?id=eq.${encodeURIComponent(sessionId)}`,{revoked:true});
+    if(!rows.length) return json({error:'Oturum bulunamadı.'},404);
+    return json({ok:true});
+  }
+
   if(action==='list-users'){
     if(!adminOk(body.adminSecret)) return json({error:'Yönetici anahtarı geçersiz.'},401);
     const accounts=await select('app_accounts?select=id,username,disabled,created_at,last_login_at&order=created_at.desc&limit=500');
