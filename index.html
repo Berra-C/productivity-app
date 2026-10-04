@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test</title>
+<meta name="theme-color" content="#0b1d1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Test">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<div class="flash-overlay" id="flashOverlay"></div>
+<div class="achievement-tray" id="achievementTray" aria-live="polite"></div>
+<div class="runtime-error-banner" id="runtimeErrorBanner" role="alert"><span id="runtimeErrorText"></span><button type="button" id="runtimeErrorClose" aria-label="Hata bildirimini kapat">×</button></div>
+<div class="focus-overlay" id="focusOverlay">
+  <button class="focus-close" id="focusCloseBtn" type="button" title="Odak modundan çık">Çık ✕</button>
+  <div class="focus-content">
+    <div class="focus-session-label">Şu anda odaklandığın konu</div>
+    <div class="focus-subject" id="focusSubjectText"></div>
+
+    <div class="focus-current-card" id="focusCurrentCard">
+      <div class="focus-current-kicker">Şimdi yap</div>
+      <div class="focus-task" id="focusTaskText"></div>
+    </div>
+
+    <div class="focus-label">Geçen süre</div>
+    <div class="flip-clock" id="flipClock"></div>
+
+    <div class="focus-target-wrap" id="focusTargetWrap">
+      <div class="focus-target-row">
+        <span id="focusTargetText"></span>
+        <span id="focusTargetPct"></span>
+      </div>
+      <div class="focus-target-bar"><div class="focus-target-fill" id="focusTargetFill"></div></div>
+    </div>
+
+    <div class="focus-state" id="focusSubText"></div>
+
+    <div class="focus-actions">
+      <button class="work-btn active" id="focusPauseBtn" type="button">Duraklat ⏸</button>
+      <button class="work-btn finish focus-finish-btn" id="focusFinishBtn" type="button">Oturumu Bitir ✓</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+  <div class="undo-toast" id="undoToast" role="status" aria-live="polite">
+    <span id="undoToastText"></span>
+    <button id="undoToastBtn" type="button">Geri Al</button>
+  </div>
+<div class="big-reveal" id="bigReveal">
+  <div class="big-reveal-icon" id="bigRevealIcon"></div>
+  <div class="big-reveal-title" id="bigRevealTitle"></div>
+  <div class="big-reveal-subtitle" id="bigRevealSubtitle"></div>
+</div>
+
+<div class="app" id="appRoot">
+  <div class="header-row">
+    <h1 class="title">🌳 Test</h1>
+    <div class="header-icons">
+      <button class="icon-btn" id="focusToggleBtn" type="button" title="Odak modu" aria-label="Odak modu">🔍</button>
+      <button class="icon-btn" id="settingsToggleBtn" type="button" title="Ayarlar" aria-label="Ayarlar">⚙️</button>
+    </div>
+  </div>
+
+  <nav class="tabs" aria-label="Ana bölümler">
+    <button type="button" class="tab-btn active" data-tab="work">Çalışma</button>
+    <button type="button" class="tab-btn" data-tab="tree">Ağaç</button>
+    <button type="button" class="tab-btn" data-tab="tasks">Görevler</button>
+    <button type="button" class="tab-btn" data-tab="calendar">Takvim</button>
+    <button type="button" class="tab-btn" data-tab="stats">İstatistik</button>
+  </nav>
+
+  <!-- === PANEL: ÇALIŞMA === -->
+  <section class="panel active" id="panel-work">
+
+    <div class="work-card">
+      <div class="work-header">
+        <div class="streak-wrap">
+          <div class="streak-badge" id="streakBadge">🔥 <span id="streakCount">0</span> gün seri</div>
+          <button class="freeze-mini" id="freezeMini" type="button" aria-expanded="false" title="Dondurma ayrıntılarını göster">
+            🧊 <span id="freezeCount">0</span>
+          </button>
+        </div>
+        <div class="goal-block">
+          <button type="button" class="goal-edit-btn" id="dailyGoalEditBtn" title="Günlük çalışma süresi hedefini ayarla">🎯 <span id="dailyGoalLabel">60 dk</span> <span class="edit-pencil">✎</span></button>
+          <div class="goal-mini-bar"><div class="goal-mini-fill" id="goalMiniFill"></div></div>
+        </div>
+      </div>
+      <div class="freeze-detail" id="freezeDetail"></div>
+
+      <div class="daily-score-hover-wrap">
+        <div class="daily-score-row daily-score-button" id="dailyScoreRow" tabindex="0" aria-describedby="dailyScoreDetail">
+          <span>⭐ Bugünkü skorun: <span id="dailyScoreValue">0</span></span>
+        </div>
+        <div class="daily-score-detail" id="dailyScoreDetail" role="tooltip"></div>
+      </div>
+
+      <div class="ring-wrap" id="ringWrap">
+        <svg class="ring-svg" viewBox="0 0 120 120">
+          <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+          <circle class="ring-fill" id="ringFill" cx="60" cy="60" r="52"></circle>
+        </svg>
+        <div class="ring-center">
+          <div class="ring-timer" id="workTimer">00:00</div>
+          <div class="ring-goal-label" id="ringGoalLabel">0 / 60 dk</div>
+        </div>
+      </div>
+
+      <div class="work-button-row" id="workButtonRow"></div>
+
+      <div class="status-line" id="statusLine">Bir oturum başlat, dönüm noktalarını gör 🏁</div>
+
+      <div class="current-task" id="currentTaskLine" style="display:none;">
+        <span class="ct-icon">🎯</span><span id="currentTaskText"></span>
+      </div>
+
+      <div class="work-history-shell">
+        <button class="work-history-toggle" id="workHistoryToggle" type="button" aria-expanded="false">
+          <span>Bugünkü oturumlar</span>
+          <span><b id="workHistoryCount">0</b> <i id="workHistoryChevron">⌄</i></span>
+        </button>
+        <div class="work-history-body" id="workHistoryBody">
+          <div class="session-list" id="sessionList"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- === PANEL: AĞAÇ === -->
+  <section class="panel" id="panel-tree">
+
+    <div class="stage">
+      <div class="level-block">
+        <div class="rank-chip">🎖️ <span id="rankLabel">ACEMİ NÖBETÇİ</span></div>
+        <div class="level-number">Seviye <b id="levelNum">1</b></div>
+        <div class="level-progress-bar"><div class="level-progress-fill" id="levelProgressFill"></div></div>
+        <div class="level-progress-caption" id="levelProgressCaption">0 / 100 XP</div>
+        <div class="level-sources">⏱ Çalışma · ✅ Görev</div>
+      </div>
+      <div class="tree-number" id="treeNumberLabel">Ağaç #1</div>
+
+      <div class="tree-wrap">
+        <div class="tree-glow"></div>
+        <div class="tree-sway"><div class="tree-emoji" id="treeEmoji">🌰</div></div>
+      </div>
+
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-caption" id="progressCaption">0 / 40</div>
+      <div class="growth-sources">⏱ çalışma süresi · ✅ tamamlanan görevler — ikisi de ağacını büyütür</div>
+    </div>
+
+    <div class="stats-quick">
+      <div class="stat"><div class="num" id="totalWorkStat">0 dk</div><div class="lbl">Toplam Çalışma</div></div>
+      <div class="stat"><div class="num" id="totalTasksStat">0</div><div class="lbl">Tamamlanan Görev</div></div>
+      <div class="stat"><div class="num" id="treeCount">0</div><div class="lbl">Tamamlanan Ağaç</div></div>
+    </div>
+
+    <div class="badges-summary" id="badgesSummaryBtn" title="Rozetleri görüntüle">
+      <div class="bs-left">
+        <span class="bs-icon">🏅</span>
+        <div>
+          <div class="bs-title">Rozetler</div>
+          <div class="bs-count" id="badgeSummaryCount">0 / 0 açıldı</div>
+          <div class="next-badge-mini" id="nextBadgeMini"></div>
+        </div>
+      </div>
+      <span class="bs-arrow">→</span>
+    </div>
+
+    <div class="distract-row" id="distractRow">
+      <span class="distract-text">Dikkatim dağıldı <span class="distract-count" id="distractToday">0</span></span>
+      <div class="distract-actions">
+        <button type="button" class="distract-type-btn" id="distractTypeBtn">Tür</button>
+        <button type="button" id="distractBtn">Kaydet</button>
+      </div>
+    </div>
+    <div class="distract-category-panel" id="distractCategoryPanel">
+      <button type="button" data-distraction-category="Telefon">📱 Telefon</button>
+      <button type="button" data-distraction-category="Sosyal Medya">💬 Sosyal Medya</button>
+      <button type="button" data-distraction-category="Çevre">🔊 Çevre</button>
+      <button type="button" data-distraction-category="Yorgunluk">🥱 Yorgunluk</button>
+      <button type="button" data-distraction-category="Diğer">⋯ Diğer</button>
+    </div>
+    <div class="distract-category-summary" id="distractCategorySummary"></div>
+
+    <div class="section-divider"><span>Koleksiyon</span></div>
+    <button type="button" class="reveal-btn" id="collectionRevealBtn">🌲 Koleksiyonu Göster</button>
+    <div id="collectionContent" class="collapsed"></div>
+  </section>
+
+  <!-- === PANEL: GÖREVLER === -->
+  <section class="panel" id="panel-tasks">
+    <div id="taskCreatePanel" class="task-create-panel">
+      <div class="task-add-card compact">
+        <div class="task-add-main-row">
+          <input type="text" id="taskInput" class="task-input-main" placeholder="Yeni görev ekle..." maxlength="120">
+          <button type="button" id="taskAddBtn" class="task-add-btn">Ekle</button>
+        </div>
+
+        <button id="taskDetailsToggle" class="task-details-toggle" type="button" aria-expanded="false">
+          <span>＋ Ayrıntılar</span><span class="task-details-chevron">⌄</span>
+        </button>
+
+        <div id="taskDetailsPanel" class="task-details-panel">
+          <div class="task-option-row">
+            <label class="cal-check-row" style="margin-top:0;"><input type="checkbox" id="taskTimeToggle"> Belirli bir saati var</label>
+            <select id="taskRepeatInput" class="task-repeat-select" aria-label="Görev tekrarı">
+              <option value="none">Tekrar yok</option><option value="daily">Her gün</option><option value="weekly">Her hafta</option><option value="monthly">Her ay</option>
+            </select>
+          </div>
+          <div class="task-repeat-days" id="taskRepeatDays" aria-label="Haftalık tekrar günleri">
+            <button type="button" data-repeat-day="1">Pzt</button>
+            <button type="button" data-repeat-day="2">Sal</button>
+            <button type="button" data-repeat-day="3">Çar</button>
+            <button type="button" data-repeat-day="4">Per</button>
+            <button type="button" data-repeat-day="5">Cum</button>
+            <button type="button" data-repeat-day="6">Cmt</button>
+            <button type="button" data-repeat-day="0">Paz</button>
+          </div>
+          <select id="taskTagInput" class="task-tag-select" aria-label="Görev etiketi"></select>
+          <div class="task-add-row2">
+            <input type="text" id="taskDateInput" class="task-date-input" inputmode="numeric" placeholder="DD/MM/YYYY" maxlength="10" aria-label="Görev tarihi, gün/ay/yıl">
+            <input type="text" id="taskTimeInput" class="cal-time-input time-24-input" style="display:none;" inputmode="numeric" maxlength="5" placeholder="HH:MM" aria-label="Görev saati, 24 saat formatı">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="task-toolbar-head">
+      <div class="task-filter-row task-folder-tabs" id="taskFilterRow"></div>
+      <div class="task-toolbar-icons">
+        <div class="task-icon-tip" data-tip="Yeni görev ekle">
+          <button id="taskCreateToggle" class="task-create-toggle task-create-toggle-toolbar" type="button" aria-expanded="false" aria-label="Yeni görev ekle">＋</button>
+        </div>
+        <div class="task-icon-tip" data-tip="Görev araması">
+          <button id="taskSearchToggle" class="task-search-toggle" type="button" aria-label="Görev araması" aria-expanded="false">⌕</button>
+        </div>
+        <div class="task-icon-tip" data-tip="Etiketleri yönet">
+          <button type="button" id="taskTagManagerBtn" class="task-tag-manager-btn icon-only" aria-label="Etiketleri yönet">🏷</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="taskSearchPanel" class="task-search-panel">
+      <div class="task-search-wrap">
+        <input id="taskSearchInput" class="task-search-input" type="search" maxlength="80" placeholder="Görevlerde ara..." autocomplete="off" aria-label="Görevlerde ara">
+        <button id="taskSearchClear" class="task-search-clear" type="button" title="Aramayı temizle" aria-label="Aramayı temizle">✕</button>
+      </div>
+
+      <div class="task-advanced-filters">
+        <select id="taskStatusFilter" class="task-advanced-select" aria-label="Görev durum filtresi">
+          <option value="all">Durum: Tümü</option>
+          <option value="active">Durum: Aktif</option>
+          <option value="done">Durum: Tamamlanan</option>
+        </select>
+        <select id="taskDateFilter" class="task-advanced-select" aria-label="Görev tarih filtresi">
+          <option value="all">Tarih: Tümü</option>
+          <option value="overdue">Tarih: Gecikmiş</option>
+          <option value="today">Tarih: Bugün</option>
+          <option value="upcoming">Tarih: Yaklaşan</option>
+          <option value="nodate">Tarih: Tarihsiz</option>
+        </select>
+        <button id="taskFilterReset" class="task-filter-reset" type="button">Filtreleri sıfırla</button>
+      </div>
+    </div>
+
+    <button type="button" id="clearDoneTasksBtn" class="task-clear-done task-clear-done-hidden">Tamamlanmış görevleri sil</button>
+
+    <div id="taskTagManager" class="task-tag-manager">
+      <div class="task-tag-manager-head">
+        <div><div class="task-tag-manager-title">Etiketler</div><div class="task-tag-manager-sub">Sürükleyerek sırala · istediğini silebilirsin</div></div>
+      </div>
+      <div class="task-tag-create">
+        <input id="taskTagNameInput" class="task-tag-name-input" maxlength="24" placeholder="Yeni etiket...">
+        <input id="taskTagColorInput" class="task-tag-color-input" type="color" value="#74d99f" aria-label="Etiket rengi">
+        <button type="button" id="taskTagCreateBtn" class="task-tag-create-btn">Ekle</button>
+      </div>
+      <div id="taskTagManageList" class="task-tag-manage-list"></div>
+    </div>
+
+    <div id="taskListBody"></div>
+  </section>
+
+  <!-- === PANEL: TAKVİM === -->
+  <section class="panel" id="panel-calendar">
+    <div class="cal-view-toggle">
+      <button type="button" class="cal-view-btn" data-view="week">Hafta</button>
+      <button type="button" class="cal-view-btn active" data-view="month">Ay</button>
+      <button type="button" class="cal-view-btn" data-view="year">Yıl</button>
+    </div>
+
+    <div class="cal-header">
+      <button type="button" class="cal-nav-btn" id="calPrevBtn">‹</button>
+      <div class="cal-title" id="calTitle">Ağustos 2026</div>
+      <button type="button" class="cal-nav-btn" id="calNextBtn">›</button>
+    </div>
+
+    <div id="calMonthView">
+      <div class="cal-weekdays">
+        <span>Pzt</span><span>Sal</span><span>Çar</span><span>Per</span><span>Cum</span><span>Cmt</span><span>Paz</span>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
+    </div>
+
+    <div id="calWeekView" class="cal-week-view" style="display:none;"></div>
+
+    <div id="calYearView" class="cal-year-grid" style="display:none;"></div>
+
+    <div class="cal-agenda" id="calAgenda"></div>
+  </section>
+
+  <!-- === PANEL: İSTATİSTİKLER === -->
+  <section class="panel" id="panel-stats">
+    <div class="period-tabs">
+      <button type="button" class="period-btn active" data-period="day">Gün</button>
+      <button type="button" class="period-btn" data-period="week">Hafta</button>
+      <button type="button" class="period-btn" data-period="month">Ay</button>
+      <button type="button" class="period-btn" data-period="year">Yıl</button>
+    </div>
+    <div class="stats-week-nav" id="statsWeekNav">
+      <button type="button" id="statsWeekPrev" aria-label="Önceki hafta">‹</button>
+      <div class="stats-week-label" id="statsWeekLabel"></div>
+      <button type="button" id="statsWeekNext" aria-label="Sonraki hafta">›</button>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card work"><div class="lbl">Çalışma Süresi</div><div class="val" id="periodWork">0 dk</div></div>
+      <div class="stat-card"><div class="lbl">Oturum Sayısı</div><div class="val" id="periodSessions">0</div><div class="stat-sub" id="periodAvgSession"></div></div>
+      <div class="stat-card distract"><div class="lbl">Dikkat Dağınıklığı</div><div class="val" id="periodDistract">0</div></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <div class="chart-title" id="chartTitle">Son 7 gün</div>
+        <div class="metric-pills">
+          <button type="button" class="metric-pill active" data-metric="work">Süre</button>
+          <button type="button" class="metric-pill" data-metric="distraction">Dikkat Dağınıklığı</button>
+          <button type="button" class="metric-pill" data-metric="subject">Derslere Göre</button>
+        </div>
+      </div>
+      <div class="chart-type-row">
+        <button type="button" class="type-pill active" data-type="bar">📊 Çubuk</button>
+        <button type="button" class="type-pill" data-type="line">📈 Çizgi</button>
+      </div>
+      <svg class="chart-svg" id="chartSvg" viewBox="0 0 680 180"></svg>
+      <div class="chart-legend" id="chartLegend"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title" style="margin-bottom:10px;">Oturum Analizi</div>
+      <div id="sessionAnalyticsBody"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title" style="margin-bottom:10px;">Derslere Göre Süre</div>
+      <div id="subjectBreakdownBody"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title" id="heatmapTitle" style="margin-bottom:10px;">Aktivite</div>
+      <div class="heatmap-scroll"><svg class="heatmap-svg" id="heatmapSvg" viewBox="0 0 700 90"></svg></div>
+      <div class="heatmap-legend">
+        <span>Az</span>
+        <span class="legend-cell level-0"></span>
+        <span class="legend-cell level-1"></span>
+        <span class="legend-cell level-2"></span>
+        <span class="legend-cell level-3"></span>
+        <span class="legend-cell level-4"></span>
+        <span>Çok</span>
+      </div>
+    </div>
+
+    <div class="section-divider"><span>Özet</span></div>
+    <button type="button" class="reveal-btn" id="summaryRevealBtn">📋 Özet Çıkar</button>
+    <div id="summaryContent" class="collapsed"></div>
+  </section>
+
+</div>
+
+
+<!-- Etkinlik detay modalı -->
+<div class="modal-backdrop" id="eventDetailBackdrop" aria-hidden="true">
+  <div class="modal-box event-detail-box">
+    <div class="event-detail-head">
+      <div>
+        <div class="event-detail-kicker">ETKİNLİK</div>
+        <h3 id="eventDetailTitle"></h3>
+      </div>
+      <button type="button" class="badge-close" id="eventDetailClose" aria-label="Kapat">✕</button>
+    </div>
+    <div class="event-detail-meta" id="eventDetailMeta"></div>
+    <label class="event-detail-description-label" for="eventDetailDescription">Açıklama</label>
+    <textarea id="eventDetailDescription" class="event-detail-description" maxlength="600" placeholder="Etkinlikle ilgili not veya açıklama ekle..."></textarea>
+    <div class="event-detail-actions">
+      <button type="button" class="modal-btn ghost" id="eventDetailEditTitle">Başlığı Düzenle</button>
+      <button type="button" class="modal-btn primary" id="eventDetailSave">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- Onay modalı -->
+<div class="modal-backdrop" id="confirmBackdrop" aria-hidden="true">
+  <div class="modal-box confirm-box">
+    <p id="confirmText">Emin misin?</p>
+    <div class="modal-actions confirm-actions">
+      <button type="button" class="modal-btn ghost" id="confirmCancel">Vazgeç</button>
+      <button type="button" class="modal-btn ghost" id="confirmAlt" style="display:none;">Sadece Gizle</button>
+      <button type="button" class="modal-btn danger" id="confirmOk">Evet, Sıfırla</button>
+    </div>
+  </div>
+</div>
+
+<!-- Metin girişi modalı (oturum yeniden adlandırma) -->
+<div class="modal-backdrop" id="promptBackdrop" aria-hidden="true">
+  <div class="modal-box confirm-box">
+    <p id="promptLabel">Oturum adı</p>
+    <input type="text" id="promptInput" class="prompt-input" maxlength="40" />
+    <div class="modal-actions">
+      <button type="button" class="modal-btn ghost" id="promptCancel">Vazgeç</button>
+      <button type="button" class="modal-btn primary" id="promptOk">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Oturum konusu düzenleme modalı -->
+<div class="modal-backdrop" id="subjectEditBackdrop" aria-hidden="true">
+  <div class="modal-box confirm-box">
+    <p id="subjectEditLabel">Ne çalışıyorsun?</p>
+    <input type="text" id="subjectEditInput" class="prompt-input" placeholder="Örn: Matematik" maxlength="30" />
+    <div class="subject-chips" id="subjectEditChips"></div>
+    <div class="modal-actions" style="margin-top:12px;">
+      <button type="button" class="modal-btn ghost" id="subjectEditCancel">Vazgeç</button>
+      <button type="button" class="modal-btn primary" id="subjectEditSave">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- Konu önerilerini yönetme modalı -->
+<div class="modal-backdrop" id="subjectManageBackdrop" aria-hidden="true">
+  <div class="modal-box confirm-box subject-manage-box">
+    <div class="subject-manage-head">
+      <div>
+        <p style="margin:0;">Konu Önerilerini Yönet</p>
+        <span>İsimleri değiştirebilir veya önerilerden silebilirsin.</span>
+      </div>
+      <button type="button" class="badge-close" id="subjectManageClose">✕</button>
+    </div>
+    <div id="subjectManageList" class="subject-manage-list"></div>
+  </div>
+</div>
+
+<!-- Hedef süre modalı -->
+<div class="modal-backdrop" id="goalBackdrop" aria-hidden="true">
+  <div class="modal-box confirm-box">
+    <div class="subject-section" id="subjectSection" style="display:none;">
+      <p>Ne üzerinde çalışacaksın?</p>
+      <input type="text" id="subjectInput" class="prompt-input" placeholder="Örn: Matematik" maxlength="30" />
+      <div class="subject-chip-head">
+        <div class="subject-chips" id="subjectChips"></div>
+        <button type="button" class="subject-manage-btn" id="subjectManageBtn">Yönet</button>
+      </div>
+    </div>
+    <p id="goalPromptText">Bu oturum için bir hedef süre ayarla</p>
+    <div class="goal-stepper">
+      <button type="button" class="stepper-btn" id="goalUp" aria-label="Süreyi artır">▲</button>
+      <div class="stepper-value"><input id="goalMinutesDisplay" class="goal-minutes-input" type="number" inputmode="numeric" min="1" step="1" value="25" aria-label="Süre, dakika"><span class="stepper-unit">dakika</span></div>
+      <button type="button" class="stepper-btn" id="goalDown" aria-label="Süreyi azalt">▼</button>
+    </div>
+    <div class="goal-presets">
+      <button type="button" class="goal-chip" data-min="15">15</button>
+      <button type="button" class="goal-chip active" data-min="25">25</button>
+      <button type="button" class="goal-chip" data-min="45">45</button>
+      <button type="button" class="goal-chip" data-min="60">60</button>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="modal-btn ghost" id="goalNone">Hedefsiz Başlat</button>
+      <button type="button" class="modal-btn primary" id="goalStart">Başlat</button>
+    </div>
+    <button type="button" class="reset-link" id="goalCancel" style="display:block; margin:12px auto 0;">vazgeç</button>
+  </div>
+</div>
+
+<!-- İlk kullanım tanıtımı -->
+<div class="modal-backdrop" id="onboardBackdrop" aria-hidden="true">
+  <div class="modal-box onboard-box">
+    <div class="onboard-step" data-step="1">
+      <div class="onboard-icon">🌱</div>
+      <h3>Testnı Büyüt</h3>
+      <p>Dikkatin dağıldığında bunu Ağaç sekmesindeki <b>“Kaydet”</b> butonuyla işaretle. Bu kayıt ağacı büyütmez; yalnızca dikkat dağınıklığı örüntünü istatistiklerde görmene yardımcı olur.</p>
+    </div>
+    <div class="onboard-step" data-step="2" style="display:none;">
+      <div class="onboard-icon">⏱️</div>
+      <h3>Çalışma Sürenle Puan Kazan</h3>
+      <p>"Çalışmaya Başla" ile bir oturum aç. Çalıştığın her dakika hem günlük hedef halkanı doldurur hem de ağacını büyütür.</p>
+    </div>
+    <div class="onboard-step" data-step="3" style="display:none;">
+      <div class="onboard-icon">🏅</div>
+      <h3>Seviye Atla, Rozet Topla</h3>
+      <p>Çalışma süresi ve tamamlanan görevler seni seviye atlatır. 200'den fazla rozet seni bekliyor. İyi çalışmalar!</p>
+    </div>
+    <div class="onboard-dots">
+      <span class="onboard-dot active" data-dot="1"></span>
+      <span class="onboard-dot" data-dot="2"></span>
+      <span class="onboard-dot" data-dot="3"></span>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="modal-btn ghost" id="onboardSkip">Geç</button>
+      <button type="button" class="modal-btn primary" id="onboardNext">Devam</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ayarlar modalı -->
+<div class="modal-backdrop" id="settingsBackdrop" aria-hidden="true">
+  <div class="modal-box badge-modal-box">
+    <div class="badge-modal-head">
+      <div><h2>Ayarlar</h2></div>
+      <button type="button" class="badge-close" id="settingsClose">✕</button>
+    </div>
+    <div class="badge-modal-body">
+      <div class="settings-section-title">Genel</div>
+      <div class="settings-row">
+        <span class="settings-row-icon">🔊</span>
+        <span class="settings-row-label">Ses Efektleri</span>
+        <button type="button" class="toggle-switch" id="soundToggle"><span class="toggle-knob"></span></button>
+      </div>
+      <div class="sound-subsettings" id="soundSubsettings">
+        <div class="sound-volume-row">
+          <span>Ses seviyesi</span>
+          <input type="range" id="soundVolumeRange" min="0" max="100" step="5" value="70" aria-label="Ses seviyesi">
+          <b id="soundVolumeValue">70%</b>
+        </div>
+        <div class="notif-subrow"><span>🖱 Arayüz sesleri</span><button type="button" class="toggle-switch" id="soundInterfaceToggle"><span class="toggle-knob"></span></button></div>
+        <div class="notif-subrow"><span>🏅 Başarı / rozet sesleri</span><button type="button" class="toggle-switch" id="soundAchievementToggle"><span class="toggle-knob"></span></button></div>
+        <div class="notif-subrow"><span>⏰ Oturum alarm sesleri</span><button type="button" class="toggle-switch" id="soundAlarmToggle"><span class="toggle-knob"></span></button></div>
+      </div>
+      <div class="settings-row">
+        <span class="settings-row-icon">🔔</span>
+        <span class="settings-row-label">Bildirimler</span>
+        <button type="button" class="toggle-switch" id="notifToggle"><span class="toggle-knob"></span></button>
+      </div>
+      <div class="notif-subsettings" id="notifSubsettings">
+        <div class="notif-subrow"><span>🎯 Oturum hedefi dolduğunda</span><button type="button" class="toggle-switch" id="notifSessionToggle"><span class="toggle-knob"></span></button></div>
+        <div class="notif-subrow"><span>☕ Mola / uzun çalışma hatırlatmaları</span><button type="button" class="toggle-switch" id="notifBreakToggle"><span class="toggle-knob"></span></button></div>
+        <div class="notif-subrow"><span>🏁 Günlük hedefe ulaşıldığında</span><button type="button" class="toggle-switch" id="notifDailyGoalToggle"><span class="toggle-knob"></span></button></div>
+      </div>
+      <div class="settings-row">
+        <span class="settings-row-icon">🎨</span>
+        <span class="settings-row-label">Takvimde çalışma renkleri</span>
+        <button type="button" class="toggle-switch calendar-color-toggle" id="calendarColorToggle" aria-label="Takvimde çalışma renklerini aç veya kapat" data-tooltip="Takvim günlerini, o günkü çalışma sürenin günlük hedefine oranına göre renklendirir. Kapatırsan çalışma yoğunluğu renkleri gizlenir."><span class="toggle-knob"></span></button>
+      </div>
+      <div class="settings-row">
+        <span class="settings-row-icon">🕒</span>
+        <span class="settings-row-label">Çalışma saatlerini takvimde göster</span>
+        <button type="button" class="toggle-switch" id="calendarWorkIntervalsToggle" aria-label="Timer çalışma saatlerini takvimde göster veya gizle" title="Timer'ın gerçekten çalıştığı saat aralıklarını hafta görünümünde ve günlük özette renkli bloklar olarak gösterir."><span class="toggle-knob"></span></button>
+      </div>
+
+      <div class="settings-section-title">Destek</div>
+      <button type="button" class="settings-link" id="helpToggleBtn">
+        <span class="settings-row-icon">❓</span>
+        <span class="settings-row-label">Nasıl Kullanılır?</span>
+        <span class="chevron-right">›</span>
+      </button>
+
+      <div class="settings-section-title">Veriler</div>
+      <button type="button" class="settings-link" id="exportBtn">
+        <span class="settings-row-icon">📤</span>
+        <span class="settings-row-label">Verileri Dışa Aktar</span>
+        <span class="chevron-right">›</span>
+      </button>
+      <button type="button" class="settings-link" id="importBtn">
+        <span class="settings-row-icon">📥</span>
+        <span class="settings-row-label">İçe Aktar</span>
+        <span class="chevron-right">›</span>
+      </button>
+      <input type="file" id="importFile" accept="application/json" style="display:none;">
+      <button type="button" class="settings-link danger" id="resetBtn">
+        <span class="settings-row-icon">🗑️</span>
+        <span class="settings-row-label">Verileri Sıfırla</span>
+        <span class="chevron-right">›</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Nasıl kullanılır modalı -->
+<div class="modal-backdrop" id="helpBackdrop" aria-hidden="true">
+  <div class="modal-box badge-modal-box">
+    <div class="badge-modal-head">
+      <div>
+        <h2>Nasıl Kullanılır?</h2>
+        <div class="count">Test'nın kısa rehberi</div>
+      </div>
+      <button type="button" class="badge-close" id="helpClose">✕</button>
+    </div>
+    <div class="badge-modal-body">
+      <div class="help-section">
+        <h4>🌳 Ağaç Nasıl Büyür?</h4>
+        <p>Ağacın iki kaynaktan büyür: her <b>çalışma dakikası</b> (+0.6) ve her <b>tamamlanan görev</b> (+5). <b>Dikkat dağınıklığı</b> kayıtları ağacı büyütmez; yalnızca kendi örüntünü istatistiklerde görmen için tutulur. Ağaç tamamlanınca koleksiyona rastgele bir türle eklenir ve yeni bir ağaç başlar.</p>
+      </div>
+      <div class="help-section">
+        <h4>⏱️ Çalışma Oturumları</h4>
+        <p>"Çalışmaya Başla" ile bir oturum aç: ne üzerinde çalışacağını (ders/iş) ve istersen bir hedef süre seçebilirsin. <b>Duraklat</b> oturumu dondurur, <b>Devam Et</b> aynı oturuma kaldığın yerden döner — yeni oturum açmaz. <b>Bitir</b> oturumu tamamen kapatır. Her oturuma görev (to-do) ekleyebilirsin; "şu an yapman gereken" listedeki ilk tamamlanmamış görevi otomatik gösterir.</p>
+      </div>
+      <div class="help-section">
+        <h4>🎯 Günlük Hedef & Seri</h4>
+        <p>Halka, gün içindeki toplam çalışma sürenin günlük hedefe ne kadar yaklaştığını gösterir. 🎯 butonunun üzerine geldiğinde bunun <b>günlük çalışma süresi hedefini ayarlamak</b> için olduğunu görebilir ve hedef dakikanı değiştirebilirsin. Günlük hedefini tamamladığında ilerleme çemberi <b>altın renge döner</b>; bu, o günün hedefinin başarıyla tamamlandığını gösterir. Hedefi art arda tutturdukça 🔥 serin büyür. Her 7 günde bir 🧊 <b>dondurma hakkı</b> kazanırsın — bir günü kaçırırsan otomatik kullanılıp serini korur.</p>
+      </div>
+      <div class="help-section">
+        <h4>🔍 Odak Modu</h4>
+        <p>Çalışırken header'daki büyüteç ikonuna bas: ekran kararır, sadece görevin ve büyük bir flip-clock kalır — dikkat dağıtıcı hiçbir şey görünmez.</p>
+      </div>
+      <div class="help-section">
+        <h4>🏅 Seviye & Rozetler</h4>
+        <p>XP; çalışma süresi ve tamamlanan görevlerden gelir. Her seviye bir öncekinden biraz daha fazla XP ister. 200'den fazla rozet var — "Rozetler" kartına basıp hepsini kategorilere göre görebilirsin.</p>
+      </div>
+      <div class="help-section">
+        <h4>😕 Dikkat Dağınıklığı</h4>
+        <p>Ağaç sekmesinin altında: bir şeye (YouTube, sosyal medya vb.) girdiğinde dürüstçe kaydet. Utandırmak için değil, sadece kendi örüntünü görebilmen için.</p>
+      </div>
+      <div class="help-section">
+        <h4>📊 İstatistikler</h4>
+        <p>Gün/Hafta/Ay/Yıl sekmelerinde çalışma süresi ve dikkat dağınıklığı trendini çubuk ya da çizgi grafikte, isteğe bağlı derslere göre renklendirilmiş halde görebilirsin. En altta yıllık aktivite ısı haritası var.</p>
+      </div>
+      <div class="help-section">
+        <h4>🌲 Koleksiyon</h4>
+        <p>Tamamladığın her ağaç burada, türüne ve tamamlanma tarihine göre kayıtlı kalır.</p>
+      </div>
+      <div class="help-section">
+        <h4>📋 Özet</h4>
+        <p>Haftalık ve aylık karşılaştırmalar, en verimli/dağınık günün ve uzun vadeli gelişimin. "Paylaş" butonuyla özetini panoya kopyalayabilirsin.</p>
+      </div>
+      <div class="help-section">
+        <h4>💾 Verilerin</h4>
+        <p>Her şey bu tarayıcıda saklanır. Çalışma sekmesinin altındaki "dışa aktar" ile yedek alabilir, "içe aktar" ile başka bir cihaza taşıyabilirsin.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rozet modalı -->
+<div class="modal-backdrop" id="badgeBackdrop" aria-hidden="true">
+  <div class="modal-box badge-modal-box">
+    <div class="badge-modal-head">
+      <div>
+        <h2>Rozetler</h2>
+        <div class="count" id="badgeModalCount">0 / 0 açıldı</div>
+      </div>
+      <button type="button" class="badge-close" id="badgeClose">✕</button>
+    </div>
+    <div class="badge-modal-body" id="badgeModalBody"></div>
+  </div>
+</div>
+
+<script src="assets/js/app.js" defer></script>
+<script src="assets/js/cloud-config.js" defer></script>
+<script src="assets/js/cloud-sync.js" defer></script>
+<script src="assets/js/pwa-register.js" defer></script>
+
+
+</body>
+</html>
