@@ -254,10 +254,7 @@
       </div>`;
     settingsBody.insertBefore(wrap,settingsBody.firstChild);
 
-    const loginBackdrop=document.createElement('div');
-    loginBackdrop.className='modal-backdrop';
-    loginBackdrop.id='cloudLoginBackdrop';
-    loginBackdrop.setAttribute('aria-hidden','true');
+    const loginBackdrop=document.createElement('div'); loginBackdrop.className='modal-backdrop'; loginBackdrop.id='cloudLoginBackdrop'; loginBackdrop.setAttribute('aria-hidden','true');
     loginBackdrop.innerHTML=`<div class="modal-box cloud-login-box"><div class="cloud-login-icon">☁️</div><h2>Bulut hesabına giriş</h2><p>Kullanıcı bilgilerin yalnızca hesabını açmak için kullanılır.</p><label>Kullanıcı adı<input id="cloudLoginUsername" autocomplete="username" placeholder="NOVA-4831"></label><label>Sihirli kelime<input id="cloudLoginMagic" type="password" autocomplete="current-password" placeholder="••••••••••"></label><label>6 haneli kod<input id="cloudLoginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"></label><label class="cloud-remember"><input type="checkbox" id="cloudLoginRemember" checked> Bu cihazda oturumu açık tut</label><div class="cloud-login-error" id="cloudLoginError"></div><div class="modal-actions"><button type="button" class="modal-btn ghost" id="cloudLoginCancel">Vazgeç</button><button type="button" class="modal-btn primary" id="cloudLoginSubmit">Giriş Yap</button></div></div>`;
     document.body.appendChild(loginBackdrop);
 
