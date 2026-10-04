@@ -1,1 +1,94 @@
-<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hesap Yönetimi</title><link rel="stylesheet" href="assets/css/app.css"><style>body{display:block;max-width:980px;margin:0 auto;padding:28px 18px 60px}.admin-shell{display:grid;gap:16px}.admin-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.admin-title{font-family:'Fraunces',serif;font-size:28px;margin:0}.admin-card{background:var(--bg-panel);border:1px solid rgba(116,217,159,.14);border-radius:16px;padding:16px}.admin-form{display:grid;grid-template-columns:1fr auto;gap:8px}.admin-input{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--paper);border-radius:10px;padding:10px 12px;outline:none}.admin-input:focus{border-color:rgba(116,217,159,.4)}.admin-actions{display:flex;gap:8px;flex-wrap:wrap}.admin-users{display:grid;gap:8px}.admin-user{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:rgba(255,255,255,.02)}.admin-user b{font-family:'IBM Plex Mono',monospace}.admin-meta{font-size:10px;color:var(--muted);margin-top:4px}.admin-cred{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.admin-cred div{padding:10px;border-radius:10px;background:rgba(116,217,159,.06);border:1px solid rgba(116,217,159,.13)}.admin-cred span{display:block;font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}.admin-cred strong{display:block;margin-top:4px;font:700 13px 'IBM Plex Mono',monospace;overflow-wrap:anywhere}.admin-warning{font-size:10px;color:var(--gold);line-height:1.5;margin-top:8px}.admin-error{color:#ff9d9d;font-size:10px;min-height:15px}.admin-ok{color:var(--moss-bright);font-size:10px;min-height:15px}@media(max-width:650px){.admin-form,.admin-user,.admin-cred{grid-template-columns:1fr}.admin-head{flex-direction:column}}</style></head><body><main class="admin-shell"><header class="admin-head"><div><h1 class="admin-title">Hesap Yönetimi</h1><p class="cloud-muted">E-posta olmadan kullanıcı oluştur, giriş bilgilerini sıfırla ve hesapları devre dışı bırak.</p></div><a href="index.html" class="modal-btn ghost" style="text-decoration:none">Uygulamaya Dön</a></header><section class="admin-card"><div class="settings-section-title" style="margin-top:0">Bağlantı</div><div class="admin-form"><input class="admin-input" type="password" id="adminSecret" placeholder="Yönetici anahtarı"><button class="modal-btn primary" id="adminLoad">Bağlan</button></div><div class="admin-error" id="adminError"></div></section><section class="admin-card"><div class="admin-actions"><button class="modal-btn primary" id="adminCreate">+ Yeni Kullanıcı Oluştur</button><button class="modal-btn ghost" id="adminRefresh">Yenile</button></div><div id="adminCredentialResult"></div></section><section class="admin-card"><div class="settings-section-title" style="margin-top:0">Kullanıcılar</div><div class="admin-users" id="adminUsers"><div class="cloud-muted">Yönetici anahtarını girip bağlan.</div></div></section></main><script src="assets/js/cloud-config.js"></script><script src="assets/js/admin.js"></script></body></html>
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hesap Yönetimi</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-fraunces@4.0.0/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-sans@4.0.0/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-mono@4.0.0/index.css">
+<link rel="stylesheet" href="assets/css/app.css">
+<style>
+body{display:block;max-width:1100px;margin:0 auto;padding:28px 18px 60px}
+.admin-shell{display:grid;gap:16px}
+.admin-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.admin-title{font-family:'Fraunces',serif;font-size:28px;margin:0}
+.admin-card{background:var(--bg-panel);border:1px solid rgba(116,217,159,.14);border-radius:16px;padding:16px}
+.admin-form{display:grid;grid-template-columns:1fr auto;gap:8px}
+.admin-input{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--paper);border-radius:10px;padding:10px 12px;outline:none}
+.admin-input:focus{border-color:rgba(116,217,159,.4)}
+.admin-actions{display:flex;gap:8px;flex-wrap:wrap}
+.admin-users{display:grid;gap:10px}
+.admin-user{padding:13px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:rgba(255,255,255,.02)}
+.admin-user-top{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start}
+.admin-user b{font-family:'IBM Plex Mono',monospace}
+.admin-meta{font-size:10px;color:var(--muted);margin-top:4px;line-height:1.55}
+.admin-cred{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.admin-cred div{padding:10px;border-radius:10px;background:rgba(116,217,159,.06);border:1px solid rgba(116,217,159,.13)}
+.admin-cred span{display:block;font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+.admin-cred strong{display:block;margin-top:4px;font:700 13px 'IBM Plex Mono',monospace;overflow-wrap:anywhere}
+.admin-warning{font-size:10px;color:var(--gold);line-height:1.5;margin-top:8px}
+.admin-error{color:#ff9d9d;font-size:10px;min-height:15px}
+.admin-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.admin-stat{padding:12px;border-radius:12px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.065)}
+.admin-stat .k{font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.admin-stat .v{margin-top:4px;font:700 18px 'IBM Plex Mono',monospace;color:var(--paper)}
+.admin-user-metrics{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.admin-pill{padding:4px 7px;border-radius:999px;background:rgba(116,217,159,.055);border:1px solid rgba(116,217,159,.11);font-size:8.5px;color:var(--paper-dim)}
+.admin-device-toggle{margin-top:10px;border:0;background:transparent;color:var(--moss-bright);font-size:9.5px;font-weight:700;cursor:pointer;padding:3px 0}
+.admin-devices{display:none;margin-top:8px;border-top:1px solid rgba(255,255,255,.06);padding-top:8px}
+.admin-devices.show{display:grid;gap:6px}
+.admin-device{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:8px 9px;border-radius:9px;background:rgba(255,255,255,.022);border:1px solid rgba(255,255,255,.055)}
+.admin-device-name{font-size:10.5px;font-weight:700;color:var(--paper)}
+.admin-device-meta{font-size:8.5px;color:var(--muted);line-height:1.5;margin-top:2px}
+.admin-device-status{font-size:8px;font-weight:700;white-space:nowrap}
+.admin-device-status.active{color:var(--moss-bright)}
+.admin-device-status.revoked{color:#e68a8a}
+.admin-device-status.expired{color:var(--muted)}
+@media(max-width:760px){.admin-summary{grid-template-columns:1fr 1fr}.admin-user-top{grid-template-columns:1fr}}
+@media(max-width:650px){.admin-form,.admin-cred{grid-template-columns:1fr}.admin-head{flex-direction:column}}
+</style>
+</head>
+<body>
+<main class="admin-shell">
+<header class="admin-head">
+  <div>
+    <h1 class="admin-title">Hesap Yönetimi</h1>
+    <p class="cloud-muted">Hesapları, cihazları ve genel kullanım verilerini yönet.</p>
+  </div>
+  <a href="index.html" class="modal-btn ghost" style="text-decoration:none">Uygulamaya Dön</a>
+</header>
+
+<section class="admin-card">
+  <div class="settings-section-title" style="margin-top:0">Bağlantı</div>
+  <div class="admin-form">
+    <input class="admin-input" type="password" id="adminSecret" placeholder="Yönetici anahtarı">
+    <button class="modal-btn primary" id="adminLoad">Bağlan</button>
+  </div>
+  <div class="admin-error" id="adminError"></div>
+</section>
+
+<section class="admin-card">
+  <div class="settings-section-title" style="margin-top:0">Genel Kullanım</div>
+  <div class="admin-summary" id="adminSummary">
+    <div class="cloud-muted">Yönetici anahtarıyla bağlandıktan sonra veriler burada görünecek.</div>
+  </div>
+</section>
+
+<section class="admin-card">
+  <div class="admin-actions">
+    <button class="modal-btn primary" id="adminCreate">+ Yeni Kullanıcı Oluştur</button>
+    <button class="modal-btn ghost" id="adminRefresh">Yenile</button>
+  </div>
+  <div id="adminCredentialResult"></div>
+</section>
+
+<section class="admin-card">
+  <div class="settings-section-title" style="margin-top:0">Kullanıcılar ve Cihazlar</div>
+  <div class="admin-users" id="adminUsers"><div class="cloud-muted">Yönetici anahtarını girip bağlan.</div></div>
+</section>
+</main>
+<script src="assets/js/cloud-config.js"></script>
+<script src="assets/js/admin.js"></script>
+</body>
+</html>
