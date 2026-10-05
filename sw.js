@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v77';
+const CACHE_VERSION = 'v78';
 const STATIC_CACHE = `test-pwa-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `test-pwa-runtime-${CACHE_VERSION}`;
 const FONT_CACHE = `test-pwa-fonts-${CACHE_VERSION}`;
