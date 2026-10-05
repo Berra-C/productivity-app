@@ -88,16 +88,12 @@ function growthChart(el,rows){
 function renderCharts(c={}){
   const daily=c.daily||[];
   svgLine($('dailyWorkChart'),daily,'workSeconds',{format:fmtDuration});
-  barChart($('dailySessionsChart'),daily.slice(-14),'sessions',{label:r=>shortDate(r.date),format:fmtCount});
   svgLine($('avgSessionChart'),daily,'averageSessionSeconds',{format:fmtDuration});
   barChart($('weekdayChart'),c.weekday||[],'workSeconds',{format:fmtDuration});
   barChart($('hourlyChart'),c.hourly||[],'workSeconds',{format:fmtDuration,label:(r,i)=>i%3===0?r.label:''});
   donut($('accountStatusChart'),c.accountStatus||[]);
   donut($('activationChart'),c.activation||[]);
-  donut($('loginRecencyChart'),c.loginRecency||[]);
   donut($('sessionStatusChart'),c.sessionStatus||[]);
-  donut($('deviceCountChart'),c.deviceCountDistribution||[]);
-  donut($('syncRecencyChart'),c.syncRecency||[]);
   growthChart($('growthChart'),c.accountGrowth||[]);
   $('analyticsSection').hidden=false;
 }
@@ -122,4 +118,21 @@ async function load(){
 }
 $('adminLoad').onclick=load;$('adminRefresh').onclick=load;
 $('adminCreate').onclick=async()=>{error();if(!secret()){error('Önce yönetici anahtarını gir.');return}try{const r=await api('create-user');credentials(r);await load()}catch(e){error(e.message)}};
+
+function initCollapsibles(){
+  document.querySelectorAll('[data-collapse-btn]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const card=btn.closest('.collapsible-section');
+      if(card) card.classList.toggle('is-collapsed');
+    });
+  });
+  document.querySelectorAll('[data-chart-collapse]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const card=btn.closest('.collapsible-chart');
+      if(card) card.classList.toggle('is-collapsed');
+    });
+  });
+}
+initCollapsibles();
+
 })();
