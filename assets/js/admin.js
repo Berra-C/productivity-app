@@ -57,14 +57,41 @@ function svgLine(el,rows,key,opt={}){
 }
 function barChart(el,rows,key,opt={}){
   if(!el) return false;
-  const data=rows||[]; if(!data.length||!data.some(r=>Number(r[key])>0)){empty(el);return false}
+  const data=rows||[];
+  if(!data.length||!data.some(r=>Number(r[key])>0)){empty(el);return false}
+  const W=720,H=205,pL=18,pR=10,pT=10,pB=30;
+  const plotH=H-pT-pB, baselineY=H-pB;
   const max=Math.max(...data.map(r=>Number(r[key])||0),1);
-  el.innerHTML=`<div class="bar-grid">${data.map((r,i)=>{
-    const pct=Math.max(Number(r[key])>0?2:0,(Number(r[key])||0)/max*100);
+  const gap=6;
+  const barArea=W-pL-pR;
+  const barW=Math.max(6,(barArea-gap*(data.length-1))/data.length);
+
+  const bars=data.map((r,i)=>{
+    const value=Number(r[key])||0;
+    const h=value>0?Math.max(2, plotH*value/max):0;
+    const x=pL+i*(barW+gap);
+    const y=baselineY-h;
     const label=opt.label?opt.label(r,i):r.label;
     const title=`${label}: ${opt.format?opt.format(r[key]):fmtCount(r[key])}`;
-    return `<div class="bar-col" title="${esc(title)}"><div class="bar-plot" style="width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center"><div class="bar ${opt.gold?'gold':''}" style="height:${pct}%"></div></div><div class="bar-label">${esc(label)}</div></div>`;
-  }).join('')}</div>`;return true;
+    return `
+      <rect class="bar-rect" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="5" ry="5">
+        <title>${esc(title)}</title>
+      </rect>
+      <text class="bar-label-text" x="${(x+barW/2).toFixed(1)}" y="${(H-8).toFixed(1)}" text-anchor="middle">${esc(label)}</text>
+    `;
+  }).join('');
+
+  el.innerHTML=`<svg class="bar-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="rgba(116,217,159,.95)"/>
+        <stop offset="100%" stop-color="rgba(82,183,136,.42)"/>
+      </linearGradient>
+    </defs>
+    <line class="bar-axis" x1="${pL}" y1="${baselineY}" x2="${W-pR}" y2="${baselineY}"/>
+    ${bars}
+  </svg>`;
+  return true;
 }
 function donut(el,rows){
   if(!el) return false;
@@ -99,9 +126,6 @@ function renderCharts(c={}){
   barChart($('weekdayChart'),c.weekday||[],'workSeconds',{format:fmtDuration});
   barChart($('hourlyChart'),c.hourly||[],'workSeconds',{format:fmtDuration,label:(r,i)=>i%3===0?r.label:''});
   donut($('accountStatusChart'),c.accountStatus||[]);
-  donut($('activationChart'),c.activation||[]);
-  donut($('sessionStatusChart'),c.sessionStatus||[]);
-  growthChart($('growthChart'),c.accountGrowth||[]);
   const analytics=$('analyticsSection'); if(analytics) analytics.hidden=false;
 }
 function deviceStatus(d){if(d.revoked)return['revoked','İptal'];if(d.expired)return['expired','Süresi doldu'];return['active','Aktif']}
