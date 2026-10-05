@@ -102,24 +102,67 @@ function num(v:unknown){ const n=Number(v); return Number.isFinite(n)?n:0; }
 function stateMetrics(state:any){
   const s=(state && typeof state==='object' && !Array.isArray(state))?state:{};
   const days=(s.days && typeof s.days==='object' && !Array.isArray(s.days))?s.days:{};
+  const sessionLog=(s.sessionLog && typeof s.sessionLog==='object' && !Array.isArray(s.sessionLog))?s.sessionLog:{};
   let workSeconds=0,workSessions=0;
-  for(const d of Object.values(days) as any[]){
+  const dayWork:Record<string,number>={};
+  const daySessions:Record<string,number>={};
+  const hourlyWork=Array.from({length:24},()=>0);
+
+  for(const [key,d] of Object.entries(days) as [string,any][]){
     if(!d || typeof d!=='object') continue;
-    workSeconds+=Math.max(0,num(d.workSeconds));
-    workSessions+=Math.max(0,num(d.sessions));
+    const seconds=Math.max(0,num(d.workSeconds));
+    const sessions=Math.max(0,num(d.sessions));
+    workSeconds+=seconds;
+    workSessions+=sessions;
+    if(seconds>0) dayWork[key]=Math.round(seconds);
+    if(sessions>0) daySessions[key]=Math.round(sessions);
   }
-  if(!workSessions && s.sessionLog && typeof s.sessionLog==='object'){
-    workSessions=Object.values(s.sessionLog).reduce((sum:number,v:any)=>sum+(Array.isArray(v)?v.length:0),0);
+
+  // Session logs are the source for hour-of-day distribution.
+  // Existing migration logic gives legacy sessions an approximate interval when possible.
+  for(const list of Object.values(sessionLog) as any[]){
+    if(!Array.isArray(list)) continue;
+    if(!workSessions) workSessions+=list.length;
+    for(const session of list){
+      const intervals=Array.isArray(session?.workIntervals)?session.workIntervals:[];
+      for(const interval of intervals){
+        let a=Number(interval?.start), b=Number(interval?.end);
+        if(!Number.isFinite(a)||!Number.isFinite(b)||b<=a) continue;
+        // Guard against malformed intervals.
+        if(b-a>24*60*60*1000) b=a+24*60*60*1000;
+        let cursor=a;
+        while(cursor<b){
+          const d=new Date(cursor);
+          const hour=d.getHours();
+          const nextHour=new Date(d.getFullYear(),d.getMonth(),d.getDate(),hour+1,0,0,0).getTime();
+          const segmentEnd=Math.min(b,nextHour);
+          hourlyWork[hour]+=Math.max(0,(segmentEnd-cursor)/1000);
+          cursor=segmentEnd;
+        }
+      }
+    }
   }
-  const tasks=Array.isArray(s.tasks)?s.tasks:[];
+
   return {
     workSeconds:Math.round(workSeconds),
     workSessions:Math.round(workSessions),
-    totalTasks:tasks.length,
-    completedTasks:tasks.filter((t:any)=>!!t?.done).length,
-    events:Array.isArray(s.events)?s.events.length:0
+    dayWork,
+    daySessions,
+    hourlyWork:hourlyWork.map(v=>Math.round(v))
   };
 }
+function localDateKey(value:number|Date){
+  const d=value instanceof Date?value:new Date(value);
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function lastDateKeys(count:number){
+  const out:string[]=[];
+  const base=new Date(); base.setHours(12,0,0,0);
+  for(let i=count-1;i>=0;i--){ const d=new Date(base); d.setDate(base.getDate()-i); out.push(localDateKey(d)); }
+  return out;
+}
+
 
 async function handle(req:Request,body:any){
   const action=String(body?.action||'');
@@ -170,54 +213,192 @@ async function handle(req:Request,body:any){
       select('app_sessions?select=id,account_id,device_name,created_at,last_seen_at,expires_at,revoked&order=last_seen_at.desc&limit=5000'),
       select('app_states?select=account_id,state,revision,updated_at&limit=500')
     ]);
-    const now=Date.now(),day=86400000;
+
+    const now=Date.now(), dayMs=86400000;
     const sessionsByAccount=new Map<string,any[]>();
     for(const s of sessions){
-      if(!sessionsByAccount.has(s.account_id))sessionsByAccount.set(s.account_id,[]);
+      if(!sessionsByAccount.has(s.account_id)) sessionsByAccount.set(s.account_id,[]);
       sessionsByAccount.get(s.account_id)!.push(s);
     }
     const statesByAccount=new Map<string,any>();
-    for(const s of states)statesByAccount.set(s.account_id,s);
-    const uniqueDevices=new Set<string>();
-    let activeSessions=0;
-    for(const s of sessions){
-      uniqueDevices.add(`${s.account_id}\0${String(s.device_name||'Cihaz')}`);
-      if(!s.revoked && new Date(s.expires_at).getTime()>now)activeSessions++;
-    }
+    for(const s of states) statesByAccount.set(s.account_id,s);
+
     const activeAccountWithin=(ms:number)=>{
       const set=new Set<string>();
       for(const s of sessions){
-        if(new Date(s.last_seen_at).getTime()>=now-ms)set.add(s.account_id);
+        if(!s.revoked && new Date(s.last_seen_at).getTime()>=now-ms) set.add(s.account_id);
       }
       return set.size;
     };
-    let totalWorkSeconds=0,totalWorkSessions=0,totalTasks=0,completedTasks=0,totalEvents=0;
+
+    const dailyWork=new Map<string,number>();
+    const dailySessions=new Map<string,number>();
+    const dailyWorkingAccounts=new Map<string,Set<string>>();
+    const hourlyWork=Array.from({length:24},()=>0);
+    const weekdayWork=Array.from({length:7},()=>0);
+    let totalWorkSeconds=0,totalWorkSessions=0;
+
     const users=accounts.map((a:any)=>{
-      const st=statesByAccount.get(a.id)||null, metrics=stateMetrics(st?.state);
-      totalWorkSeconds+=metrics.workSeconds; totalWorkSessions+=metrics.workSessions;
-      totalTasks+=metrics.totalTasks; completedTasks+=metrics.completedTasks; totalEvents+=metrics.events;
+      const st=statesByAccount.get(a.id)||null;
+      const metrics=stateMetrics(st?.state);
+      totalWorkSeconds+=metrics.workSeconds;
+      totalWorkSessions+=metrics.workSessions;
+
+      for(const [key,secondsRaw] of Object.entries(metrics.dayWork||{}) as [string,any][]){
+        const seconds=Math.max(0,num(secondsRaw));
+        if(!seconds) continue;
+        dailyWork.set(key,(dailyWork.get(key)||0)+seconds);
+        if(!dailyWorkingAccounts.has(key)) dailyWorkingAccounts.set(key,new Set());
+        dailyWorkingAccounts.get(key)!.add(a.id);
+        const parsed=new Date(`${key}T12:00:00`);
+        if(!Number.isNaN(parsed.getTime())) weekdayWork[parsed.getDay()]+=seconds;
+      }
+      for(const [key,countRaw] of Object.entries(metrics.daySessions||{}) as [string,any][]){
+        const count=Math.max(0,num(countRaw));
+        if(count) dailySessions.set(key,(dailySessions.get(key)||0)+count);
+      }
+      for(let h=0;h<24;h++) hourlyWork[h]+=Math.max(0,num(metrics.hourlyWork?.[h]));
+
       const devs=(sessionsByAccount.get(a.id)||[]).map((s:any)=>({
         id:s.id,deviceName:s.device_name,createdAt:s.created_at,lastSeenAt:s.last_seen_at,expiresAt:s.expires_at,
         revoked:!!s.revoked,expired:new Date(s.expires_at).getTime()<=now
       }));
       const activeDeviceCount=devs.filter((d:any)=>!d.revoked&&!d.expired).length;
-      return {...a,username:String(a.username).toUpperCase(),activeDeviceCount,devices:devs,metrics,stateUpdatedAt:st?.updated_at||null,stateRevision:Number(st?.revision||0)};
+      return {
+        ...a,
+        username:String(a.username).toUpperCase(),
+        activeDeviceCount,
+        devices:devs
+      };
     });
+
+    const dateKeys=lastDateKeys(30);
+    const daily=dateKeys.map(key=>({
+      date:key,
+      workSeconds:Math.round(dailyWork.get(key)||0),
+      sessions:Math.round(dailySessions.get(key)||0),
+      workingAccounts:dailyWorkingAccounts.get(key)?.size||0,
+      averageSessionSeconds:(dailySessions.get(key)||0)>0
+        ? Math.round((dailyWork.get(key)||0)/(dailySessions.get(key)||1))
+        : 0
+    }));
+
+    // Snapshot distributions
+    const accountStatus=[
+      {label:'Aktif',value:accounts.filter((a:any)=>!a.disabled).length},
+      {label:'Devre dışı',value:accounts.filter((a:any)=>!!a.disabled).length}
+    ];
+    const activation=[
+      {label:'Giriş yaptı',value:accounts.filter((a:any)=>!!a.last_login_at).length},
+      {label:'Hiç giriş yapmadı',value:accounts.filter((a:any)=>!a.last_login_at).length}
+    ];
+    const recencyCounts={recent7:0,recent30:0,older:0,never:0};
+    for(const a of accounts){
+      if(!a.last_login_at){recencyCounts.never++;continue}
+      const age=now-new Date(a.last_login_at).getTime();
+      if(age<=7*dayMs) recencyCounts.recent7++;
+      else if(age<=30*dayMs) recencyCounts.recent30++;
+      else recencyCounts.older++;
+    }
+    const loginRecency=[
+      {label:'Son 7 gün',value:recencyCounts.recent7},
+      {label:'8–30 gün',value:recencyCounts.recent30},
+      {label:'30+ gün',value:recencyCounts.older},
+      {label:'Hiç giriş yok',value:recencyCounts.never}
+    ];
+
+    let activeSessions=0,revokedSessions=0,expiredSessions=0;
+    for(const s of sessions){
+      const expired=new Date(s.expires_at).getTime()<=now;
+      if(s.revoked) revokedSessions++;
+      else if(expired) expiredSessions++;
+      else activeSessions++;
+    }
+    const sessionStatus=[
+      {label:'Aktif',value:activeSessions},
+      {label:'İptal edildi',value:revokedSessions},
+      {label:'Süresi doldu',value:expiredSessions}
+    ];
+
+    const deviceBuckets={zero:0,one:0,two:0,threePlus:0};
+    for(const a of accounts){
+      const names=new Set((sessionsByAccount.get(a.id)||[]).map((s:any)=>String(s.device_name||'Cihaz')));
+      const n=names.size;
+      if(n===0)deviceBuckets.zero++;
+      else if(n===1)deviceBuckets.one++;
+      else if(n===2)deviceBuckets.two++;
+      else deviceBuckets.threePlus++;
+    }
+    const deviceCountDistribution=[
+      {label:'0 cihaz',value:deviceBuckets.zero},
+      {label:'1 cihaz',value:deviceBuckets.one},
+      {label:'2 cihaz',value:deviceBuckets.two},
+      {label:'3+ cihaz',value:deviceBuckets.threePlus}
+    ];
+
+    const syncBuckets={recent24:0,recent7:0,recent30:0,older:0,never:0};
+    for(const a of accounts){
+      const st=statesByAccount.get(a.id);
+      if(!st?.updated_at){syncBuckets.never++;continue}
+      const age=now-new Date(st.updated_at).getTime();
+      if(age<=dayMs)syncBuckets.recent24++;
+      else if(age<=7*dayMs)syncBuckets.recent7++;
+      else if(age<=30*dayMs)syncBuckets.recent30++;
+      else syncBuckets.older++;
+    }
+    const syncRecency=[
+      {label:'Son 24 saat',value:syncBuckets.recent24},
+      {label:'2–7 gün',value:syncBuckets.recent7},
+      {label:'8–30 gün',value:syncBuckets.recent30},
+      {label:'30+ gün',value:syncBuckets.older},
+      {label:'Hiç sync yok',value:syncBuckets.never}
+    ];
+
+    const weekdayNames=['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
+    const weekday=weekdayNames.map((label,i)=>({label,workSeconds:Math.round(weekdayWork[i])}));
+    const hourly=hourlyWork.map((seconds,hour)=>({label:String(hour).padStart(2,'0')+':00',workSeconds:Math.round(seconds)}));
+
+    const growthKeys=lastDateKeys(30);
+    const accountsBefore=growthKeys.length
+      ? accounts.filter((a:any)=>new Date(a.created_at).getTime()<new Date(`${growthKeys[0]}T00:00:00`).getTime()).length
+      : 0;
+    let cumulative=accountsBefore;
+    const accountGrowth=growthKeys.map(key=>{
+      const created=accounts.filter((a:any)=>localDateKey(new Date(a.created_at))===key).length;
+      cumulative+=created;
+      return {date:key,created,total:cumulative};
+    });
+
+    const enabled=accounts.filter((a:any)=>!a.disabled).length;
+    const active7d=activeAccountWithin(7*dayMs);
+    const activeRatio=enabled>0?Math.round((active7d/enabled)*1000)/10:0;
+    const avgSessionSeconds=totalWorkSessions>0?Math.round(totalWorkSeconds/totalWorkSessions):0;
+
     return json({
       summary:{
         totalAccounts:accounts.length,
-        enabledAccounts:accounts.filter((a:any)=>!a.disabled).length,
-        disabledAccounts:accounts.filter((a:any)=>!!a.disabled).length,
-        active24h:activeAccountWithin(day),
-        active7d:activeAccountWithin(7*day),
-        totalDevices:uniqueDevices.size,
+        enabledAccounts:enabled,
+        disabledAccounts:accounts.length-enabled,
+        active24h:activeAccountWithin(dayMs),
+        active7d,
+        activeRatio,
+        totalWorkSeconds:Math.round(totalWorkSeconds),
+        totalWorkSessions:Math.round(totalWorkSessions),
+        averageSessionSeconds:avgSessionSeconds,
         activeSessions,
-        syncedAccounts:states.length,
-        totalWorkSeconds,
-        totalWorkSessions,
-        totalTasks,
-        completedTasks,
-        totalEvents
+        syncedAccounts:states.length
+      },
+      charts:{
+        daily,
+        weekday,
+        hourly,
+        accountStatus,
+        activation,
+        loginRecency,
+        sessionStatus,
+        deviceCountDistribution,
+        syncRecency,
+        accountGrowth
       },
       users
     });
