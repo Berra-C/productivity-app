@@ -27,14 +27,11 @@ function credentials(result,label='Yeni kullanıcı'){
     <div><span>6 haneli kod</span><strong>${esc(result.accessCode)}</strong></div>
   </div><div class="admin-warning">${esc(label)} bilgileri yalnızca bu anda açık metin gösterilir. Sonradan görüntülenemez; yeniden sıfırlamak gerekir.</div>`;
 }
-function renderSummary(s={}){
+function renderSummary(s={},charts={}){
   const cards=[
     ['Toplam hesap',fmtCount(s.totalAccounts),''],
-    ['7 günlük aktif',fmtCount(s.active7d),'accent'],
-    ['Aktiflik oranı',`${Number(s.activeRatio||0).toLocaleString('tr-TR')}%`,'accent'],
     ['Toplam çalışma',fmtDuration(s.totalWorkSeconds),'accent'],
-    ['Ort. oturum',s.averageSessionSeconds?fmtDuration(s.averageSessionSeconds):'—',''],
-    ['Aktif cihaz oturumu',fmtCount(s.activeSessions),'']
+    ['Ort. oturum',s.averageSessionSeconds?fmtDuration(s.averageSessionSeconds):'—','']
   ];
   const summaryEl=$('adminSummary'); if(!summaryEl) return;
   summaryEl.innerHTML=cards.map(([k,v,c])=>`<div class="admin-stat ${c}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
@@ -66,7 +63,7 @@ function barChart(el,rows,key,opt={}){
     const pct=Math.max(Number(r[key])>0?2:0,(Number(r[key])||0)/max*100);
     const label=opt.label?opt.label(r,i):r.label;
     const title=`${label}: ${opt.format?opt.format(r[key]):fmtCount(r[key])}`;
-    return `<div class="bar-col" title="${esc(title)}"><div class="bar ${opt.gold?'gold':''}" style="height:${pct}%"></div><div class="bar-label">${esc(label)}</div></div>`;
+    return `<div class="bar-col" title="${esc(title)}"><div class="bar-plot" style="width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center"><div class="bar ${opt.gold?'gold':''}" style="height:${pct}%"></div></div><div class="bar-label">${esc(label)}</div></div>`;
   }).join('')}</div>`;return true;
 }
 function donut(el,rows){
@@ -123,7 +120,7 @@ function renderUsers(users=[]){
 }
 async function load(){
   error();if(!secret()){error('Önce yönetici anahtarını gir.');connected(false);return}
-  try{const r=await api('admin-overview');connected(true);renderSummary(r.summary||{});renderCharts(r.charts||{});renderUsers(r.users||[])}
+  try{const r=await api('admin-overview');connected(true);renderSummary(r.summary||{},r.charts||{});renderCharts(r.charts||{});renderUsers(r.users||[])}
   catch(e){connected(false);error('v54 · '+(e?.message||String(e)))}
 }
 $('adminLoad').onclick=load;$('adminRefresh').onclick=load;
