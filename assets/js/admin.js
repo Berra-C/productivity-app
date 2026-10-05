@@ -20,7 +20,8 @@ async function api(action,payload={}){
   return b;
 }
 function credentials(result,label='Yeni kullanıcı'){
-  $('adminCredentialResult').innerHTML=`<div class="admin-cred">
+  const resultBox=$('adminCredentialResult'); if(!resultBox) return;
+  resultBox.innerHTML=`<div class="admin-cred">
     <div><span>Kullanıcı adı</span><strong>${esc(result.username)}</strong></div>
     <div><span>Sihirli kelime</span><strong>${esc(result.magicWord)}</strong></div>
     <div><span>6 haneli kod</span><strong>${esc(result.accessCode)}</strong></div>
@@ -35,10 +36,16 @@ function renderSummary(s={}){
     ['Ort. oturum',s.averageSessionSeconds?fmtDuration(s.averageSessionSeconds):'—',''],
     ['Aktif cihaz oturumu',fmtCount(s.activeSessions),'']
   ];
-  $('adminSummary').innerHTML=cards.map(([k,v,c])=>`<div class="admin-stat ${c}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
+  const summaryEl=$('adminSummary'); if(!summaryEl) return;
+  summaryEl.innerHTML=cards.map(([k,v,c])=>`<div class="admin-stat ${c}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
 }
-function empty(el,msg='Henüz yeterli veri yok.'){el.innerHTML=`<div class="chart-empty">${esc(msg)}</div>`}
+function empty(el,msg='Henüz yeterli veri yok.'){
+  if(!el) return false;
+  el.innerHTML=`<div class="chart-empty">${esc(msg)}</div>`;
+  return true;
+}
 function svgLine(el,rows,key,opt={}){
+  if(!el) return false;
   const data=rows||[]; if(!data.length||!data.some(r=>Number(r[key])>0)){empty(el);return false}
   const W=720,H=190,pL=39,pR=10,pT=12,pB=30,max=Math.max(...data.map(r=>Number(r[key])||0),1);
   const x=i=>pL+(data.length===1?(W-pL-pR)/2:i*(W-pL-pR)/(data.length-1));
@@ -52,6 +59,7 @@ function svgLine(el,rows,key,opt={}){
   el.innerHTML=`<svg class="svg-chart" viewBox="0 0 ${W} ${H}">${grid}<path class="line-main" d="${path}"/>${dots}${labels}</svg>`;return true;
 }
 function barChart(el,rows,key,opt={}){
+  if(!el) return false;
   const data=rows||[]; if(!data.length||!data.some(r=>Number(r[key])>0)){empty(el);return false}
   const max=Math.max(...data.map(r=>Number(r[key])||0),1);
   el.innerHTML=`<div class="bar-grid">${data.map((r,i)=>{
@@ -62,6 +70,7 @@ function barChart(el,rows,key,opt={}){
   }).join('')}</div>`;return true;
 }
 function donut(el,rows){
+  if(!el) return false;
   const data=(rows||[]).filter(r=>Number(r.value)>0);
   if(!data.length){empty(el);return false}
   const total=data.reduce((s,r)=>s+Number(r.value||0),0);
@@ -73,6 +82,7 @@ function donut(el,rows){
   </div>`;return true;
 }
 function growthChart(el,rows){
+  if(!el) return false;
   const data=rows||[]; if(!data.length){empty(el);return false}
   const W=720,H=190,pL=36,pR=10,pT=12,pB=30;
   const maxTotal=Math.max(...data.map(r=>Number(r.total)||0),1), maxCreated=Math.max(...data.map(r=>Number(r.created)||0),1);
@@ -95,11 +105,11 @@ function renderCharts(c={}){
   donut($('activationChart'),c.activation||[]);
   donut($('sessionStatusChart'),c.sessionStatus||[]);
   growthChart($('growthChart'),c.accountGrowth||[]);
-  $('analyticsSection').hidden=false;
+  const analytics=$('analyticsSection'); if(analytics) analytics.hidden=false;
 }
 function deviceStatus(d){if(d.revoked)return['revoked','İptal'];if(d.expired)return['expired','Süresi doldu'];return['active','Aktif']}
 function renderUsers(users=[]){
-  const box=$('adminUsers'); if(!users.length){box.innerHTML='<div class="admin-empty">Henüz kullanıcı yok.</div>';return}
+  const box=$('adminUsers'); if(!box) return; if(!users.length){box.innerHTML='<div class="admin-empty">Henüz kullanıcı yok.</div>';return}
   box.innerHTML=users.map((u,i)=>{
     const devices=Array.isArray(u.devices)?u.devices:[];
     const meta=[`Oluşturma: ${fmtDate(u.created_at)}`,u.last_login_at?`Son giriş: ${fmtDate(u.last_login_at)}`:'Henüz giriş yapmadı',u.activeDeviceCount?`${u.activeDeviceCount} aktif cihaz`:''].filter(Boolean).join(' · ');
@@ -114,7 +124,7 @@ function renderUsers(users=[]){
 async function load(){
   error();if(!secret()){error('Önce yönetici anahtarını gir.');connected(false);return}
   try{const r=await api('admin-overview');connected(true);renderSummary(r.summary||{});renderCharts(r.charts||{});renderUsers(r.users||[])}
-  catch(e){connected(false);error(e.message)}
+  catch(e){connected(false);error('v54 · '+(e?.message||String(e)))}
 }
 $('adminLoad').onclick=load;$('adminRefresh').onclick=load;
 $('adminCreate').onclick=async()=>{error();if(!secret()){error('Önce yönetici anahtarını gir.');return}try{const r=await api('create-user');credentials(r);await load()}catch(e){error(e.message)}};
