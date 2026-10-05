@@ -2965,8 +2965,10 @@
     const liveDur = Number(session.duration||0) + liveElapsed;
     updateFlipClock(liveDur);
 
-    const subject = session.subject && session.subject!=='Genel' ? session.subject : session.name;
-    el.focusSubjectText.textContent = subject || 'Genel';
+    const sessionTitle = session.subject && session.subject!=='Genel'
+      ? session.subject
+      : (session.name || 'Oturum');
+    el.focusSubjectText.textContent = sessionTitle;
 
     const current = getCurrentTodoTask();
     if(current){
@@ -2986,9 +2988,7 @@
       const pct=Math.min(100,Math.round(liveDur/target*100));
       const remaining=Math.max(0,target-liveDur);
       el.focusTargetWrap.classList.remove('no-target');
-      el.focusTargetText.textContent = remaining>0
-        ? 'Hedefe '+formatDurationLabel(remaining)+' kaldı'
-        : 'Hedef tamamlandı';
+      el.focusTargetText.textContent = 'Hedef · '+formatDurationLabel(target);
       el.focusTargetPct.textContent = pct+'%';
       el.focusTargetFill.style.width=pct+'%';
       el.focusTargetFill.classList.toggle('reached', liveDur>=target);
@@ -3006,7 +3006,27 @@
     el.focusPauseBtn.classList.toggle('resume', !data.isWorking);
   }
 
-  function openFocusMode(){
+  let focusFullscreenOwned = false;
+
+  async function tryEnterMobileFocusLandscape(){
+    const mobileLike = window.matchMedia?.('(max-width: 900px)')?.matches;
+    if(!mobileLike) return;
+
+    try{
+      if(!document.fullscreenElement && document.documentElement.requestFullscreen){
+        await document.documentElement.requestFullscreen({navigationUI:'hide'});
+        focusFullscreenOwned = true;
+      }
+    }catch(error){}
+
+    try{
+      if(screen.orientation?.lock){
+        await screen.orientation.lock('landscape');
+      }
+    }catch(error){}
+  }
+
+  async function openFocusMode(){
     if(!data.activeSessionId || !findSession(data.activeSessionId)){
       showToast('Odak moduna girmek için önce bir oturum başlat.', true);
       return;
@@ -3014,8 +3034,17 @@
     lastFlipStr = ''; // yeniden açılışta saati baştan kur
     renderFocusOverlay();
     el.focusOverlay.classList.add('show');
+    await tryEnterMobileFocusLandscape();
   }
-  function closeFocusMode(){ el.focusOverlay.classList.remove('show'); }
+
+  function closeFocusMode(){
+    el.focusOverlay.classList.remove('show');
+    try{ screen.orientation?.unlock?.(); }catch(error){}
+    if(focusFullscreenOwned && document.fullscreenElement && document.exitFullscreen){
+      document.exitFullscreen().catch(()=>{});
+    }
+    focusFullscreenOwned = false;
+  }
 
   el.focusToggleBtn.addEventListener('click', openFocusMode);
 
