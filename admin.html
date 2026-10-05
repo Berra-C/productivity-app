@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0b1d1a">
 <title>Admin · Productivity</title>
-<link rel="icon" href="icons/icon.svg?v=54" type="image/svg+xml">
+<link rel="icon" href="icons/icon.svg?v=57" type="image/svg+xml">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-fraunces@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-sans@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-mono@4.0.0/index.css">
-<link rel="stylesheet" href="assets/css/app.css?v=54">
+<link rel="stylesheet" href="assets/css/app.css?v=57">
 <style>
 :root{
   --admin-line:rgba(116,217,159,.12);
@@ -69,11 +69,11 @@ body{
 .line-main{fill:none;stroke:var(--moss-bright);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 .line-secondary{fill:none;stroke:var(--admin-gold);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .dot-main{fill:var(--moss-bright);stroke:#102820;stroke-width:1.8}
-.bar-grid{display:flex;align-items:flex-end;gap:5px;height:155px;padding-top:8px}
-.bar-col{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px}
-.bar{width:100%;max-width:34px;min-height:2px;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,rgba(116,217,159,.95),rgba(82,183,136,.42));border:1px solid rgba(116,217,159,.10)}
+.bar-grid{display:flex;align-items:stretch;gap:5px;height:174px;padding-top:8px;border-bottom:1px solid rgba(116,217,159,.16)}
+.bar-col{flex:1;min-width:0;height:100%;display:grid;grid-template-rows:minmax(0,1fr) 19px;gap:0;align-items:end;justify-items:center;position:relative}
+.bar{width:100%;max-width:34px;min-height:0;border-radius:5px 5px 0 0;background:linear-gradient(180deg,rgba(116,217,159,.95),rgba(82,183,136,.42));border:1px solid rgba(116,217,159,.10);border-bottom:0;align-self:end}
 .bar.gold{background:linear-gradient(180deg,rgba(228,189,100,.92),rgba(228,189,100,.35))}
-.bar-label{font:7px 'IBM Plex Mono',monospace;color:var(--muted);white-space:nowrap}
+.bar-label{font:7px 'IBM Plex Mono',monospace;color:var(--muted);white-space:nowrap;align-self:end;padding-top:7px}
 .donut-wrap{display:grid;grid-template-columns:150px minmax(0,1fr);gap:14px;align-items:center;min-height:170px}
 .donut{width:142px;height:142px;border-radius:50%;position:relative;margin:auto;background:conic-gradient(rgba(255,255,255,.07) 0 100%)}
 .donut:after{content:'';position:absolute;inset:28px;border-radius:50%;background:#102a23;border:1px solid rgba(255,255,255,.05)}
@@ -128,12 +128,20 @@ body{
 .chart-card.is-collapsed>[id$="Chart"]{display:none}
 .admin-card.is-collapsed{padding-bottom:14px}
 
+
+.bar-col::after{content:'';position:absolute;left:0;right:0;bottom:18px;height:1px;background:rgba(116,217,159,.13);pointer-events:none}
+
+.bar-svg{width:100%;height:205px;display:block;overflow:visible}
+.bar-axis{stroke:rgba(116,217,159,.16);stroke-width:1}
+.bar-rect{fill:url(#barGrad);stroke:rgba(116,217,159,.10);stroke-width:1}
+.bar-label-text{fill:var(--muted);font:7px 'IBM Plex Mono',monospace}
+
 </style>
 </head>
 <body>
 <main class="admin-shell">
 <header class="admin-topbar">
-  <div class="admin-brand"><div class="admin-mark"><img src="icons/icon.svg?v=54" alt="Productivity App" class="admin-logo-img"></div><div><h1 class="admin-title">Admin Console</h1><div class="admin-sub">Toplu kullanım analitiği ve hesap yönetimi <span style="margin-left:6px;color:var(--moss-bright);font-family:'IBM Plex Mono',monospace">v54</span></div></div></div>
+  <div class="admin-brand"><div class="admin-mark"><img src="icons/icon.svg?v=57" alt="Productivity App" class="admin-logo-img"></div><div><h1 class="admin-title">Admin Console</h1><div class="admin-sub">Toplu kullanım analitiği ve hesap yönetimi <span style="margin-left:6px;color:var(--moss-bright);font-family:'IBM Plex Mono',monospace">v57</span></div></div></div>
   <a href="index.html" class="modal-btn ghost" style="text-decoration:none">Uygulamaya Dön</a>
 </header>
 
@@ -184,11 +192,7 @@ body{
       <div class="dashboard-grid">
         <div class="chart-card collapsible-chart"><div class="chart-head"><div><div class="chart-title">Ortalama oturum süresi</div><div class="chart-note">Son 30 gün</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="avgSessionChart"></div></div>
         <div class="chart-card collapsible-chart"><div class="chart-head"><div><div class="chart-title">Haftanın günlerine göre kullanım</div><div class="chart-note">Toplam çalışma süresi</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="weekdayChart"></div></div>
-        <div class="chart-card wide collapsible-chart"><div class="chart-head"><div><div class="chart-title">Saatlere göre kullanım</div><div class="chart-note">Çalışma interval'larının gün içi dağılımı</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="hourlyChart"></div></div>
-        <div class="chart-card third collapsible-chart"><div class="chart-head"><div><div class="chart-title">Hesap aktivasyonu</div><div class="chart-note">Giriş yapan / hiç giriş yapmayan</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="activationChart"></div></div>
-        <div class="chart-card third collapsible-chart"><div class="chart-head"><div><div class="chart-title">Oturum durumu</div><div class="chart-note">Aktif / kapanmış cihaz oturumları</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="sessionStatusChart"></div></div>
-        <div class="chart-card third collapsible-chart"><div class="chart-head"><div><div class="chart-title">Hesap büyümesi</div><div class="chart-note">Son 30 gün</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="growthChart"></div></div>
-      </div>
+        <div class="chart-card wide collapsible-chart"><div class="chart-head"><div><div class="chart-title">Saatlere göre kullanım</div><div class="chart-note">Çalışma interval'larının gün içi dağılımı</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="hourlyChart"></div></div>      </div>
     </div>
   </section>
 
@@ -204,7 +208,7 @@ body{
 </section>
 </div>
 </main>
-<script src="assets/js/cloud-config.js?v=54"></script>
-<script src="assets/js/admin.js?v=54"></script>
+<script src="assets/js/cloud-config.js?v=57"></script>
+<script src="assets/js/admin.js?v=57"></script>
 </body>
 </html>
