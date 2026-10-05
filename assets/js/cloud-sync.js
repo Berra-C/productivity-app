@@ -250,12 +250,13 @@
           <div class="cloud-signup-success">
             <div class="cloud-signup-check">✓</div>
             <h3>Hesabın hazır</h3>
-            <p>Bu bilgileri güvenli bir yere kaydet. Kullanıcı adı ve sihirli kelime daha sonra tekrar gösterilemez.</p>
+            <p><strong>Bu bilgileri mutlaka kaydet.</strong> Başka bir cihazdan veya daha sonra tekrar giriş yaparken kullanıcı adı, sihirli kelime ve seçtiğin 6 haneli kod birlikte gerekli olacak. Kullanıcı adı ve sihirli kelime daha sonra tekrar gösterilemez.</p>
             <div class="cloud-credential-grid">
               <div><span>Kullanıcı adı</span><strong>${escapeHtml(result.username)}</strong></div>
               <div><span>Sihirli kelime</span><strong>${escapeHtml(result.magicWord)}</strong></div>
               <div><span>Senin kodun</span><strong>${escapeHtml(result.accessCode)}</strong></div>
             </div>
+            <div class="cloud-signup-reminder">⚠ Bu üç bilgiden biri eksik olursa tekrar giriş yapamazsın. Gerekirse admin üzerinden giriş bilgilerin sıfırlanabilir.</div>
             <button type="button" class="modal-btn primary" id="cloudSignupContinue">Bilgileri Kaydettim · Devam Et</button>
           </div>`;
         $('cloudSignupContinue')?.addEventListener('click',async()=>{
