@@ -219,6 +219,64 @@
     }catch(err){ if(error) error.textContent=err.message||'Giriş yapılamadı.'; }
     finally{ if(btn) btn.disabled=false; }
   }
+  function openSignup(){
+    $('cloudSignupBackdrop')?.classList.add('show');
+    $('cloudSignupBackdrop')?.setAttribute('aria-hidden','false');
+    const result=$('cloudSignupResult'); if(result) result.innerHTML='';
+    const form=$('cloudSignupForm'); if(form) form.classList.remove('cloud-hidden');
+    const err=$('cloudSignupError'); if(err) err.textContent='';
+    const code=$('cloudSignupCode'); if(code){ code.value=''; setTimeout(()=>code.focus(),30); }
+    const confirmCode=$('cloudSignupCodeConfirm'); if(confirmCode) confirmCode.value='';
+  }
+  function closeSignup(){
+    $('cloudSignupBackdrop')?.classList.remove('show');
+    $('cloudSignupBackdrop')?.setAttribute('aria-hidden','true');
+  }
+  async function signup(){
+    const accessCode=$('cloudSignupCode')?.value.trim()||'';
+    const confirmCode=$('cloudSignupCodeConfirm')?.value.trim()||'';
+    const remember=!!$('cloudSignupRemember')?.checked;
+    const error=$('cloudSignupError'); if(error) error.textContent='';
+    if(!/^[0-9]{6}$/.test(accessCode)){ if(error) error.textContent='6 haneli bir sayı seç.'; return; }
+    if(accessCode!==confirmCode){ if(error) error.textContent='Kodlar eşleşmiyor.'; return; }
+
+    const btn=$('cloudSignupSubmit'); if(btn) btn.disabled=true;
+    try{
+      const result=await api('signup',{accessCode,deviceName:deviceName(),rememberDevice:remember});
+      const form=$('cloudSignupForm'); if(form) form.classList.add('cloud-hidden');
+      const box=$('cloudSignupResult');
+      if(box){
+        box.innerHTML=`
+          <div class="cloud-signup-success">
+            <div class="cloud-signup-check">✓</div>
+            <h3>Hesabın hazır</h3>
+            <p>Bu bilgileri güvenli bir yere kaydet. Kullanıcı adı ve sihirli kelime daha sonra tekrar gösterilemez.</p>
+            <div class="cloud-credential-grid">
+              <div><span>Kullanıcı adı</span><strong>${escapeHtml(result.username)}</strong></div>
+              <div><span>Sihirli kelime</span><strong>${escapeHtml(result.magicWord)}</strong></div>
+              <div><span>Senin kodun</span><strong>${escapeHtml(result.accessCode)}</strong></div>
+            </div>
+            <button type="button" class="modal-btn primary" id="cloudSignupContinue">Bilgileri Kaydettim · Devam Et</button>
+          </div>`;
+        $('cloudSignupContinue')?.addEventListener('click',async()=>{
+          storeToken(result.sessionToken,remember);
+          account={id:result.accountId,username:result.username};
+          localStorage.setItem(LS.username,result.username);
+          localStorage.setItem(LS.accountId,result.accountId);
+          localStorage.setItem(LS.baseRevision,'0');
+          closeSignup(); updateUI();
+          await syncNow({initial:true});
+          await loadDevices();
+          toast('Hesabın oluşturuldu ve giriş yapıldı.','success');
+        },{once:true});
+      }
+    }catch(err){
+      if(error) error.textContent=err.message||'Hesap oluşturulamadı.';
+    }finally{
+      if(btn) btn.disabled=false;
+    }
+  }
+
   async function logout(){
     try{ if(getToken()) await api('logout',{sessionToken:getToken()}); }catch(error){}
     clearAuth(); updateUI(); $('cloudDevices').innerHTML=''; toast('Bu cihazdaki oturum kapatıldı.');
@@ -244,7 +302,7 @@
       <div class="settings-section-title">Hesap ve Senkronizasyon</div>
       <div class="cloud-account-card">
         <div class="cloud-account-top"><div><span class="cloud-kicker">BULUT HESABI</span><strong id="cloudUsername">—</strong></div><span class="cloud-status" id="cloudStatus" data-kind="off">Giriş yapılmadı</span></div>
-        <div id="cloudSignedOut"><p class="cloud-muted">Aynı hesabı farklı cihazlarda kullanmak için kullanıcı adı, sihirli kelime ve 6 haneli kodunla giriş yap.</p><button type="button" class="modal-btn primary" id="cloudOpenLogin">Giriş Yap</button></div>
+        <div id="cloudSignedOut"><p class="cloud-muted">Aynı hesabı farklı cihazlarda kullanabilir veya buradan yeni bir bulut hesabı oluşturabilirsin.</p><div class="cloud-actions"><button type="button" class="modal-btn primary" id="cloudOpenLogin">Giriş Yap</button><button type="button" class="modal-btn ghost" id="cloudOpenSignup">Hesap Oluştur</button></div></div>
         <div id="cloudSignedIn" class="cloud-hidden">
           <div class="cloud-sync-meta"><span>Son senkronizasyon</span><b id="cloudLastSync">—</b></div>
           <div class="cloud-actions"><button type="button" class="modal-btn primary" id="cloudSyncNow">Şimdi Senkronize Et</button><button type="button" class="modal-btn ghost" id="cloudRefreshDevices">Cihazları Yenile</button></div>
@@ -258,10 +316,30 @@
     loginBackdrop.innerHTML=`<div class="modal-box cloud-login-box"><div class="cloud-login-icon">☁️</div><h2>Bulut hesabına giriş</h2><p>Kullanıcı bilgilerin yalnızca hesabını açmak için kullanılır.</p><label>Kullanıcı adı<input id="cloudLoginUsername" autocomplete="username" placeholder="NOVA-4831"></label><label>Sihirli kelime<input id="cloudLoginMagic" type="password" autocomplete="current-password" placeholder="••••••••••"></label><label>6 haneli kod<input id="cloudLoginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"></label><label class="cloud-remember"><input type="checkbox" id="cloudLoginRemember" checked> Bu cihazda oturumu açık tut</label><div class="cloud-login-error" id="cloudLoginError"></div><div class="modal-actions"><button type="button" class="modal-btn ghost" id="cloudLoginCancel">Vazgeç</button><button type="button" class="modal-btn primary" id="cloudLoginSubmit">Giriş Yap</button></div></div>`;
     document.body.appendChild(loginBackdrop);
 
+    const signupBackdrop=document.createElement('div'); signupBackdrop.className='modal-backdrop'; signupBackdrop.id='cloudSignupBackdrop'; signupBackdrop.setAttribute('aria-hidden','true');
+    signupBackdrop.innerHTML=`<div class="modal-box cloud-login-box cloud-signup-box">
+      <div class="cloud-login-icon">🌱</div>
+      <h2>Yeni hesap oluştur</h2>
+      <p>6 haneli kodunu sen seç. Kullanıcı adı ve sihirli kelimeyi sistem güvenli şekilde oluşturacak.</p>
+      <div id="cloudSignupForm">
+        <label>6 haneli kodun<input id="cloudSignupCode" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6" placeholder="000000"></label>
+        <label>Kodu tekrar yaz<input id="cloudSignupCodeConfirm" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6" placeholder="000000"></label>
+        <label class="cloud-remember"><input type="checkbox" id="cloudSignupRemember" checked> Bu cihazda oturumu açık tut</label>
+        <div class="cloud-login-error" id="cloudSignupError"></div>
+        <div class="modal-actions"><button type="button" class="modal-btn ghost" id="cloudSignupCancel">Vazgeç</button><button type="button" class="modal-btn primary" id="cloudSignupSubmit">Hesabı Oluştur</button></div>
+      </div>
+      <div id="cloudSignupResult"></div>
+    </div>`;
+    document.body.appendChild(signupBackdrop);
+
     $('cloudOpenLogin').addEventListener('click',openLogin);
     $('cloudLoginCancel').addEventListener('click',closeLogin);
     $('cloudLoginSubmit').addEventListener('click',login);
     $('cloudLoginCode').addEventListener('keydown',e=>{if(e.key==='Enter') login();});
+    $('cloudOpenSignup').addEventListener('click',openSignup);
+    $('cloudSignupCancel').addEventListener('click',closeSignup);
+    $('cloudSignupSubmit').addEventListener('click',signup);
+    $('cloudSignupCodeConfirm').addEventListener('keydown',e=>{if(e.key==='Enter') signup();});
     $('cloudSyncNow').addEventListener('click',()=>syncNow());
     $('cloudLogout').addEventListener('click',logout);
     $('cloudRefreshDevices').addEventListener('click',loadDevices);
