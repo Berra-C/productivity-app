@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v76';
+const CACHE_VERSION = 'v77';
 const STATIC_CACHE = `test-pwa-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `test-pwa-runtime-${CACHE_VERSION}`;
 const FONT_CACHE = `test-pwa-fonts-${CACHE_VERSION}`;
@@ -42,17 +42,23 @@ self.addEventListener('activate', event => {
 
 async function networkFirstNavigation(request) {
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: 'no-store' });
     if (response && response.ok) {
       const cache = await caches.open(RUNTIME_CACHE);
       cache.put(request, response.clone()).catch(() => {});
-      cache.put('./index.html', response.clone()).catch(() => {});
     }
     return response;
   } catch (_) {
-    return (await caches.match(request))
-      || (await caches.match('./index.html'))
-      || (await caches.match('./'));
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    const url = new URL(request.url);
+    if (url.pathname.endsWith('/admin.html')) {
+      return new Response('Admin page is unavailable offline.', {
+        status: 503,
+        headers: { 'content-type': 'text/plain; charset=utf-8' }
+      });
+    }
+    return (await caches.match('./index.html')) || (await caches.match('./'));
   }
 }
 
