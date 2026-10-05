@@ -79,6 +79,19 @@ async function rateLimit(username:string,ipHash:string){
   if(failures.length>=5 && failures[0] && Date.now()-new Date(failures[0].created_at).getTime()<30000) return {blocked:true,retry:30};
   return {blocked:false,retry:0};
 }
+
+async function signupRateLimit(ipHash:string){
+  const sinceHour=new Date(Date.now()-60*60*1000).toISOString();
+  const sinceDay=new Date(Date.now()-24*60*60*1000).toISOString();
+  const rows=await select(`app_login_attempts?select=created_at&username=eq.__SIGNUP__&ip_hash=eq.${encodeURIComponent(ipHash)}&created_at=gte.${encodeURIComponent(sinceDay)}&order=created_at.desc&limit=20`);
+  const lastHour=rows.filter((r:any)=>new Date(r.created_at).getTime()>=new Date(sinceHour).getTime()).length;
+  if(lastHour>=3) return {blocked:true,retry:3600};
+  if(rows.length>=10) return {blocked:true,retry:86400};
+  return {blocked:false,retry:0};
+}
+async function recordSignup(ipHash:string){
+  try{ await insert('app_login_attempts',{username:'__SIGNUP__',ip_hash:ipHash,success:true},false); }catch{}
+}
 async function newSession(accountId:string,deviceName:string,rememberDevice=true){
   const token=bytesToB64(randomBytes(32)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
   const tokenHash=await sha256(token);
@@ -166,6 +179,34 @@ function lastDateKeys(count:number){
 
 async function handle(req:Request,body:any){
   const action=String(body?.action||'');
+
+  if(action==='signup'){
+    const accessCode=String(body.accessCode||'').trim();
+    if(!/^\d{6}$/.test(accessCode)) return json({error:'6 haneli bir erişim kodu seç.'},400);
+
+    const ipHash=await sha256(clientIp(req));
+    const limit=await signupRateLimit(ipHash);
+    if(limit.blocked) return json({error:'Bu bağlantıdan kısa sürede çok fazla hesap oluşturuldu. Daha sonra tekrar dene.',retryAfter:limit.retry},429);
+
+    const username=await uniqueUsername();
+    const magicWord=randomMagic();
+    const salt=bytesToB64(randomBytes(16));
+    const hash=await credentialHash(magicWord,accessCode,salt);
+    const rows=await insert('app_accounts',{username,credential_salt:salt,credential_hash:hash});
+    await recordSignup(ipHash);
+    const session=await newSession(rows[0].id,safeDevice(body.deviceName),body.rememberDevice!==false);
+
+    return json({
+      accountId:rows[0].id,
+      username:String(username).toUpperCase(),
+      magicWord,
+      accessCode,
+      sessionToken:session.token,
+      expiresAt:session.row?.expires_at,
+      createdAt:rows[0].created_at
+    },201);
+  }
+
   if(action==='login'){
     const username=normalizeUsername(body.username), magicWord=String(body.magicWord||''), accessCode=String(body.accessCode||'');
     if(!username||magicWord.length<3||!/^[0-9]{6}$/.test(accessCode)) return json({error:'Giriş bilgileri geçersiz.'},400);
