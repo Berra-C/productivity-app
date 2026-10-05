@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0b1d1a">
 <title>Admin · Productivity</title>
+<link rel="icon" href="icons/icon.svg?v=53" type="image/svg+xml">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-fraunces@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-sans@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-mono@4.0.0/index.css">
-<link rel="stylesheet" href="assets/css/app.css?v=52">
+<link rel="stylesheet" href="assets/css/app.css?v=53">
 <style>
 :root{
   --admin-line:rgba(116,217,159,.12);
@@ -108,12 +109,31 @@ body{
 .admin-empty{color:var(--muted);font-size:10px;text-align:center;padding:22px}
 @media(max-width:1000px){.admin-grid{grid-template-columns:1fr}.admin-side{position:static}.chart-card.third{grid-column:span 6}}
 @media(max-width:720px){body{padding:20px 12px 55px}.dashboard-grid>.chart-card[style]{grid-column:span 12!important}.admin-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.chart-card,.chart-card.third{grid-column:span 12}.donut-wrap{grid-template-columns:1fr}.admin-user-top{grid-template-columns:1fr}.admin-title{font-size:23px}}
+
+.admin-logo-img{width:25px;height:25px;display:block;object-fit:contain}
+.admin-section-head,.chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.admin-section-copy{min-width:0}
+.collapse-btn{
+  flex:0 0 auto;width:30px;height:30px;border-radius:9px;border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.025);color:var(--muted);cursor:pointer;display:grid;place-items:center;
+  font:700 14px/1 'IBM Plex Mono',monospace;transition:.16s ease
+}
+.collapse-btn:hover{color:var(--paper);border-color:rgba(116,217,159,.2);background:rgba(116,217,159,.05)}
+.collapsible-body{overflow:hidden}
+.is-collapsed>.collapsible-body{display:none}
+.is-collapsed>.admin-section-head{margin-bottom:0}
+.is-collapsed .collapse-btn{transform:rotate(-90deg)}
+.chart-card.is-collapsed{padding-bottom:10px}
+.chart-card.is-collapsed .chart-head{margin-bottom:0}
+.chart-card.is-collapsed>[id$="Chart"]{display:none}
+.admin-card.is-collapsed{padding-bottom:14px}
+
 </style>
 </head>
 <body>
 <main class="admin-shell">
 <header class="admin-topbar">
-  <div class="admin-brand"><div class="admin-mark">⌘</div><div><h1 class="admin-title">Admin Console</h1><div class="admin-sub">Toplu kullanım analitiği ve hesap yönetimi <span style="margin-left:6px;color:var(--moss-bright);font-family:'IBM Plex Mono',monospace">v52</span></div></div></div>
+  <div class="admin-brand"><div class="admin-mark"><img src="icons/icon.svg?v=53" alt="Productivity App" class="admin-logo-img"></div><div><h1 class="admin-title">Admin Console</h1><div class="admin-sub">Toplu kullanım analitiği ve hesap yönetimi <span style="margin-left:6px;color:var(--moss-bright);font-family:'IBM Plex Mono',monospace">v53</span></div></div></div>
   <a href="index.html" class="modal-btn ghost" style="text-decoration:none">Uygulamaya Dön</a>
 </header>
 
@@ -141,46 +161,50 @@ body{
 </aside>
 
 <section class="admin-main">
-  <section class="admin-card">
-    <h2 class="admin-card-title">Genel görünüm</h2>
-    <div class="admin-card-sub">Sadece anlamlı toplu metrikler. Kullanıcı performans sıralaması ve görev istatistiği yoktur.</div>
+  <section class="admin-card collapsible-section" data-collapsible="general">
+    <div class="admin-section-head">
+      <div class="admin-section-copy"><h2 class="admin-card-title">Genel görünüm</h2><div class="admin-card-sub">En önemli toplu metrikler ve ana trendler.</div></div>
+      <button class="collapse-btn" type="button" aria-label="Bölümü kapat/aç" data-collapse-btn>⌄</button>
+    </div>
+    <div class="collapsible-body">
     <div class="admin-summary" id="adminSummary"><div class="admin-empty">Bağlandıktan sonra veriler burada görünecek.</div></div>
     <div class="dashboard-grid" style="margin-top:12px">
-      <div class="chart-card" style="grid-column:span 8"><div class="chart-head"><div><div class="chart-title">Toplam çalışma süresi</div><div class="chart-note">Son 30 gün · günlük toplam</div></div></div><div id="dailyWorkChart"></div></div>
-      <div class="chart-card" style="grid-column:span 4"><div class="chart-head"><div><div class="chart-title">Hesap durumu</div><div class="chart-note">Aktif / devre dışı</div></div></div><div id="accountStatusChart"></div></div>
+      <div class="chart-card collapsible-chart" style="grid-column:span 8"><div class="chart-head"><div><div class="chart-title">Toplam çalışma süresi</div><div class="chart-note">Son 30 gün · günlük toplam</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="dailyWorkChart"></div></div>
+      <div class="chart-card collapsible-chart" style="grid-column:span 4"><div class="chart-head"><div><div class="chart-title">Hesap durumu</div><div class="chart-note">Aktif / devre dışı</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="accountStatusChart"></div></div>
+    </div>
     </div>
   </section>
 
-  <section class="admin-card" id="analyticsSection" hidden>
-    <h2 class="admin-card-title">Kullanım analitiği</h2>
-    <div class="admin-card-sub">Çalışma davranışı, hesap sağlığı, oturumlar ve senkronizasyon toplu olarak gösterilir.</div>
-    <div class="dashboard-grid">
-      <div class="chart-card"><div class="chart-head"><div><div class="chart-title">Günlük çalışma oturumları</div><div class="chart-note">Son 30 gün</div></div></div><div id="dailySessionsChart"></div></div>
-      <div class="chart-card"><div class="chart-head"><div><div class="chart-title">Ortalama oturum süresi</div><div class="chart-note">Son 30 gün · çalışma süresi / oturum</div></div></div><div id="avgSessionChart"></div></div>
-
-      <div class="chart-card"><div class="chart-head"><div><div class="chart-title">Haftanın günlerine göre kullanım</div><div class="chart-note">Tüm kayıtlı çalışma süresi</div></div></div><div id="weekdayChart"></div></div>
-      <div class="chart-card"><div class="chart-head"><div><div class="chart-title">Saatlere göre kullanım</div><div class="chart-note">Çalışma interval'larının gün içi dağılımı</div></div></div><div id="hourlyChart"></div></div>
-
-      <div class="chart-card third"><div class="chart-head"><div><div class="chart-title">Hesap aktivasyonu</div><div class="chart-note">En az bir kez giriş yaptı mı?</div></div></div><div id="activationChart"></div></div>
-      <div class="chart-card third"><div class="chart-head"><div><div class="chart-title">Son giriş dağılımı</div><div class="chart-note">Mevcut hesapların son giriş zamanı</div></div></div><div id="loginRecencyChart"></div></div>
-
-      <div class="chart-card third"><div class="chart-head"><div><div class="chart-title">Oturum durumu</div><div class="chart-note">Cihaz oturumları</div></div></div><div id="sessionStatusChart"></div></div>
-      <div class="chart-card third"><div class="chart-head"><div><div class="chart-title">Cihaz sayısı</div><div class="chart-note">Hesap başına kayıtlı farklı cihaz</div></div></div><div id="deviceCountChart"></div></div>
-      <div class="chart-card third"><div class="chart-head"><div><div class="chart-title">Sync güncelliği</div><div class="chart-note">Bulut verisinin son güncellenme zamanı</div></div></div><div id="syncRecencyChart"></div></div>
-
-      <div class="chart-card wide"><div class="chart-head"><div><div class="chart-title">Hesap büyümesi</div><div class="chart-note">Son 30 gün · yeni hesaplar ve toplam hesap sayısı</div></div></div><div id="growthChart"></div></div>
+  <section class="admin-card collapsible-section" id="analyticsSection" data-collapsible="analytics" hidden>
+    <div class="admin-section-head">
+      <div class="admin-section-copy"><h2 class="admin-card-title">Kullanım analitiği</h2><div class="admin-card-sub">Sadece karar vermeyi kolaylaştıran temel kullanım ve büyüme verileri.</div></div>
+      <button class="collapse-btn" type="button" aria-label="Bölümü kapat/aç" data-collapse-btn>⌄</button>
+    </div>
+    <div class="collapsible-body">
+      <div class="dashboard-grid">
+        <div class="chart-card collapsible-chart"><div class="chart-head"><div><div class="chart-title">Ortalama oturum süresi</div><div class="chart-note">Son 30 gün</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="avgSessionChart"></div></div>
+        <div class="chart-card collapsible-chart"><div class="chart-head"><div><div class="chart-title">Haftanın günlerine göre kullanım</div><div class="chart-note">Toplam çalışma süresi</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="weekdayChart"></div></div>
+        <div class="chart-card wide collapsible-chart"><div class="chart-head"><div><div class="chart-title">Saatlere göre kullanım</div><div class="chart-note">Çalışma interval'larının gün içi dağılımı</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="hourlyChart"></div></div>
+        <div class="chart-card third collapsible-chart"><div class="chart-head"><div><div class="chart-title">Hesap aktivasyonu</div><div class="chart-note">Giriş yapan / hiç giriş yapmayan</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="activationChart"></div></div>
+        <div class="chart-card third collapsible-chart"><div class="chart-head"><div><div class="chart-title">Oturum durumu</div><div class="chart-note">Aktif / kapanmış cihaz oturumları</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="sessionStatusChart"></div></div>
+        <div class="chart-card third collapsible-chart"><div class="chart-head"><div><div class="chart-title">Hesap büyümesi</div><div class="chart-note">Son 30 gün</div></div><button class="collapse-btn" type="button" aria-label="Grafiği kapat/aç" data-chart-collapse>⌄</button></div><div id="growthChart"></div></div>
+      </div>
     </div>
   </section>
 
-  <section class="admin-card">
-    <h2 class="admin-card-title">Hesap yönetimi</h2>
-    <div class="admin-card-sub">Bu bölüm yalnızca hesap ve cihaz yönetimi içindir; kullanıcı bazlı performans istatistiği göstermez.</div>
+  <section class="admin-card collapsible-section" data-collapsible="accounts">
+    <div class="admin-section-head">
+      <div class="admin-section-copy"><h2 class="admin-card-title">Hesap yönetimi</h2><div class="admin-card-sub">Hesap, durum ve cihaz oturumu yönetimi.</div></div>
+      <button class="collapse-btn" type="button" aria-label="Bölümü kapat/aç" data-collapse-btn>⌄</button>
+    </div>
+    <div class="collapsible-body">
     <div class="admin-users" id="adminUsers"><div class="admin-empty">Yönetici anahtarını girip bağlan.</div></div>
+    </div>
   </section>
 </section>
 </div>
 </main>
-<script src="assets/js/cloud-config.js?v=52"></script>
-<script src="assets/js/admin.js?v=52"></script>
+<script src="assets/js/cloud-config.js?v=53"></script>
+<script src="assets/js/admin.js?v=53"></script>
 </body>
 </html>
