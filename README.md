@@ -11,9 +11,9 @@ A local-first productivity app for focused work, planning, analytics, and long-t
 </div>
 
 ```text
-┌───────────────────────────────────────────────────────────────┐
-│  FOCUS  →  PLAN  →  TRACK  →  UNDERSTAND  →  GROW           │
-└───────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  FOCUS  →  PLAN  →  TRACK  →  UNDERSTAND  →  GROW    │
+└──────────────────────────────────────────────────────┘
 ```
 
 > [!NOTE]
