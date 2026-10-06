@@ -2,602 +2,787 @@
 
 # PRODUCTIVITY APP
 
-### Focus. Plan. Track. Grow.
+### `FOCUS` · `PLAN` · `TRACK` · `GROW`
 
-A local-first productivity platform that brings together focused work sessions, task management, calendar planning, analytics, gamification, and optional cloud synchronization.
+A local-first productivity app for focused work, planning, analytics, and long-term progress.
 
-[**Open the App**](https://berra-c.github.io/productivity-app/)
+[**OPEN THE APP**](https://berra-c.github.io/productivity-app/)
 
 </div>
 
 ```text
-+-------------------------------------------------------------+
-|  FOCUS  ->  PLAN  ->  TRACK  ->  UNDERSTAND  ->  GROW      |
-+-------------------------------------------------------------+
+┌───────────────────────────────────────────────────────────────┐
+│  FOCUS  →  PLAN  →  TRACK  →  UNDERSTAND  →  GROW           │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 > [!NOTE]
-> This README describes the product, user-facing behavior, and high-level architecture.  
+> **Productivity App is designed to help you work, not make productivity more complicated.**  
+> You can start using it locally without creating an account and enable cloud sync later if you want to continue across devices.
+
 ---
 
-## 01 / Overview
+# 01 / OVERVIEW
 
-**Productivity App** is a personal productivity system designed for students, independent learners, and knowledge workers who want to plan work, enter a focused session quickly, and understand what actually happened afterward.
+Productivity App brings together the main parts of a personal productivity system in one place:
 
-It is not intended to be only a timer or a to-do list. The application connects planning and execution in one place:
+| System | Purpose |
+|---|---|
+| **Tasks** | Decide what needs to be done |
+| **Calendar** | Place work in time |
+| **Focus Sessions** | Record what you actually worked on |
+| **Analytics** | Understand your work patterns |
+| **Goals & Streaks** | Build consistency |
+| **Trees, XP & Badges** | Make long-term progress visible |
+| **Cloud Sync** | Continue across devices |
 
-- tasks describe **what needs to be done**,
-- the calendar provides **time context**,
-- work sessions record **what actually happened**,
-- analytics reveal **patterns over time**,
-- gamification turns long-term effort into **visible progress**.
-
-The product follows one simple principle:
-
-> **Working should remain more important than managing the productivity tool.**
-
-The interface is therefore designed to reduce friction before, during, and after a work session.
-
-### Core idea
+The key idea is that these systems are connected rather than isolated.
 
 ```text
-WORK -> TRACK -> UNDERSTAND PATTERNS -> MAINTAIN PROGRESS
+TASK
+  ↓
+CALENDAR
+  ↓
+FOCUS SESSION
+  ↓
+REAL WORK DATA
+  ↓
+ANALYTICS
+  ↓
+LONG-TERM PROGRESS
 ```
 
----
-
-## 02 / Product Goals
-
-The application is not designed to maximize the number of features visible at once. Its goal is to reduce the number of decisions a user has to make before beginning meaningful work.
-
-It should help answer questions such as:
-
-- Which subject received most of my time this week?
-- At what hours do I usually work?
-- Are my sessions becoming longer or more fragmented?
-- Which days tend to break my routine?
-- How much of my planned work becomes actual focused work?
-- What kinds of distractions interrupt me most often?
-
-### Main goals
-
-- Start and record focused work with as little friction as possible.
-- Track **when** and **how** work happens, not only total time.
-- Make long-term progress visually understandable.
-- Keep the core experience useful without requiring a cloud account.
-- Treat mobile as a first-class experience rather than a scaled-down desktop layout.
-- Support optional multi-device synchronization while preserving a local-first model.
-- Keep analytics reflective and useful rather than competitive or surveillance-oriented.
+> [!TIP]
+> A task represents **intention**.  
+> A focus session represents **actual work**.  
+> Keeping those two separate makes the data more useful.
 
 ---
 
-## 03 / Work Sessions & Focus Tracking
+# 02 / WHY IT EXISTS
 
-The timer system is the foundation of the application.
+Most productivity tools are good at one thing:
 
-Calendar history, statistics, daily goals, streaks, gamification, and long-term summaries become more meaningful when they are based on **real recorded work** rather than manually entered estimates.
+- timers,
+- task lists,
+- calendars,
+- habit tracking,
+- statistics.
 
-### 3.1 Work Sessions
+Productivity App is designed to connect those pieces without forcing the user to manage a complicated system.
 
-A user can create a session, assign a topic or name, optionally define a target duration, and begin working.
+### The app should help answer questions like:
 
-A session can be:
+```text
+Which subject received most of my time this week?
 
-- started with or without a target duration,
-- paused,
-- resumed,
-- completed.
+At what hours do I usually work?
+
+Are my sessions getting longer or more fragmented?
+
+Which days tend to break my routine?
+
+What distracts me most often?
+
+How consistent have I been over the last month?
+```
+
+> [!IMPORTANT]
+> The app is primarily about **self-understanding**, not competition.  
+> There is no productivity leaderboard built around comparing users with each other.
+
+---
+
+# 03 / FOCUS SESSIONS
+
+The timer is the core of the application.
+
+A session can include:
+
+- a name,
+- a subject or topic,
+- an optional target duration.
+
+You can:
+
+```text
+START
+  ↓
+PAUSE
+  ↓
+RESUME
+  ↓
+FINISH
+```
 
 Pausing and resuming does **not** create a new logical session.
 
-The application stores actual work intervals separately so that breaks are not counted as focused work.
+## REAL FOCUSED TIME
+
+The app distinguishes between:
+
+- how long a session remained open,
+- how long you were actually working.
 
 ```text
-Example
-
-Session open time:     60 min
-Pause time:            15 min
-Actual focused work:   45 min
+SESSION OPEN TIME      60 min
+PAUSE TIME             15 min
+────────────────────────────
+FOCUSED WORK           45 min
 ```
 
-This interval-based model also supports hour-of-day analytics. If a session crosses several hours, its work can be attributed to the correct time windows instead of being assigned only to the session start time.
+> [!NOTE]
+> Real work intervals are stored separately.  
+> This makes later calendar and analytics views much more accurate.
 
-### 3.2 Session Targets
-
-A target duration can be attached to a session.
-
-```text
-25 min   |   45 min   |   60 min   |   Custom
-```
-
-As the session progresses, the application shows progress toward the target using a percentage and progress bar.
-
-### 3.3 Focus Mode
-
-Focus Mode removes nonessential interface elements and turns the timer into the primary visual.
-
-When Focus Mode is open, the screen is reduced to:
-
-- the current session or topic name,
-- a large flip-clock,
-- the session target duration,
-- the target progress bar.
-
-The flip-clock is intentionally dominant.
-
-On supported mobile browsers, Focus Mode attempts to use fullscreen and landscape orientation so the phone can act like a dedicated desk timer.
-
-The interface stays minimal by default. Tapping the flip-clock can temporarily reveal essential controls such as pause/resume and finish; they automatically disappear again after a short delay.
+Because work intervals are preserved, the app can understand **when during the day** the work actually happened.
 
 ---
 
-## 04 / Daily Goals, Streaks & Progress
+# 04 / SESSION TARGETS
 
-Daily goals create short-term direction, while streaks and long-term statistics create a broader sense of continuity.
-
-### 4.1 Daily Work Goal
-
-Users can define a daily work target.
+A focus session can optionally have a time goal.
 
 ```text
-Example daily target: 120 minutes
+25 MIN   |   45 MIN   |   60 MIN   |   CUSTOM
 ```
 
-The application compares completed focused work against that target and displays progress visually.
+During the session, the app shows:
 
-### 4.2 Work Streak
+- target duration,
+- progress percentage,
+- progress bar.
 
-Consistently reaching daily goals contributes to a work streak.
-
-```text
-Example: 12-day streak
-```
-
-The purpose is to reward sustainable consistency rather than isolated high-output days.
-
-### 4.3 Streak Protection
-
-The application includes a streak-protection concept so that a larger pattern of consistency does not necessarily disappear because of one missed day.
-
-### 4.4 Daily Score
-
-A daily score provides a compact summary of the user's work behavior.
-
-It is intended as a quick signal for the day, not as a replacement for detailed statistics.
+This gives the user a clear finish line without forcing every session into the same format.
 
 ---
 
-## 05 / Gamification & Long-Term Motivation
+# 05 / FOCUS MODE
 
-Gamification is used as a **visual memory of effort**, not as the purpose of the application.
+Focus Mode turns the application into a minimal desk timer.
 
-The underlying work records remain the source of truth.
-
-### 5.1 Tree Growth System
-
-Focused work contributes to the development of the user's current tree.
+When enabled, the screen is intentionally reduced to only:
 
 ```text
-SEED -> SPROUT -> PLANT -> MATURE PLANT -> TREE
+SESSION NAME
+
+        LARGE FLIP CLOCK
+
+TARGET DURATION
+██████████████░░░░
 ```
 
-As progress accumulates, the tree advances through visible stages.
+The flip-clock becomes the visual focus.
 
-### 5.2 Tree Collection
+> [!TIP]
+> On supported phones, Focus Mode can use fullscreen and landscape orientation so the phone can sit beside a notebook or keyboard like a dedicated timer.
 
-Completed trees remain in a personal collection instead of disappearing.
+### Temporary controls
 
-| Tree / Plant | Tree / Plant | Tree / Plant |
-|---|---|---|
-| Oak | Pine | Sakura |
-| Olive | Bamboo | Palm |
-| Cactus | Tulip | Rose |
-| Daisy | Basil | Clover |
-| Lotus | Additional species | |
+The Focus screen stays clean by default.
 
-### 5.3 Levels & XP
+Tapping the flip-clock can temporarily reveal controls such as:
 
-Work activity contributes to experience points.
+- Pause / Resume
+- Finish Session
 
-As XP accumulates, the user reaches higher levels, creating a long-term progression layer beyond daily productivity.
-
-### 5.4 Badges
-
-Unlockable badges represent milestones and patterns such as:
-
-- accumulated work time,
-- consistency,
-- task activity,
-- streaks,
-- other in-app achievements.
-
-The system is deliberately personal rather than leaderboard-driven.
+They disappear again automatically after a short delay.
 
 ---
 
-## 06 / Distraction Tracking
+# 06 / DAILY GOALS
 
-The application can record moments when the user's attention is disrupted.
+Users can define how much focused work they want to complete in a day.
 
-The goal is **self-observation**, not punishment.
+```text
+DAILY GOAL
+120 MINUTES
 
-Common categories include:
+PROGRESS
+████████████░░░░░░
+```
 
-- Phone
-- Social media
-- Environment
-- Fatigue
-- Other
+The app updates progress as focus sessions are completed.
 
-Distraction logging is intentionally quick so that recording an interruption does not itself become another interruption.
-
-Over time, the data can help reveal patterns such as:
-
-- repeated phone distractions during evening sessions,
-- fatigue during late-night work,
-- certain hours with consistently weaker focus.
+> [!NOTE]
+> Daily goals are meant to provide direction, not pressure.  
+> Detailed work history remains available separately from goal completion.
 
 ---
 
-## 07 / Task Management
+# 07 / STREAKS & DAILY PROGRESS
 
-The task system complements the timer rather than replacing it.
+Consistently completing daily goals can build a streak.
 
-A task describes **what needs to be done**.  
-A work session records **the time actually spent doing it**.
+```text
+12-DAY STREAK
+```
 
-### Core task features
+The purpose is to make consistency visible over time.
+
+## Streak protection
+
+The app includes a streak-protection concept so that one missed day does not necessarily erase a longer pattern of consistency.
+
+## Daily score
+
+A daily score gives a compact snapshot of the day.
+
+It works as a quick indicator while the full statistics remain available elsewhere.
+
+---
+
+# 08 / TASK MANAGEMENT
+
+Tasks help answer:
+
+> **What should I do?**
+
+Focus sessions later answer:
+
+> **What did I actually spend time doing?**
+
+### Task features
 
 - Quick task creation
-- Optional dates
-- Optional times
+- Optional date
+- Optional time
 - Dated or undated tasks
-- Repeating tasks
+- Recurring tasks
 - Custom labels
 - Search
-- Status filters
-- Timing filters
+- Filters
 
-### 7.1 Recurring Tasks
+## Recurring tasks
 
 Tasks can repeat:
 
-- daily,
-- weekly,
-- monthly.
-
-Weekly tasks can be attached to selected weekdays.
-
 ```text
-Monday | Wednesday | Friday
+DAILY
+WEEKLY
+MONTHLY
 ```
 
-### 7.2 Task Labels
-
-Users can organize tasks with custom labels and colors.
+Weekly tasks can be assigned to selected days:
 
 ```text
-Mathematics | German | University | Project | Personal
+MONDAY | WEDNESDAY | FRIDAY
 ```
 
-### 7.3 Search & Filtering
+## Labels
 
-As the task list grows, users can narrow it by:
+Users can create custom task categories.
 
-- active tasks,
-- completed tasks,
-- overdue tasks,
-- today's tasks,
-- upcoming tasks,
-- tasks without a date.
+```text
+MATHEMATICS
+GERMAN
+UNIVERSITY
+PROJECT
+PERSONAL
+```
+
+## Filters
+
+Large task lists can be narrowed by:
+
+- Active
+- Completed
+- Overdue
+- Today
+- Upcoming
+- No date
+
+> [!TIP]
+> The task system is intentionally flexible: a task can stay extremely simple or gain more detail only when needed.
 
 ---
 
-## 08 / Calendar
+# 09 / CALENDAR
 
-The calendar connects **planned time** with **recorded activity**.
+The calendar connects **planning** with **recorded activity**.
 
-It supports:
+It includes:
 
-- Week view
-- Month view
-- Year view
+```text
+WEEK
+MONTH
+YEAR
+```
 
-### 8.1 Weekly View
+## Weekly View
 
-The weekly view can display actual work intervals recorded by the timer.
+The weekly view can display actual work intervals.
 
-This makes it possible to see not only:
+So instead of only seeing:
 
-> How much did I work today?
+```text
+Today: 2 h 30 m
+```
 
-but also:
+you can also understand:
 
-> At exactly what times did I work?
+```text
+09:10 → 09:55
+12:30 → 13:20
+18:00 → 18:55
+```
 
-### 8.2 Monthly View
+## Monthly View
 
-The monthly view provides a wider perspective on events, work history, and day-level activity.
+The monthly view gives a broader overview of:
 
-Days can be visually distinguished according to recorded work intensity.
+- events,
+- activity,
+- work history,
+- daily intensity.
 
-### 8.3 Yearly View
+## Yearly View
 
-The yearly calendar summarizes all twelve months while adapting to screen size.
+The yearly calendar adapts to the device.
 
-| Device | Layout |
+| Screen | Layout |
 |---|---|
 | Desktop | Multiple months side by side |
 | Medium screens | Reduced column count |
 | Phone | One month per row |
 
-On mobile, the one-month-per-row layout keeps day cells readable and tappable instead of compressing the desktop layout.
-
-When Year View is opened on a phone for the current year, the interface can automatically scroll to the current month.
+> [!TIP]
+> On phones, Year View can automatically move to the current month so the user does not need to scroll through the entire year manually.
 
 ---
 
-## 09 / Statistics & Analytics
+# 10 / ANALYTICS
 
-Analytics are intended to support reflection rather than surveillance.
+The analytics system turns recorded sessions into understandable patterns.
 
-The user should be able to understand patterns without reading raw logs or database records.
-
-### Time ranges
-
-- Day
-- Week
-- Month
-- Year
-
-### 9.1 Core Statistics
-
-Typical metrics include:
-
-- total work time,
-- number of sessions,
-- average session duration,
-- distraction-related metrics.
-
-### 9.2 Charts
-
-Different chart types are used according to the question being answered.
-
-For example:
-
-- bars for discrete categories such as weekdays or hours,
-- line-style views for longer time trends.
-
-The goal is not decorative chart density. Each graph should answer a clear question.
-
-### 9.3 Subject Distribution
-
-Because sessions can be associated with a subject or topic, the application can calculate how time is distributed.
+Available time ranges include:
 
 ```text
-Mathematics   8 h 20 m
-German        5 h 40 m
-Physics       3 h 10 m
-Project       2 h 25 m
+DAY
+WEEK
+MONTH
+YEAR
 ```
 
-### 9.4 Session Analysis
+### Core metrics
 
-The application can analyze the structure of work sessions instead of relying only on total time.
+- Total focused work
+- Session count
+- Average session duration
+- Distraction-related data
 
-This helps compare:
+### Visual analysis
 
-- shorter vs longer sessions,
-- pauses,
-- focused intervals,
-- work fragmentation.
-
-### 9.5 Activity Heatmap
-
-A yearly activity heatmap gives a compact long-term view of consistency.
-
-Higher activity is represented with stronger intensity; low-activity or inactive days remain visually lighter.
-
-### 9.6 Personal Summary
-
-The summary area connects the main systems:
+Charts can show patterns such as:
 
 ```text
-TASKS -> intent
-CALENDAR -> context
-TIMER -> execution
-ANALYTICS -> patterns
-GAMIFICATION -> visible progress
+WORK BY DAY
+WORK BY WEEKDAY
+WORK BY HOUR
+SUBJECT DISTRIBUTION
+LONG-TERM TRENDS
 ```
+
+> [!NOTE]
+> Charts are used to answer specific questions, not simply to fill the screen with data.
 
 ---
 
-## 10 / Accounts & Cloud Synchronization
+# 11 / SUBJECT DISTRIBUTION
 
-Cloud accounts are optional.
+Sessions can be associated with subjects or topics.
 
-The application remains usable as a local productivity tool, while account-based synchronization adds continuity across devices.
-
-### 10.1 Local-First Model
-
-The application is designed around a **local-first** approach.
-
-Core usage remains tied to local application state so the user can continue working without requiring a cloud account for every interaction.
-
-### 10.2 Account Creation
-
-Users can create an account directly from the application.
-
-During registration:
-
-1. The user chooses a six-digit access code.
-2. The system assigns a unique username.
-3. The system generates a magic word.
-4. The resulting credentials are shown to the user.
-5. The user can continue directly into the application.
-
-Future sign-in requires:
+This allows the app to calculate where the user's time is going.
 
 ```text
-Username
-Magic word
-6-digit access code
+MATHEMATICS   8 h 20 m
+GERMAN        5 h 40 m
+PHYSICS       3 h 10 m
+PROJECT       2 h 25 m
 ```
 
-Users are explicitly reminded to save these credentials.
+This is useful when balancing:
 
-### 10.3 Multi-Device Use
-
-A cloud account allows the same productivity data to be used across multiple devices.
-
-Device sessions can be managed independently.
-
-Synchronization is revision-aware so the application can detect when local and remote state are not identical.
-
-When data from multiple devices is merged, session history is treated as the source of truth for work-related daily aggregates. This helps prevent one device's same-day activity from blindly overwriting another device's work totals.
-
-Active timers remain device-local.
-
-### 10.4 Import & Export
-
-Users can manually export application data as JSON and later import it again.
-
-This provides:
-
-- manual backup,
-- portability,
-- recovery,
-- device-to-device transfer without relying exclusively on cloud sync.
+- different subjects,
+- personal projects,
+- university work,
+- exam preparation.
 
 ---
 
-## 11 / Mobile & PWA Experience
+# 12 / DISTRACTION TRACKING
 
-Mobile is treated as a primary scenario.
+A user can quickly record when attention is interrupted.
 
-The app may be used to:
+Common categories include:
 
-- quickly check a task,
-- complete an entire study session,
-- act as a desk timer,
-- review a calendar,
-- inspect progress.
+```text
+PHONE
+SOCIAL MEDIA
+ENVIRONMENT
+FATIGUE
+OTHER
+```
 
-### 11.1 Responsive Mobile Design
+The goal is not to punish distraction.
 
-Important views are rearranged specifically for smaller screens:
+The goal is to understand it.
 
-- task list,
-- calendar,
-- statistics,
-- yearly view,
-- Focus Mode.
-
-### 11.2 Progressive Web App
-
-The project includes:
-
-- a Web App Manifest,
-- application icons,
-- a Service Worker,
-- asset caching.
-
-Supported browsers can install the application to the home screen for a more app-like experience.
-
-Installation is optional; the application remains usable in a normal browser.
-
-### 11.3 Offline Resilience
-
-The local-first architecture reduces dependence on constant network access.
-
-Local state remains central to the experience while cloud synchronization provides multi-device continuity when available.
+> [!TIP]
+> Over time, the user may notice patterns such as:
+>
+> - phone interruptions mostly happening in the evening,
+> - lower concentration late at night,
+> - specific environments producing more distractions.
 
 ---
 
-## 12 / Administration
+# 13 / ACTIVITY HEATMAP
+
+A yearly activity heatmap provides a compact overview of long-term consistency.
+
+```text
+LOW ACTIVITY   ░
+               ▒
+               ▓
+HIGH ACTIVITY  █
+```
+
+It makes it easier to see:
+
+- productive periods,
+- inactive periods,
+- changes in consistency,
+- longer-term routines.
+
+---
+
+# 14 / TREES & COLLECTION
+
+Focused work contributes to the growth of the user's current tree.
+
+```text
+SEED
+  ↓
+SPROUT
+  ↓
+PLANT
+  ↓
+MATURE PLANT
+  ↓
+TREE
+```
+
+Completed trees remain in a collection.
+
+| | | |
+|---|---|---|
+| Oak | Pine | Sakura |
+| Olive | Bamboo | Palm |
+| Cactus | Tulip | Rose |
+| Daisy | Basil | Clover |
+| Lotus | More species | |
+
+> [!NOTE]
+> The collection is intended to become a visual history of accumulated effort.
+
+---
+
+# 15 / XP, LEVELS & BADGES
+
+Work activity can contribute to XP.
+
+As XP accumulates, the user can reach higher levels.
+
+Badges can represent milestones related to:
+
+- total focused work,
+- consistency,
+- task activity,
+- streaks,
+- other achievements.
+
+```text
+WORK
+  ↓
+XP
+  ↓
+LEVELS
+  ↓
+BADGES
+  ↓
+LONG-TERM PROGRESS
+```
+
+Gamification supports the work system rather than replacing it.
+
+---
+
+# 16 / LOCAL-FIRST
+
+Productivity App is built around a **local-first** approach.
+
+That means the app can be useful without requiring an account first.
+
+```text
+OPEN APP
+   ↓
+USE LOCALLY
+   ↓
+CREATE ACCOUNT LATER — OPTIONAL
+```
+
+> [!IMPORTANT]
+> Cloud synchronization is optional.  
+> Creating an account should extend the experience, not unlock basic functionality.
+
+---
+
+# 17 / BACKUP & PORTABILITY
+
+Application data can be exported as JSON and imported again later.
+
+This provides a simple manual backup system.
+
+Useful for:
+
+- keeping personal backups,
+- restoring data,
+- moving to another browser or device,
+- keeping an archive.
+
+```text
+APP DATA
+   ↓
+EXPORT JSON
+   ↓
+SAVE
+   ↓
+IMPORT WHEN NEEDED
+```
+
+---
+
+# 18 / CLOUD ACCOUNTS
+
+Users who want multi-device synchronization can create a cloud account directly inside the app.
+
+### Registration flow
+
+```text
+1. Choose a 6-digit access code
+2. Receive a generated username
+3. Receive a generated magic word
+4. Save the credentials
+5. Continue into the app
+```
+
+Future login uses:
+
+```text
+USERNAME
+MAGIC WORD
+6-DIGIT ACCESS CODE
+```
+
+> [!IMPORTANT]
+> The account information shown after registration is needed for future sign-ins on another browser or device.
+
+---
+
+# 19 / MULTI-DEVICE SYNC
+
+A cloud account lets the same work history continue across devices.
+
+```text
+PHONE
+   ↘
+    CLOUD STATE
+   ↗
+LAPTOP
+```
+
+The sync system is designed to preserve meaningful work from multiple devices.
+
+### Same-day work
+
+If two devices contain work from the same day, the app merges session history instead of simply letting one device overwrite the other.
+
+### Active timers
+
+Active timers remain tied to the device where they were started.
+
+> [!NOTE]
+> Completed history can synchronize across devices while a currently running timer stays local to its original device.
+
+### Device sessions
+
+Signed-in devices can be managed separately.
+
+---
+
+# 20 / MOBILE EXPERIENCE
+
+Mobile is treated as a primary use case.
+
+A phone can be used to:
+
+- check tasks,
+- start a session,
+- use Focus Mode,
+- review the calendar,
+- check progress.
+
+The mobile layout specifically adapts:
+
+```text
+TASKS
+CALENDAR
+YEAR VIEW
+STATISTICS
+FOCUS MODE
+```
+
+> [!TIP]
+> Focus Mode is particularly useful in landscape orientation because the flip-clock can use most of the screen.
+
+---
+
+# 21 / PWA EXPERIENCE
+
+Productivity App can behave like an installable web app on supported browsers.
+
+It includes:
+
+- Web App Manifest
+- App icons
+- Service Worker
+- Asset caching
+
+Users can still use the normal browser version if they prefer.
+
+```text
+BROWSER
+   ↓
+ADD TO HOME SCREEN
+   ↓
+APP-LIKE EXPERIENCE
+```
+
+---
+
+# 22 / ADMINISTRATION
 
 The project includes a separate administration interface.
 
-Its purpose is to manage the service and understand **aggregate product usage**, not to rank individual users by productivity.
+Its focus is:
 
-### Administrative capabilities
+```text
+ACCOUNT MANAGEMENT
++
+DEVICE SESSION MANAGEMENT
++
+AGGREGATE USAGE
+```
 
-- Account creation and status management
-- Credential reset workflows
-- Device-session administration
-- Aggregate usage indicators
-- General usage analytics
+Administrative functions can include:
 
-Displayed aggregate metrics can include:
+- account status,
+- account creation,
+- credential reset,
+- device sessions,
+- overall usage statistics.
+
+### Aggregate analytics
+
+Examples include:
 
 - total accounts,
 - total work time,
 - average session duration,
-- daily work trends,
+- daily trends,
 - weekday usage,
 - hour-of-day usage.
 
-The admin experience is intentionally separated from the normal user interface.
+> [!NOTE]
+> The admin dashboard is designed to understand the application as a whole, not to create a user productivity leaderboard.
 
 ---
 
-## 13 / Security & Privacy Principles
-
-The public repository can explain how the product is structured without exposing privileged implementation details.
-
-The project separates:
+# 23 / HOW EVERYTHING CONNECTS
 
 ```text
-PUBLIC FRONTEND CONFIGURATION
-            |
-            v
-SERVER-SIDE VERIFICATION
-            |
-            v
-PRIVILEGED BACKEND OPERATIONS
+┌──────────────┐
+│    TASKS     │
+└──────┬───────┘
+       │ What should I do?
+       ▼
+┌──────────────┐
+│   CALENDAR   │
+└──────┬───────┘
+       │ When?
+       ▼
+┌──────────────┐
+│ FOCUS SESSION│
+└──────┬───────┘
+       │ What did I actually do?
+       ▼
+┌──────────────┐
+│  ANALYTICS   │
+└──────┬───────┘
+       │ What patterns exist?
+       ▼
+┌──────────────┐
+│ GOALS / XP   │
+│ TREES / BADGES│
+└──────────────┘
 ```
 
-Key principles:
+The application is intended to create a loop between:
 
-- Private administrative secrets are not documented in the public repository.
-- Privileged backend keys are not exposed in frontend code.
-- Sensitive user credential verification is handled server-side.
-- User-facing and administrative capabilities are intentionally separated.
-- Public documentation avoids publishing operational security details that would be inappropriate to expose.
-
-> [!IMPORTANT]
-> Never commit private server credentials, privileged database keys, or administrator secrets to the public repository.
+```text
+PLANNING
+   ↓
+ACTION
+   ↓
+REFLECTION
+   ↓
+MOTIVATION
+   ↓
+PLANNING
+```
 
 ---
 
-## 14 / Technical Architecture
+# 24 / TECHNOLOGY
 
-The application uses a lightweight web stack.
-
-### Stack
+Productivity App uses a lightweight web stack.
 
 | Layer | Technology |
 |---|---|
 | Interface | HTML |
 | Styling | CSS |
-| Client logic | Vanilla JavaScript |
-| Backend platform | Supabase |
+| Application Logic | Vanilla JavaScript |
+| Backend | Supabase |
 | Database | PostgreSQL |
-| Server logic | Supabase Edge Functions |
+| Server Functions | Supabase Edge Functions |
 | PWA | Service Worker + Web App Manifest |
-| Frontend hosting | GitHub Pages |
+| Hosting | GitHub Pages |
 
-The project intentionally avoids requiring a large frontend framework.
+The project does not depend on a large frontend framework.
 
-Most complexity lives in interaction, state, synchronization, and productivity logic rather than framework-specific rendering.
+Most of the complexity is in:
 
-### 14.1 Frontend Hosting
+- application state,
+- interaction,
+- focus tracking,
+- synchronization,
+- analytics,
+- gamification.
 
-The frontend is statically hosted through GitHub Pages.
+---
 
-The backend remains separate, so frontend hosting and server-side data infrastructure can evolve independently.
-
-### 14.2 High-Level Project Structure
+# 25 / PROJECT STRUCTURE
 
 ```text
 /
@@ -616,218 +801,192 @@ The backend remains separate, so frontend hosting and server-side data infrastru
 │       ├── cloud-sync.js
 │       ├── admin.js
 │       ├── pwa-register.js
-│       │
 │       └── modules/
 │           ├── state-merge.js
 │           └── ui-helpers.js
 │
 ├── icons/
-│   ├── icon.svg
-│   ├── icon-192.png
-│   └── icon-512.png
 │
 └── supabase/
     ├── functions/
-    │   └── app-api/
-    │       └── index.ts
-    │
     └── migrations/
 ```
 
-### 14.3 Main File Responsibilities
+<details>
+<summary><strong>FILE RESPONSIBILITIES</strong></summary>
 
-#### `index.html`
+### `index.html`
 
-Defines the primary user interface, major views, panels, and modal structures.
+Main user interface.
 
-#### `assets/css/app.css`
+### `assets/css/app.css`
 
-Contains the main visual system:
+Main visual system and responsive behavior.
 
-- timer,
-- tasks,
-- calendar,
-- statistics,
-- responsive layouts,
-- Focus Mode,
-- account UI.
+### `assets/js/app.js`
 
-#### `assets/js/app.js`
-
-Contains the primary application logic for:
+Core application logic, including:
 
 - work sessions,
 - timer behavior,
 - tasks,
 - calendar,
-- analytics,
+- statistics,
 - gamification,
 - streaks,
 - Focus Mode,
 - persistence,
 - import/export.
 
-#### `assets/js/cloud-sync.js`
+### `assets/js/cloud-sync.js`
 
-Handles the frontend cloud account experience:
+Frontend account and synchronization workflow.
 
-- sign-in,
-- sign-up,
-- device interactions,
-- sync transport,
-- cloud account state.
+### `assets/js/modules/state-merge.js`
 
-#### `assets/js/modules/state-merge.js`
+Conflict-resolution and multi-device state merging.
 
-Contains synchronization conflict-resolution and state merge behavior.
+### `assets/js/modules/ui-helpers.js`
 
-It keeps merge logic separate from network transport and rebuilds work-related daily aggregates from merged session history.
+Reusable UI behavior such as Focus Mode controls and mobile calendar helpers.
 
-#### `assets/js/modules/ui-helpers.js`
+### `admin.html` / `assets/js/admin.js`
 
-Contains reusable interface behavior, including mobile calendar navigation helpers and transient Focus Mode controls.
+Administration interface.
 
-#### `admin.html` + `assets/js/admin.js`
+### `sw.js`
 
-Provide the separate administration interface and aggregate usage dashboard.
+PWA caching and Service Worker behavior.
 
-#### `sw.js`
-
-Implements Service Worker behavior, application-shell caching, runtime caching, and cache versioning.
+</details>
 
 ---
 
-## 15 / Visual Design
+# 26 / VISUAL DIRECTION
 
-The visual identity combines a calm productivity interface with playful, game-like details.
-
-### Design language
+The interface combines calm productivity design with playful game-like details.
 
 ```text
 DARK SURFACES
-+
-GREEN PRIMARY ACCENT
-+
-WARM YELLOW HIGHLIGHTS
-+
-LARGE FOCUS TIMER
-+
+      +
+GREEN ACCENTS
+      +
+WARM YELLOW DETAILS
+      +
+LARGE FLIP CLOCK
+      +
 COMPACT CARDS
-+
-GAME-LIKE PROGRESSION
+      +
+VISIBLE PROGRESS
 ```
 
-Green connects naturally to the tree-growth system.
+The design should feel:
 
-Warm yellow accents provide contrast and make important milestones and interface states feel more energetic.
-
-The interface is intended to remain comfortable during long work periods while keeping timers, progress, and analytics easy to read.
+- calm,
+- readable,
+- focused,
+- slightly playful,
+- comfortable during long sessions.
 
 ### Typography
 
-The application currently uses a hierarchy built around:
+The app uses:
 
-- **IBM Plex Sans** for general interface text,
-- **IBM Plex Mono** for data-oriented and timer-oriented elements,
-- **Fraunces** for selected expressive headings.
-
-> GitHub README files do not reliably support custom webfonts.  
-> This README therefore uses GitHub-native Markdown typography, code blocks, tables, spacing, and visual hierarchy rather than embedding a custom font.
-
----
-
-## 16 / Design Principles
-
-### 01 — Work before interface
-
-Starting a session and recording progress should remain quick and low-friction.
-
-### 02 — Raw numbers are not enough
-
-The product should help explain:
-
-- timing,
-- subjects,
-- session structure,
-- distractions,
-- long-term patterns.
-
-### 03 — Progress should be visible
-
-Trees, levels, badges, streaks, calendars, and charts make long-term effort easier to recognize.
-
-### 04 — Users should retain control of their data
-
-Local-first storage and manual JSON import/export support ownership and portability.
-
-### 05 — Mobile is not a smaller desktop
-
-Calendar layouts, Focus Mode, tasks, and analytics are adapted specifically for smaller screens.
-
-### 06 — Progressive detail
-
-A user should be able to begin with a simple session or task and add more metadata only when it becomes useful.
+| Role | Typeface |
+|---|---|
+| General interface | IBM Plex Sans |
+| Timer / data | IBM Plex Mono |
+| Expressive headings | Fraunces |
 
 ---
 
-## 17 / Development Status
+# 27 / DESIGN PRINCIPLES
+
+> [!TIP]
+> These principles guide both feature decisions and interface decisions.
+
+### `01` WORK BEFORE INTERFACE
+
+Starting a session should remain fast.
+
+### `02` SHOW PATTERNS, NOT ONLY TOTALS
+
+The app should explain when, how, and on what the user works.
+
+### `03` MAKE PROGRESS VISIBLE
+
+Goals, streaks, trees, levels, badges, and charts make long-term effort easier to recognize.
+
+### `04` KEEP DATA PORTABLE
+
+Local-first storage and JSON backup keep personal history transferable.
+
+### `05` DESIGN MOBILE INTENTIONALLY
+
+Mobile layouts should not simply compress the desktop interface.
+
+### `06` ADD DETAIL PROGRESSIVELY
+
+Simple tasks and sessions should remain simple until more detail becomes useful.
+
+---
+
+# 28 / CURRENT DIRECTION
 
 Productivity App is actively developed.
 
-Recent work has focused on:
+Recent improvements include:
 
-- mobile yearly-calendar readability,
-- current-month auto-scroll on mobile Year View,
-- self-service account creation,
-- safer multi-device state merging,
-- admin analytics cleanup,
-- more immersive Focus Mode,
-- cleaner Service Worker caching,
-- modularizing reliability and UI helper logic.
+```text
+MOBILE YEAR VIEW
+CURRENT-MONTH AUTO SCROLL
+FOCUS MODE
+SELF-SERVICE ACCOUNT CREATION
+MULTI-DEVICE MERGE RELIABILITY
+ADMIN ANALYTICS CLEANUP
+PWA CACHE CLEANUP
+MODULAR UI / SYNC HELPERS
+```
 
-The product is already usable for real daily work, but reliability and maintainability remain higher priorities than adding large new feature areas.
-
-### Areas for future development
-
-- More advanced long-term productivity analytics
-- Additional PWA capabilities
-- Further offline synchronization improvements
-- More personalization options
-- Additional gamification mechanics
-- Expanded Focus Mode interactions
-- More advanced calendar interactions
-- Additional data visualizations
-- Continued code modularization
+> [!IMPORTANT]
+> The current priority is reliability, clarity, responsive behavior, and maintainability before adding large new feature areas.
 
 ---
 
-## 18 / Summary
-
-Productivity App combines:
+# 29 / AT A GLANCE
 
 | | |
 |---|---|
-| **FOCUS** | Large flip-clock and target-based work sessions |
-| **PLAN** | Tasks plus weekly, monthly, and yearly calendar views |
+| **FOCUS** | Focus sessions, targets, and flip-clock Focus Mode |
+| **PLAN** | Tasks and calendar planning |
 | **TRACK** | Work intervals, subjects, distractions, and analytics |
-| **GROW** | Trees, XP, badges, daily goals, and streaks |
-| **SYNC** | Optional local-first multi-device synchronization |
-| **OWN** | JSON import/export for backup and portability |
+| **GROW** | Goals, streaks, trees, XP, levels, and badges |
+| **SYNC** | Optional multi-device cloud synchronization |
+| **OWN** | Local-first data and JSON backup |
 
-The purpose is not simply to collect more productivity features.
+```text
+┌─────────┬─────────────────────────────────────────────────────┐
+│ FOCUS   │ Work deeply                                        │
+│ PLAN    │ Know what comes next                                │
+│ TRACK   │ Understand what actually happened                   │
+│ GROW    │ Make consistency visible                            │
+│ SYNC    │ Continue across devices                             │
+│ OWN     │ Keep control of your data                           │
+└─────────┴─────────────────────────────────────────────────────┘
+```
 
-The goal is to create an environment in which users can:
-
-> **understand their own behavior, maintain motivation, and build sustainable long-term work habits.**
+> [!NOTE]
+> Productivity App is not trying to add more complexity to productivity.  
+> Its goal is to bring **planning, focused work, reflection, and visible progress** into one coherent system.
 
 ---
 
 <div align="center">
 
-### PRODUCTIVITY APP
+# PRODUCTIVITY APP
 
-`FOCUS` · `PLAN` · `TRACK` · `GROW`
+### `FOCUS` · `PLAN` · `TRACK` · `GROW`
 
-[Open the application](https://berra-c.github.io/productivity-app/)
+[**OPEN THE APP**](https://berra-c.github.io/productivity-app/)
 
 </div>
