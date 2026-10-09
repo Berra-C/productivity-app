@@ -1,4 +1,3 @@
-
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
   const OLD_KEY = 'direncAgaci_v1';
