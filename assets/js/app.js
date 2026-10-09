@@ -2,7 +2,7 @@
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
   const OLD_KEY = 'direncAgaci_v1';
-  const SCHEMA_VERSION = 44;
+  const SCHEMA_VERSION = 45;
 
   const TAB_ID = (()=>{
   window.addEventListener('error',event=>{
@@ -127,6 +127,9 @@
   const GROWTH_PER_WORK_MIN = 0.5;  // her dakika çalışma
   const GROWTH_PER_TODO = 4;        // her tamamlanan görev
   const WORK_AUTOSAVE_MS = 30000;
+  const LONG_SESSION_REVIEW_MS = 3 * 60 * 60 * 1000; // 3 saat boyunca güvenilir tick yoksa kullanıcıya sor
+  let longSessionReviewPending = false;
+  let longSessionReviewInFlight = false;
   const TIME_MILESTONES = [10, 25, 50, 90, 120, 180, 240, 300]; // dakika cinsinden dönüm noktaları
   const MILESTONE_MESSAGES = {
     10:  '10 dakika! Isındın 🔥',
@@ -872,20 +875,13 @@
     refillDeckIfNeeded();
     reconcileStreakFreeze();
 
-    // Başka canlı sekme timer'ın sahibiyse recovery onu pause etmez.
-    if(data.isWorking && data.activeSessionId){
-      const ownerIsAlive=data.activeTimerOwnerId
-        && data.activeTimerOwnerId!==TAB_ID
-        && isTabHeartbeatFresh(data.activeTimerOwnerId);
-      if(!ownerIsAlive){
-        data.isWorking=false;
-        data.workStart=null;
-        data.activeTimerOwnerId=null;
-      }
-    }
+    // Recovered state follows the same v60 timer-integrity rules.
+    reconcileStaleRunningTimerOnStartup();
+    if(!longSessionReviewPending) repairTodayWorkAggregateFromSessions();
 
     syncTimerState();
-    saveData();
+    saveData({force:true});
+    scheduleLongSessionReview(350);
 
     const active=data.activeSessionId ? findSession(data.activeSessionId) : null;
     el.workTimer.textContent=active ? formatRingTime(Number(active.duration||0)) : '00:00';
@@ -1159,25 +1155,406 @@
     return !!(d && Number(d.workSeconds) >= dayGoalSeconds(key));
   }
 
-  function persistAppState(){ saveData(); }
-  function pauseActiveWorkForExit(){
-    const ownsTimer=!data?.activeTimerOwnerId || data.activeTimerOwnerId===TAB_ID;
-    if(data && data.isWorking && data.workStart && ownsTimer){
-      flushWorkTime();
+  function reconcileStaleRunningTimerOnStartup(){
+    if(!data?.isWorking){
+      longSessionReviewPending = false;
+      return false;
+    }
+
+    const active = data.activeSessionId ? findSession(data.activeSessionId) : null;
+    const start = Number(data.workStart);
+    const now = Date.now();
+
+    // isWorking tek başına çalışma kanıtı değildir.
+    if(!active || !Number.isFinite(start) || start <= 0 || start > now + 5000){
+      if(active) closeOpenWorkInterval(active, now);
       data.isWorking = false;
       data.workStart = null;
       data.activeTimerOwnerId = null;
-      saveData();
-    }else if(ownsTimer){
-      saveData();
+      longSessionReviewPending = false;
+      syncTimerState();
+      return true;
     }
+
+    const otherOwnerIsAlive = !!(
+      data.activeTimerOwnerId &&
+      data.activeTimerOwnerId !== TAB_ID &&
+      isTabHeartbeatFresh(data.activeTimerOwnerId)
+    );
+
+    // Aynı hesabın başka canlı sekmesi timer'ı gerçekten yönetiyorsa dokunma.
+    if(otherOwnerIsAlive){
+      longSessionReviewPending = false;
+      return false;
+    }
+
+    const unattendedMs = Math.max(0, now - start);
+
+    // Normal arka plan / kısa süreli kapatma: timer devam eder.
+    // Ancak son güvenilir tick 3+ saat önceyse önce kullanıcıya sor.
+    if(unattendedMs >= LONG_SESSION_REVIEW_MS){
+      longSessionReviewPending = true;
+      data.activeTimerOwnerId = null;
+      syncTimerState();
+      return true;
+    }
+
+    // Kısa ara / sayfanın kapanıp yeniden açılması: oturumu sürdür.
+    longSessionReviewPending = false;
+    data.activeTimerOwnerId = TAB_ID;
+    touchTabHeartbeat();
+    syncTimerState();
+    return true;
+  }
+
+  function formatLongElapsed(ms){
+    const totalMinutes = Math.max(1, Math.round(ms / 60000));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if(hours <= 0) return totalMinutes + ' dk';
+    if(minutes === 0) return hours + ' sa';
+    return hours + ' sa ' + minutes + ' dk';
+  }
+
+  function formatLocalDateTimeInput(ms){
+    const d = new Date(ms);
+    const pad2 = n => String(n).padStart(2,'0');
+    return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())
+      +'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
+  }
+
+  function parseLocalDateTimeInput(value){
+    if(!value) return NaN;
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  function applyActiveWorkUntil(endMs){
+    if(!data.isWorking || !data.workStart) return [];
+
+    const active = data.activeSessionId ? findSession(data.activeSessionId) : null;
+    if(!active) return [];
+
+    const startMs = Number(data.workStart);
+    const now = Date.now();
+    const safeEnd = Math.min(now, Number(endMs));
+
+    if(!Number.isFinite(startMs) || !Number.isFinite(safeEnd) || safeEnd < startMs) return [];
+
+    const elapsed = Math.max(0, Math.floor((safeEnd - startMs)/1000));
+    let completed = [];
+
+    if(elapsed > 0){
+      let cursor = startMs;
+      while(cursor < safeEnd){
+        const cursorDate = new Date(cursor);
+        const nextMidnight = new Date(cursorDate);
+        nextMidnight.setHours(24,0,0,0);
+        const segmentEnd = Math.min(safeEnd, nextMidnight.getTime());
+        const segmentSeconds = Math.max(0, Math.floor((segmentEnd - cursor)/1000));
+        if(segmentSeconds > 0){
+          getDay(dateKey(cursorDate)).workSeconds += segmentSeconds;
+        }
+        cursor = segmentEnd;
+      }
+
+      active.duration += elapsed;
+      completed = addTreeGrowth((elapsed/60) * GROWTH_PER_WORK_MIN);
+    }
+
+    closeOpenWorkInterval(active, safeEnd);
+    return completed;
+  }
+
+  function pauseSuspiciousTimerAt(stopMs){
+    const active = data.activeSessionId ? findSession(data.activeSessionId) : null;
+    if(!active){
+      data.isWorking = false;
+      data.workStart = null;
+      data.activeTimerOwnerId = null;
+      longSessionReviewPending = false;
+      syncTimerState();
+      saveData({force:true});
+      return [];
+    }
+
+    const completed = applyActiveWorkUntil(stopMs);
+    data.isWorking = false;
+    data.workStart = null;
+    data.activeTimerOwnerId = null;
+    longSessionReviewPending = false;
+    syncTimerState();
+    saveData({force:true});
+    return completed;
+  }
+
+  function continueSuspiciousTimer(){
+    data.activeTimerOwnerId = TAB_ID;
+    longSessionReviewPending = false;
+    touchTabHeartbeat();
+    syncTimerState();
+    saveData({force:true});
+    lastAutosave = Date.now();
+    ensureTimerScheduler();
+  }
+
+  function askLongSessionChoice(elapsedMs){
+    return new Promise(resolve=>{
+      el.confirmText.textContent =
+        'Bu oturum yaklaşık '+formatLongElapsed(elapsedMs)+' boyunca açık görünüyor. Hâlâ çalışıyor musun?';
+
+      el.confirmOk.textContent = 'Evet, devam ediyorum';
+      el.confirmOk.classList.remove('danger');
+      el.confirmOk.classList.add('primary');
+
+      el.confirmAlt.textContent = 'Hayır, bıraktım';
+      el.confirmAlt.style.display = '';
+
+      const oldCancelText = el.confirmCancel.textContent;
+      el.confirmCancel.textContent = 'Şimdilik duraklat';
+
+      function cleanup(result){
+        modalController.close(el.confirmBackdrop);
+        el.confirmAlt.style.display = 'none';
+        el.confirmCancel.textContent = oldCancelText;
+        el.confirmOk.removeEventListener('click', onContinue);
+        el.confirmAlt.removeEventListener('click', onStopped);
+        el.confirmCancel.removeEventListener('click', onPause);
+        resolve(result);
+      }
+      function onContinue(){ cleanup('continue'); }
+      function onStopped(){ cleanup('stopped'); }
+      function onPause(){ cleanup('pause'); }
+
+      el.confirmOk.addEventListener('click', onContinue);
+      el.confirmAlt.addEventListener('click', onStopped);
+      el.confirmCancel.addEventListener('click', onPause);
+      modalController.open(el.confirmBackdrop,{onCancel:onPause,focus:el.confirmCancel});
+    });
+  }
+
+  function askStoppedDateTime(minMs, maxMs){
+    return new Promise(resolve=>{
+      const oldType = el.promptInput.type;
+      const oldMaxLength = el.promptInput.maxLength;
+      const oldMin = el.promptInput.min;
+      const oldMax = el.promptInput.max;
+
+      el.promptLabel.textContent = 'Çalışmayı ne zaman bıraktın?';
+      el.promptInput.type = 'datetime-local';
+      el.promptInput.removeAttribute('maxlength');
+      el.promptInput.min = formatLocalDateTimeInput(minMs);
+      el.promptInput.max = formatLocalDateTimeInput(maxMs);
+
+      // Varsayılan olarak son güvenilir kayıttan 30 dakika sonrasını öner;
+      // hiçbir zaman "şimdi"yi geçme.
+      const suggested = Math.min(maxMs, minMs + 30*60*1000);
+      el.promptInput.value = formatLocalDateTimeInput(suggested);
+
+      function cleanup(result){
+        modalController.close(el.promptBackdrop);
+        el.promptOk.removeEventListener('click', onOk);
+        el.promptCancel.removeEventListener('click', onCancel);
+        el.promptInput.removeEventListener('keydown', onKey);
+
+        el.promptInput.type = oldType || 'text';
+        if(oldMaxLength >= 0) el.promptInput.maxLength = oldMaxLength;
+        else el.promptInput.removeAttribute('maxlength');
+
+        if(oldMin) el.promptInput.min = oldMin; else el.promptInput.removeAttribute('min');
+        if(oldMax) el.promptInput.max = oldMax; else el.promptInput.removeAttribute('max');
+
+        resolve(result);
+      }
+
+      function onOk(){
+        const parsed = parseLocalDateTimeInput(el.promptInput.value);
+        if(!Number.isFinite(parsed) || parsed < minMs || parsed > maxMs){
+          showToast('Lütfen son kesin kayıt ile şu an arasında geçerli bir tarih/saat seç.', true);
+          return;
+        }
+        cleanup(parsed);
+      }
+      function onCancel(){ cleanup(null); }
+      function onKey(e){
+        if(e.key==='Enter'){ e.preventDefault(); onOk(); }
+        if(e.key==='Escape'){ e.preventDefault(); onCancel(); }
+      }
+
+      el.promptOk.addEventListener('click', onOk);
+      el.promptCancel.addEventListener('click', onCancel);
+      el.promptInput.addEventListener('keydown', onKey);
+      modalController.open(el.promptBackdrop,{onCancel,focus:el.promptInput,select:false});
+    });
+  }
+
+  async function reviewSuspiciousLongSession(){
+    if(longSessionReviewInFlight || !longSessionReviewPending || !data?.isWorking) return;
+
+    const active = data.activeSessionId ? findSession(data.activeSessionId) : null;
+    const startMs = Number(data.workStart);
+    const now = Date.now();
+
+    if(!active || !Number.isFinite(startMs) || startMs <= 0){
+      reconcileStaleRunningTimerOnStartup();
+      return;
+    }
+
+    longSessionReviewInFlight = true;
+    try{
+      const choice = await askLongSessionChoice(now - startMs);
+
+      if(choice === 'continue'){
+        continueSuspiciousTimer();
+        renderWorkButtonRow();
+        renderToday(false);
+        renderSessionList();
+        updateIntentDisplay();
+        return;
+      }
+
+      if(choice === 'stopped'){
+        const stopMs = await askStoppedDateTime(startMs, Date.now());
+        if(stopMs == null){
+          // Saat seçiminden vazgeçerse belirsiz süreyi saymadan güvenli şekilde duraklat.
+          pauseSuspiciousTimerAt(startMs);
+          showToast('Oturum son kesin kayıt noktasında duraklatıldı.', true);
+        }else{
+          const beforeLevel = getLevelInfo().level;
+          const beforeBadges = getUnlockedBadgeMap();
+          const completed = pauseSuspiciousTimerAt(stopMs);
+          celebrateTreeCompletions(completed);
+          reportProgress(beforeLevel, beforeBadges);
+          showToast('Oturum seçtiğin bırakma saatinde duraklatıldı.', true);
+        }
+      }else{
+        // "Şimdilik duraklat": şüpheli boşluğu asla çalışma olarak yazma.
+        pauseSuspiciousTimerAt(startMs);
+        showToast('Oturum son kesin kayıt noktasında duraklatıldı.', true);
+      }
+
+      repairTodayWorkAggregateFromSessions();
+      renderWorkButtonRow();
+      renderToday(false);
+      renderSessionList();
+      updateIntentDisplay();
+      renderCalendar();
+      renderStats();
+    }finally{
+      longSessionReviewInFlight = false;
+    }
+  }
+
+  function scheduleLongSessionReview(delay=250){
+    if(!longSessionReviewPending) return;
+    setTimeout(()=>{ reviewSuspiciousLongSession(); }, delay);
+  }
+
+  function recordedWorkSecondsForDay(key){
+    const dayStart = new Date(key + 'T00:00:00').getTime();
+    const nextDay = new Date(key + 'T00:00:00');
+    nextDay.setHours(24,0,0,0);
+    const dayEnd = nextDay.getTime();
+    if(!Number.isFinite(dayStart) || !Number.isFinite(dayEnd)) return null;
+
+    let seconds = 0;
+    let uncertain = false;
+
+    Object.entries(data.sessionLog || {}).forEach(([bucketKey,sessions])=>{
+      if(!Array.isArray(sessions)) return;
+
+      sessions.forEach(session=>{
+        const intervals = sessionIntervals(session);
+
+        if(bucketKey === key && Number(session?.duration || 0) > 0 && !intervals.length){
+          uncertain = true;
+          return;
+        }
+
+        intervals.forEach(interval=>{
+          const start = Number(interval?.start);
+          let end = interval?.end == null ? null : Number(interval.end);
+          if(!Number.isFinite(start)) return;
+
+          if(end == null){
+            const isValidLive = data.isWorking
+              && !longSessionReviewPending
+              && session.id === data.activeSessionId
+              && !!findSession(data.activeSessionId)
+              && Number(data.workStart);
+            if(!isValidLive) return;
+            end = Date.now();
+          }
+
+          if(!Number.isFinite(end) || end <= start) return;
+          const overlapStart = Math.max(dayStart, start);
+          const overlapEnd = Math.min(dayEnd, end);
+          if(overlapEnd > overlapStart){
+            seconds += Math.floor((overlapEnd - overlapStart) / 1000);
+          }
+        });
+      });
+    });
+
+    return uncertain ? null : Math.max(0, Math.round(seconds));
+  }
+
+  function repairTodayWorkAggregateFromSessions(){
+    if(longSessionReviewPending) return false;
+    const key = todayKey();
+    const recorded = recordedWorkSecondsForDay(key);
+    if(recorded == null) return false;
+
+    const day = getDay(key);
+    const current = Math.max(0, Math.round(Number(day.workSeconds || 0)));
+    if(Math.abs(current - recorded) <= 2) return false;
+
+    day.workSeconds = recorded;
+    if(recorded < dayGoalSeconds(key)) day.goalCelebrated = false;
+    return true;
+  }
+
+  function persistAppState(){ saveData(); }
+
+  function persistActiveWorkForExit(){
+    const ownsTimer=!data?.activeTimerOwnerId || data.activeTimerOwnerId===TAB_ID;
+    if(ownsTimer) saveData({force:true});
     clearTabHeartbeat();
   }
-  window.addEventListener('pagehide', pauseActiveWorkForExit);
-  window.addEventListener('beforeunload', pauseActiveWorkForExit);
+
+  window.addEventListener('pagehide', persistActiveWorkForExit);
+  window.addEventListener('beforeunload', persistActiveWorkForExit);
+
   document.addEventListener('visibilitychange', ()=>{
-    if(document.visibilityState === 'hidden') persistAppState();
-    else if(typeof timerSchedulerTick === 'function') timerSchedulerTick();
+    if(document.visibilityState === 'hidden'){
+      // v60: arka plana geçmek çalışma oturumunu durdurmaz.
+      // Sadece mevcut durum güvenli şekilde kaydedilir.
+      persistAppState();
+      return;
+    }
+
+    // Tarayıcı sekmeyi uzun süre askıya aldıysa workStart çok eski kalabilir.
+    // Bu durumda süreyi otomatik saymak yerine kullanıcıdan doğrulama istenir.
+    const active = data.activeSessionId ? findSession(data.activeSessionId) : null;
+    const startMs = Number(data.workStart);
+    if(
+      data.isWorking &&
+      active &&
+      Number.isFinite(startMs) &&
+      Date.now() - startMs >= LONG_SESSION_REVIEW_MS
+    ){
+      longSessionReviewPending = true;
+      data.activeTimerOwnerId = null;
+      syncTimerState();
+      saveData({force:true});
+      scheduleLongSessionReview(100);
+    }else{
+      renderWorkButtonRow();
+      updateWorkDisplay();
+      renderSessionList();
+      updateIntentDisplay();
+      if(typeof timerSchedulerTick === 'function') timerSchedulerTick();
+    }
   });
 
   function refillDeckIfNeeded(){
@@ -1195,19 +1572,10 @@
   }
   refillDeckIfNeeded();
   reconcileStreakFreeze();
-  if(data.isWorking && data.activeSessionId){
-    const ownerIsAlive = data.activeTimerOwnerId
-      && data.activeTimerOwnerId!==TAB_ID
-      && isTabHeartbeatFresh(data.activeTimerOwnerId);
-    if(!ownerIsAlive){
-      // Sahip sekme artık yaşamıyorsa çevrimdışı geçen süreyi çalışma sayma.
-      data.isWorking = false;
-      data.workStart = null;
-      data.activeTimerOwnerId = null;
-    }
-  }
+  const timerIntegrityChanged = reconcileStaleRunningTimerOnStartup();
+  const todayAggregateRepaired = longSessionReviewPending ? false : repairTodayWorkAggregateFromSessions();
   syncTimerState();
-  saveData();
+  saveData({force: timerIntegrityChanged || todayAggregateRepaired});
 
   const expandedSessions = new Set();
   let showHiddenSessions = false;
@@ -2549,14 +2917,17 @@
     const readOnly=!!options.readOnly;
     const td = getDay(todayKey());
     if(renderBreakDisplay(options)) return;
+    const activeSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
     let liveElapsed = 0;
-    if(data.isWorking && data.workStart) liveElapsed = Math.floor((Date.now() - data.workStart)/1000);
+    // v60 integrity rule: workStart alone is never enough to create live work.
+    if(data.isWorking && data.workStart && activeSession && !longSessionReviewPending){
+      liveElapsed = Math.max(0, Math.floor((Date.now() - Number(data.workStart))/1000));
+    }
     const totalSecondsToday = td.workSeconds + liveElapsed;
 
     // Ana sayaç günlük toplamı değil, mevcut oturumun kendi süresini gösterir.
     // Böylece her yeni session 00:00'dan başlar; günlük toplam/hedef aşağıdaki
     // günlük ilerleme hesaplarında aynen korunur.
-    const activeSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
     const currentSessionSeconds = activeSession
       ? activeSession.duration + (data.isWorking ? liveElapsed : 0)
       : totalSecondsToday;
@@ -2652,7 +3023,12 @@
     return intervals.map(interval=>{
       const start=Number(interval?.start);
       let end=interval?.end==null ? null : Number(interval.end);
-      if(interval?.end==null && session.id===data.activeSessionId && data.isWorking){
+      if(
+        interval?.end==null &&
+        session.id===data.activeSessionId &&
+        data.isWorking &&
+        !longSessionReviewPending
+      ){
         end=Date.now();
       }
       return {start,end,legacyApprox:!!interval?.legacyApprox};
@@ -2686,9 +3062,32 @@
   }
 
   function flushWorkTime(){
+    if(longSessionReviewPending) return [];
     if(!data.isWorking || !data.workStart) return [];
+
+    const activeSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
+    if(!activeSession){
+      // Orphan timer state must never create day work without a session.
+      data.isWorking = false;
+      data.workStart = null;
+      data.activeTimerOwnerId = null;
+      syncTimerState();
+      saveData({force:true});
+      return [];
+    }
+
     const now = Date.now();
     const startMs = Number(data.workStart);
+    if(!Number.isFinite(startMs) || startMs <= 0 || startMs > now + 5000){
+      data.isWorking = false;
+      data.workStart = null;
+      data.activeTimerOwnerId = null;
+      closeOpenWorkInterval(activeSession, now);
+      syncTimerState();
+      saveData({force:true});
+      return [];
+    }
+
     const elapsed = Math.max(0, Math.floor((now - startMs)/1000));
     let completed = [];
     if(elapsed > 0){
@@ -2704,8 +3103,7 @@
         }
         cursor = segmentEnd;
       }
-      const s = findSession(data.activeSessionId);
-      if(s) s.duration += elapsed;
+      activeSession.duration += elapsed;
       data.workStart = now;
       completed = addTreeGrowth((elapsed/60) * GROWTH_PER_WORK_MIN);
       saveData();
@@ -2723,7 +3121,9 @@
     if(isBreakActive()){
       renderBreakDisplay({readOnly:!ownsActiveTimer});
     } else if(data.isWorking && data.workStart){
-      if(ownsActiveTimer){
+      if(longSessionReviewPending){
+        updateWorkDisplay({readOnly:true});
+      }else if(ownsActiveTimer){
         workTick();
       }else{
         updateWorkDisplay({readOnly:true});
@@ -3033,11 +3433,25 @@
     }
     lastFlipStr = ''; // yeniden açılışta saati baştan kur
     renderFocusOverlay();
+    ensureFocusControlsController().hide();
     el.focusOverlay.classList.add('show');
     await tryEnterMobileFocusLandscape();
   }
 
+  let focusControlsController = null;
+
+  function ensureFocusControlsController(){
+    if(focusControlsController) return focusControlsController;
+    focusControlsController = window.ProductivityUIHelpers?.bindTransientFocusControls?.({
+      overlay: el.focusOverlay,
+      clock: el.flipClock,
+      timeout: 3500
+    }) || {show(){},hide(){}};
+    return focusControlsController;
+  }
+
   function closeFocusMode(){
+    ensureFocusControlsController().hide();
     el.focusOverlay.classList.remove('show');
     try{ screen.orientation?.unlock?.(); }catch(error){}
     if(focusFullscreenOwned && document.fullscreenElement && document.exitFullscreen){
@@ -3046,6 +3460,7 @@
     focusFullscreenOwned = false;
   }
 
+  ensureFocusControlsController();
   el.focusToggleBtn.addEventListener('click', openFocusMode);
 
   function closeSettingsModal(){
@@ -6514,8 +6929,19 @@
       html += '<div class="'+monthCls+'" data-month="'+monthKey+'"><div class="cal-mini-title">'+MONTH_FULL[m]+'</div><div class="cal-mini-grid">'+cellsHtml+'</div></div>';
     }
     el.calYearView.innerHTML = html;
+
+    if(yearAutoScrollPending){
+      yearAutoScrollPending = false;
+      window.ProductivityUIHelpers?.scrollCurrentMonthIntoView?.(
+        el.calYearView,
+        year,
+        {maxWidth:620}
+      );
+    }
   }
 
+
+  let yearAutoScrollPending = false;
 
   let calMultiDay = false;
   let calTaskHasTime = false;
@@ -6919,6 +7345,7 @@
       el.calViewBtns.forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       calViewMode = btn.dataset.view;
+      if(calViewMode === 'year') yearAutoScrollPending = true;
       if(calViewMode === 'month') calSelectedMonth = null;
       if(calViewMode === 'week'){
         calSelectedMonth = null;
@@ -7031,6 +7458,7 @@
   renderDistractionCategorySummary();
   renderSessionList();
   updateIntentDisplay();
+  scheduleLongSessionReview(450);
 
   // ---------- İlk kullanım tanıtımı ----------
   function initOnboarding(){
