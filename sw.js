@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v88';
+const CACHE_VERSION = 'v89';
 const STATIC_CACHE = `productivity-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `productivity-runtime-${CACHE_VERSION}`;
 const CDN_CACHE = `productivity-cdn-${CACHE_VERSION}`;
