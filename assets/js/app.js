@@ -1,3 +1,4 @@
+
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
   const OLD_KEY = 'direncAgaci_v1';
@@ -885,7 +886,9 @@
     const active=data.activeSessionId ? findSession(data.activeSessionId) : null;
     el.workTimer.textContent=active ? formatRingTime(Number(active.duration||0)) : '00:00';
     renderWorkButtonRow();
-    renderToday(false);
+    initializeTooltips();
+
+  renderToday(false);
     renderDistractionCategorySummary();
     renderSessionList();
     updateIntentDisplay();
@@ -1309,26 +1312,23 @@
       el.confirmAlt.textContent = 'Hayır, bıraktım';
       el.confirmAlt.style.display = '';
 
-      const oldCancelText = el.confirmCancel.textContent;
-      el.confirmCancel.textContent = 'Şimdilik duraklat';
+      const oldCancelDisplay = el.confirmCancel.style.display;
+      el.confirmCancel.style.display = 'none';
 
       function cleanup(result){
         modalController.close(el.confirmBackdrop);
         el.confirmAlt.style.display = 'none';
-        el.confirmCancel.textContent = oldCancelText;
+        el.confirmCancel.style.display = oldCancelDisplay;
         el.confirmOk.removeEventListener('click', onContinue);
         el.confirmAlt.removeEventListener('click', onStopped);
-        el.confirmCancel.removeEventListener('click', onPause);
         resolve(result);
       }
       function onContinue(){ cleanup('continue'); }
       function onStopped(){ cleanup('stopped'); }
-      function onPause(){ cleanup('pause'); }
 
       el.confirmOk.addEventListener('click', onContinue);
       el.confirmAlt.addEventListener('click', onStopped);
-      el.confirmCancel.addEventListener('click', onPause);
-      modalController.open(el.confirmBackdrop,{onCancel:onPause,focus:el.confirmCancel});
+      modalController.open(el.confirmBackdrop,{onCancel:()=>{},focus:el.confirmOk});
     });
   }
 
@@ -1415,21 +1415,17 @@
       if(choice === 'stopped'){
         const stopMs = await askStoppedDateTime(startMs, Date.now());
         if(stopMs == null){
-          // Saat seçiminden vazgeçerse belirsiz süreyi saymadan güvenli şekilde duraklat.
-          pauseSuspiciousTimerAt(startMs);
-          showToast('Oturum son kesin kayıt noktasında duraklatıldı.', true);
-        }else{
-          const beforeLevel = getLevelInfo().level;
-          const beforeBadges = getUnlockedBadgeMap();
-          const completed = pauseSuspiciousTimerAt(stopMs);
-          celebrateTreeCompletions(completed);
-          reportProgress(beforeLevel, beforeBadges);
-          showToast('Oturum seçtiğin bırakma saatinde duraklatıldı.', true);
+          longSessionReviewPending = true;
+          scheduleLongSessionReview(120);
+          return;
         }
-      }else{
-        // "Şimdilik duraklat": şüpheli boşluğu asla çalışma olarak yazma.
-        pauseSuspiciousTimerAt(startMs);
-        showToast('Oturum son kesin kayıt noktasında duraklatıldı.', true);
+
+        const beforeLevel = getLevelInfo().level;
+        const beforeBadges = getUnlockedBadgeMap();
+        const completed = pauseSuspiciousTimerAt(stopMs);
+        celebrateTreeCompletions(completed);
+        reportProgress(beforeLevel, beforeBadges);
+        showToast('Oturum seçtiğin bırakma saatinde duraklatıldı.', true);
       }
 
       repairTodayWorkAggregateFromSessions();
@@ -1819,6 +1815,46 @@
     el.nextBadgeMini.innerHTML =
       '<div class="next-badge-label" title="Sıradaki rozet: '+escapeHtml(n.label)+'">'+n.icon+' '+escapeHtml(n.label)+'</div>'
       + '<div class="next-badge-progress" aria-label="Rozet ilerlemesi %'+Math.round(n.pct)+'"><div class="next-badge-fill" style="width:'+Math.round(n.pct)+'%"></div></div>';
+  }
+
+  // ---------- Açıklayıcı hover / focus tooltip sistemi ----------
+  function upgradeTooltipElement(node){
+    if(!(node instanceof Element)) return;
+
+    const apply = el=>{
+      if(!(el instanceof Element)) return;
+      const title=(el.getAttribute('title')||'').trim();
+      if(title && !el.dataset.tooltip){
+        el.dataset.tooltip=title;
+        el.removeAttribute('title'); // native tooltip ile çift görünmesin
+      }
+      if(el.dataset.tooltip && !el.hasAttribute('aria-label')){
+        const text=(el.dataset.tooltip||'').trim();
+        if(
+          text &&
+          (el.matches('button,[role="button"],input,select,label') || !String(el.textContent||'').trim())
+        ){
+          el.setAttribute('aria-label',text);
+        }
+      }
+    };
+
+    apply(node);
+    node.querySelectorAll?.('[title],[data-tooltip]').forEach(apply);
+  }
+
+  function initializeTooltips(){
+    upgradeTooltipElement(document.documentElement);
+
+    const observer=new MutationObserver(mutations=>{
+      mutations.forEach(m=>{
+        m.addedNodes.forEach(node=>{
+          if(node.nodeType===1) upgradeTooltipElement(node);
+        });
+      });
+    });
+
+    observer.observe(document.body,{childList:true,subtree:true});
   }
 
   // ---------- DOM refs ----------
@@ -3647,7 +3683,7 @@
       return;
     }
     if(list.length === 0 && hiddenCount > 0){
-      el.sessionList.innerHTML = '<div class="session-hidden-tools"><button class="session-hidden-toggle" data-action="toggle-hidden-sessions">👁 '+hiddenCount+' gizlenen oturumu göster</button></div>';
+      el.sessionList.innerHTML = '<div class="session-hidden-tools"><button class="session-hidden-toggle" data-action="toggle-hidden-sessions" data-tooltip="Daha önce görünümden gizlenen oturumları listele">👁 '+hiddenCount+' gizlenen oturumu göster</button></div>';
       return;
     }
     // Var olan (aktif/duraklatılmış) oturumu en öne al ve belirginleştir
@@ -3670,8 +3706,8 @@
       const hasSubject = s.subject && s.subject !== 'Genel';
       const subjectTag = hasSubject ? '<span class="subject-tag">📘 '+escapeHtml(s.subject)+'</span>' : '';
       const subjectEdit = isCurrent
-        ? '<button class="session-subject-edit" data-action="edit-subject" data-id="'+s.id+'">'+(hasSubject?'Değiştir':'＋ Ders / konu ekle')+'</button>'
-          + '<button class="session-subject-edit" data-action="manage-subjects" data-id="'+s.id+'" title="Konu önerilerini yönet">⚙ Konular</button>'
+        ? '<button class="session-subject-edit" data-action="edit-subject" data-id="'+s.id+'" data-tooltip="Bu oturumun ders veya konu bilgisini değiştir">'+(hasSubject?'Değiştir':'＋ Ders / konu ekle')+'</button>'
+          + '<button class="session-subject-edit" data-action="manage-subjects" data-id="'+s.id+'" data-tooltip="Kaydedilmiş ders / konu önerilerini yönet">⚙ Konular</button>'
         : '';
 
       if(!isCurrent && !printedHistoryHeading && (data.activeSessionId && findSession(data.activeSessionId))){
@@ -3683,9 +3719,9 @@
       if(s.todos && s.todos.length){
         s.todos.forEach(t=>{
           todosHtml += '<div class="todo-item">'
-            + '<button class="todo-check'+(t.done?' done':'')+'" data-action="toggle-todo" data-id="'+s.id+'" data-todo="'+t.id+'">'+(t.done?'✓':'')+'</button>'
+            + '<button class="todo-check'+(t.done?' done':'')+'" data-action="toggle-todo" data-id="'+s.id+'" data-todo="'+t.id+'" data-tooltip="'+(t.done?'Görevi yeniden aç':'Görevi tamamlandı olarak işaretle')+'" aria-label="'+(t.done?'Görevi yeniden aç':'Görevi tamamlandı olarak işaretle')+'">'+(t.done?'✓':'')+'</button>'
             + '<span class="todo-text'+(t.done?' done':'')+'">'+escapeHtml(t.text)+'</span>'
-            + '<button class="todo-del" data-action="delete-todo" data-id="'+s.id+'" data-todo="'+t.id+'">✕</button>'
+            + '<button class="todo-del" data-action="delete-todo" data-id="'+s.id+'" data-todo="'+t.id+'" data-tooltip="Bu oturum görevini sil" aria-label="Oturum görevini sil">✕</button>'
             + '</div>';
         });
       } else {
@@ -3695,26 +3731,31 @@
       let targetHtml = '';
       if(s.targetSeconds){
         const tpct = Math.min(100, liveDur / s.targetSeconds * 100);
-        targetHtml = '<div class="session-target">'
+        targetHtml = '<div class="session-target" data-tooltip="Oturum hedefi: çalışılan süre / belirlediğin hedef süre">'
           + '<div class="target-bar"><div class="target-fill" style="width:'+tpct+'%"></div></div>'
           + '<div class="target-caption'+(s.targetReached?' reached':'')+'">🎯 '+formatDurationLabel(Math.min(liveDur,s.targetSeconds))+' / '+formatDurationLabel(s.targetSeconds)+(s.targetReached?' ✓':'')+(liveDur>s.targetSeconds?' · +'+formatDurationLabel(liveDur-s.targetSeconds):'')+'</div>'
           + '</div>';
       }
 
       html += '<div class="session-card'+(isTicking?' active':'')+(isPaused?' paused':'')+(isCurrent?' current':'')+(s.hidden?' hidden-session':'')+'" data-id="'+s.id+'">'
-        + (!isCurrent && !s.hidden ? '<button class="session-time-edit-btn" data-action="edit-session-time" data-id="'+s.id+'" title="Oturum tarih ve saatlerini düzenle" aria-label="Oturum saatlerini düzenle">🕒</button><button class="session-delete-btn" data-action="delete-session" data-id="'+s.id+'" title="Oturumu sil" aria-label="Oturumu sil">🗑</button>' : '')
-        + (s.hidden ? '<button class="session-restore-btn" data-action="restore-session" data-id="'+s.id+'">Geri Göster</button>' : '')
-        + (isCurrent ? '<div class="current-badge">'+(isTicking?'▶ ŞU ANKİ OTURUM':'⏸ ŞU ANKİ OTURUM')+'</div>' : '')
-        + '<div class="session-head" data-action="toggle" data-id="'+s.id+'">'
-        +   '<span class="chevron">'+(expanded?'▾':'▸')+'</span>'
+        + (!isCurrent && !s.hidden ? '<button class="session-time-edit-btn" data-action="edit-session-time" data-id="'+s.id+'" data-tooltip="Oturumun başlangıç, bitiş ve çalışma saatlerini düzenle" aria-label="Oturum tarih ve saatlerini düzenle">🕒</button><button class="session-delete-btn" data-action="delete-session" data-id="'+s.id+'" data-tooltip="Bu oturumu geçmişten sil" aria-label="Oturumu sil">🗑</button>' : '')
+        + (s.hidden ? '<button class="session-restore-btn" data-action="restore-session" data-id="'+s.id+'" data-tooltip="Gizlenen oturumu yeniden görünür yap">Geri Göster</button>' : '')
+        + (isCurrent ? '<div class="current-badge" data-tooltip="'+(isTicking?'Şu anda çalışan aktif oturum':'Aktif oturum şu anda duraklatılmış')+'">'+(isTicking?'▶ ŞU ANKİ OTURUM':'⏸ ŞU ANKİ OTURUM')+'</div>' : '')
+        + '<div class="session-head" data-action="toggle" data-id="'+s.id+'" data-tooltip="'+(expanded?'Oturum ayrıntılarını kapat':'Oturum görevlerini ve ayrıntılarını aç')+'">'
+        +   '<span class="chevron" aria-hidden="true">'+(expanded?'▾':'▸')+'</span>'
         +   '<span class="session-name">'+escapeHtml(s.name)+(isTicking?' <span class="live-dot">●</span>':'')+(isPaused?' <span class="paused-tag">⏸ Duraklatıldı</span>':'')+'</span>'
-        +   '<button class="session-edit" data-action="rename" data-id="'+s.id+'" title="Adını değiştir">✏️</button>'
-        +   '<span class="session-meta">'+(displaySessionTimeRange(s)?'<span class="meta-time">🕒 '+displaySessionTimeRange(s)+'</span>':'')+'<span class="meta-duration">⏱ '+formatDurationLabel(liveDur)+'</span><span class="meta-distract">😕 '+s.distractions+'</span><span class="meta-focus" title="Odak kalite skoru">🧠 '+sessionFocusScore(s)+'</span></span>'
+        +   '<button class="session-edit" data-action="rename" data-id="'+s.id+'" data-tooltip="Oturumun adını değiştir" aria-label="Oturum adını değiştir">✏️</button>'
+        +   '<span class="session-meta">'
+        +     (displaySessionTimeRange(s)?'<span class="meta-time metric-help" tabindex="0" data-tooltip="Oturumun başlangıç ve bitiş saatleri">🕒 '+displaySessionTimeRange(s)+'</span>':'')
+        +     '<span class="meta-duration metric-help" tabindex="0" data-tooltip="Bu oturumda kaydedilen toplam odaklı çalışma süresi. Duraklatılan süreler dahil edilmez.">⏱ '+formatDurationLabel(liveDur)+'</span>'
+        +     '<span class="meta-distract metric-help" tabindex="0" data-tooltip="Bu oturum sırasında kaydettiğin dikkat dağınıklığı sayısı">😕 '+s.distractions+'</span>'
+        +     '<span class="meta-focus metric-help" tabindex="0" data-tooltip="Odak puanı (0–100): dikkat dağınıklığı ve kesintiler puanı düşürür; hedefe ulaşmak ve oturum görevlerini tamamlamak puanı artırabilir.">🧠 '+sessionFocusScore(s)+'</span>'
+        +   '</span>'
         + '</div>'
         + ((subjectTag || subjectEdit) ? '<div class="session-subject-row">'+subjectTag+subjectEdit+'</div>' : '')
         + '<div class="session-pct">'+pctLabel+'</div>'
         + targetHtml
-        + (expanded ? ('<div class="session-body">'+todosHtml+'<div class="todo-add-row"><input type="text" class="todo-input" placeholder="Yeni görev ekle..." /><button class="todo-add-btn" data-action="add-todo" data-id="'+s.id+'">+</button></div></div>') : '')
+        + (expanded ? ('<div class="session-body">'+todosHtml+'<div class="todo-add-row"><input type="text" class="todo-input" placeholder="Yeni görev ekle..." aria-label="Oturuma yeni görev ekle" /><button class="todo-add-btn" data-action="add-todo" data-id="'+s.id+'" data-tooltip="Yazdığın görevi bu oturuma ekle" aria-label="Oturuma görevi ekle">+</button></div></div>') : '')
         + '</div>';
     });
     if(hiddenCount > 0){
