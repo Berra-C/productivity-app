@@ -1,13 +1,15 @@
-const CACHE_VERSION = 'v86';
-const STATIC_CACHE = `test-pwa-static-${CACHE_VERSION}`;
-const RUNTIME_CACHE = `test-pwa-runtime-${CACHE_VERSION}`;
-const FONT_CACHE = `test-pwa-fonts-${CACHE_VERSION}`;
+const CACHE_VERSION = 'v88';
+const STATIC_CACHE = `productivity-static-${CACHE_VERSION}`;
+const RUNTIME_CACHE = `productivity-runtime-${CACHE_VERSION}`;
+const CDN_CACHE = `productivity-cdn-${CACHE_VERSION}`;
 
 const APP_SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
   './assets/css/app.css',
+  './assets/js/modules/ui-helpers.js',
+  './assets/js/modules/state-merge.js',
   './assets/js/app.js',
   './assets/js/cloud-config.js',
   './assets/js/cloud-sync.js',
@@ -32,7 +34,7 @@ self.addEventListener('install', event => {
 });
 
 self.addEventListener('activate', event => {
-  const allowed = new Set([STATIC_CACHE, RUNTIME_CACHE, FONT_CACHE]);
+  const allowed = new Set([STATIC_CACHE, RUNTIME_CACHE, CDN_CACHE]);
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(keys.filter(key => !allowed.has(key)).map(key => caches.delete(key))))
@@ -96,8 +98,8 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
-    event.respondWith(staleWhileRevalidate(request, FONT_CACHE));
+  if (url.hostname === 'cdn.jsdelivr.net') {
+    event.respondWith(staleWhileRevalidate(request, CDN_CACHE));
     return;
   }
 
