@@ -14,7 +14,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-fraunces@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-sans@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-mono@4.0.0/index.css">
-<link rel="stylesheet" href="assets/css/app.css?v=60">
+<link rel="stylesheet" href="assets/css/app.css?v=61.1">
 </head>
 <body>
 
@@ -33,7 +33,7 @@
     </div>
 
     <div class="focus-label">Geçen süre</div>
-    <div class="flip-clock" id="flipClock"></div>
+    <div class="flip-clock" id="flipClock" data-tooltip="Laptopta sayaç üzerine tıkla: Duraklat / Devam Et ve Oturumu Bitir kontrolleri kısa süreli görünür."></div>
 
     <div class="focus-target-wrap" id="focusTargetWrap">
       <div class="focus-target-row">
@@ -46,8 +46,8 @@
     <div class="focus-state" id="focusSubText"></div>
 
     <div class="focus-actions">
-      <button class="work-btn active" id="focusPauseBtn" type="button">Duraklat ⏸</button>
-      <button class="work-btn finish focus-finish-btn" id="focusFinishBtn" type="button">Oturumu Bitir ✓</button>
+      <button class="work-btn active" id="focusPauseBtn" type="button" data-tooltip="Aktif oturumu duraklat veya duraklatılmış oturuma devam et">Duraklat ⏸</button>
+      <button class="work-btn finish focus-finish-btn" id="focusFinishBtn" type="button" data-tooltip="Aktif oturumu tamamen bitir ve geçmişe kaydet">Oturumu Bitir ✓</button>
     </div>
   </div>
 </div>
@@ -66,8 +66,8 @@
   <div class="header-row">
     <h1 class="title">🌳 Test</h1>
     <div class="header-icons">
-      <button class="icon-btn" id="focusToggleBtn" type="button" title="Odak modu" aria-label="Odak modu">🔍</button>
-      <button class="icon-btn" id="settingsToggleBtn" type="button" title="Ayarlar" aria-label="Ayarlar">⚙️</button>
+      <button class="icon-btn" id="focusToggleBtn" type="button" data-tooltip="Odak Modu: aktif oturumu büyük ve sade bir flip-clock ekranında göster" aria-label="Odak modu">🔍</button>
+      <button class="icon-btn" id="settingsToggleBtn" type="button" data-tooltip="Ayarlar: ses, bildirim, takvim, veri ve bulut hesabı seçenekleri" aria-label="Ayarlar">⚙️</button>
     </div>
   </div>
 
@@ -85,13 +85,13 @@
     <div class="work-card">
       <div class="work-header">
         <div class="streak-wrap">
-          <div class="streak-badge" id="streakBadge">🔥 <span id="streakCount">0</span> gün seri</div>
-          <button class="freeze-mini" id="freezeMini" type="button" aria-expanded="false" title="Dondurma ayrıntılarını göster">
+          <div class="streak-badge" id="streakBadge" data-tooltip="Seri: günlük çalışma hedefini art arda tamamladığın gün sayısı">🔥 <span id="streakCount">0</span> gün seri</div>
+          <button class="freeze-mini" id="freezeMini" type="button" aria-expanded="false" data-tooltip="Dondurma hakkı: hedef kaçırılan bir günde seriyi korumak için kullanılabilir">
             🧊 <span id="freezeCount">0</span>
           </button>
         </div>
         <div class="goal-block">
-          <button type="button" class="goal-edit-btn" id="dailyGoalEditBtn" title="Günlük çalışma süresi hedefini ayarla">🎯 <span id="dailyGoalLabel">60 dk</span> <span class="edit-pencil">✎</span></button>
+          <button type="button" class="goal-edit-btn" id="dailyGoalEditBtn" data-tooltip="Günlük hedef: bugün tamamlamak istediğin toplam odaklı çalışma süresi">🎯 <span id="dailyGoalLabel">60 dk</span> <span class="edit-pencil">✎</span></button>
           <div class="goal-mini-bar"><div class="goal-mini-fill" id="goalMiniFill"></div></div>
         </div>
       </div>
@@ -164,7 +164,7 @@
       <div class="stat"><div class="num" id="treeCount">0</div><div class="lbl">Tamamlanan Ağaç</div></div>
     </div>
 
-    <div class="badges-summary" id="badgesSummaryBtn" title="Rozetleri görüntüle">
+    <div class="badges-summary" id="badgesSummaryBtn" data-tooltip="Rozetler: çalışma ve görev kilometre taşlarından kazandığın başarımlar">
       <div class="bs-left">
         <span class="bs-icon">🏅</span>
         <div>
@@ -550,9 +550,27 @@
         <button type="button" class="toggle-switch" id="notifToggle"><span class="toggle-knob"></span></button>
       </div>
       <div class="notif-subsettings" id="notifSubsettings">
-        <div class="notif-subrow"><span>🎯 Oturum hedefi dolduğunda</span><button type="button" class="toggle-switch" id="notifSessionToggle"><span class="toggle-knob"></span></button></div>
-        <div class="notif-subrow"><span>☕ Mola / uzun çalışma hatırlatmaları</span><button type="button" class="toggle-switch" id="notifBreakToggle"><span class="toggle-knob"></span></button></div>
-        <div class="notif-subrow"><span>🏁 Günlük hedefe ulaşıldığında</span><button type="button" class="toggle-switch" id="notifDailyGoalToggle"><span class="toggle-knob"></span></button></div>
+        <div class="notif-subrow notif-timed-row">
+          <span class="notif-label-wrap">
+            <span>🎯 Oturum hedefi dolduğunda</span>
+            <small class="notif-timing">Seçtiğin oturum hedefi bittiği anda</small>
+          </span>
+          <button type="button" class="toggle-switch" id="notifSessionToggle" data-tooltip="Örn. 25 dk hedef seçtiysen 25. dakikada bildirim gönderir."><span class="toggle-knob"></span></button>
+        </div>
+        <div class="notif-subrow notif-timed-row">
+          <span class="notif-label-wrap">
+            <span>☕ Mola tamamlandığında</span>
+            <small class="notif-timing">Seçtiğin 5 / 10 / 15 dk mola bittiği anda</small>
+          </span>
+          <button type="button" class="toggle-switch" id="notifBreakToggle" data-tooltip="Mola için seçtiğin süre dolduğunda bildirim gönderir."><span class="toggle-knob"></span></button>
+        </div>
+        <div class="notif-subrow notif-timed-row">
+          <span class="notif-label-wrap">
+            <span>🏁 Günlük hedefe ulaşıldığında</span>
+            <small class="notif-timing">Günlük hedef dakikan tamamlandığı anda</small>
+          </span>
+          <button type="button" class="toggle-switch" id="notifDailyGoalToggle" data-tooltip="Sabit bir saat yoktur; o gün belirlediğin toplam çalışma süresine ulaştığın anda bildirim gönderir."><span class="toggle-knob"></span></button>
+        </div>
       </div>
       <div class="settings-row">
         <span class="settings-row-icon">🎨</span>
@@ -618,7 +636,7 @@
       </div>
       <div class="help-section">
         <h4>🔍 Odak Modu</h4>
-        <p>Çalışırken header'daki büyüteç ikonuna bas: ekran kararır, sadece görevin ve büyük bir flip-clock kalır — dikkat dağıtıcı hiçbir şey görünmez.</p>
+        <p>Çalışırken header'daki büyüteç ikonuna bas: ekran kararır, sadece görevin ve büyük bir flip-clock kalır. <b>Laptop / masaüstünde</b> sayaç rakamlarının üzerine bir kez tıklarsan <b>Duraklat / Devam Et</b> ve <b>Oturumu Bitir</b> kontrolleri görünür. Kontroller yaklaşık 3,5 saniye sonra tekrar gizlenir; yeniden göstermek için saate tekrar tıklaman yeterlidir.</p>
       </div>
       <div class="help-section">
         <h4>🏅 Seviye & Rozetler</h4>
@@ -662,12 +680,12 @@
   </div>
 </div>
 
-<script src="assets/js/modules/ui-helpers.js?v=60" defer></script>
-<script src="assets/js/modules/state-merge.js?v=60" defer></script>
-<script src="assets/js/app.js?v=60" defer></script>
-<script src="assets/js/cloud-config.js?v=60" defer></script>
-<script src="assets/js/cloud-sync.js?v=60" defer></script>
-<script src="assets/js/pwa-register.js?v=60" defer></script>
+<script src="assets/js/modules/ui-helpers.js?v=61.1" defer></script>
+<script src="assets/js/modules/state-merge.js?v=61.1" defer></script>
+<script src="assets/js/app.js?v=61.1" defer></script>
+<script src="assets/js/cloud-config.js?v=61.1" defer></script>
+<script src="assets/js/cloud-sync.js?v=61.1" defer></script>
+<script src="assets/js/pwa-register.js?v=61.1" defer></script>
 
 
 </body>
