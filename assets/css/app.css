@@ -3742,3 +3742,218 @@
     width:88vw!important;
   }
 }
+
+
+/* === v59: transient Focus Mode controls === */
+.focus-content .flip-clock{
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.focus-content .flip-clock:focus-visible{
+  outline:2px solid rgba(116,217,159,.62);
+  outline-offset:10px;
+  border-radius:16px;
+}
+.focus-overlay .focus-actions{
+  display:none!important;
+}
+.focus-overlay.controls-visible .focus-actions{
+  display:grid!important;
+  position:absolute;
+  left:50%;
+  bottom:max(22px,env(safe-area-inset-bottom));
+  transform:translateX(-50%);
+  grid-template-columns:1fr 1fr;
+  width:min(430px,82vw);
+  gap:10px;
+  padding:10px;
+  border:1px solid rgba(116,217,159,.18);
+  border-radius:16px;
+  background:rgba(7,28,23,.88);
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+  z-index:4;
+}
+.focus-overlay.controls-visible .focus-actions .work-btn{
+  display:block!important;
+  margin:0!important;
+  min-width:0;
+}
+@media (max-width:900px) and (orientation:landscape){
+  .focus-overlay.controls-visible .focus-actions{
+    bottom:max(8px,env(safe-area-inset-bottom));
+    width:min(420px,62vw);
+    padding:7px;
+  }
+  .focus-overlay.controls-visible .focus-actions .work-btn{
+    padding:8px 10px!important;
+    font-size:10px!important;
+  }
+}
+
+
+/* === v61: açıklayıcı hover / focus tooltips === */
+[data-tooltip]{
+  position:relative;
+}
+
+[data-tooltip]::after{
+  content:attr(data-tooltip);
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 9px);
+  transform:translate(-50%,5px);
+  width:max-content;
+  max-width:min(290px,72vw);
+  padding:7px 9px;
+  border:1px solid rgba(116,217,159,.24);
+  border-radius:9px;
+  background:#071713;
+  color:var(--paper-dim);
+  box-shadow:0 10px 24px rgba(0,0,0,.38);
+  font-family:'IBM Plex Sans',sans-serif;
+  font-size:10px;
+  font-weight:600;
+  line-height:1.38;
+  letter-spacing:0;
+  text-transform:none;
+  text-align:left;
+  white-space:normal;
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  z-index:9999;
+  transition:opacity .13s ease,transform .13s ease,visibility .13s ease;
+}
+
+[data-tooltip]::before{
+  content:'';
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 4px);
+  width:8px;
+  height:8px;
+  transform:translateX(-50%) rotate(45deg);
+  background:#071713;
+  border-right:1px solid rgba(116,217,159,.24);
+  border-bottom:1px solid rgba(116,217,159,.24);
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  z-index:10000;
+  transition:opacity .13s ease,visibility .13s ease;
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:hover::before,
+[data-tooltip]:focus-visible::after,
+[data-tooltip]:focus-visible::before,
+[data-tooltip]:focus-within::after,
+[data-tooltip]:focus-within::before{
+  opacity:1;
+  visibility:visible;
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after,
+[data-tooltip]:focus-within::after{
+  transform:translate(-50%,0);
+}
+
+.session-meta .metric-help{
+  cursor:help;
+  border-radius:5px;
+  outline:none;
+}
+
+.session-meta .metric-help:hover,
+.session-meta .metric-help:focus-visible{
+  color:var(--moss-bright);
+  background:rgba(116,217,159,.07);
+}
+
+.session-time-edit-btn[data-tooltip]::after,
+.session-delete-btn[data-tooltip]::after{
+  left:auto;
+  right:0;
+  transform:translateY(5px);
+}
+
+.session-time-edit-btn[data-tooltip]:hover::after,
+.session-time-edit-btn[data-tooltip]:focus-visible::after,
+.session-delete-btn[data-tooltip]:hover::after,
+.session-delete-btn[data-tooltip]:focus-visible::after{
+  transform:translateY(0);
+}
+
+.session-time-edit-btn[data-tooltip]::before,
+.session-delete-btn[data-tooltip]::before{
+  left:auto;
+  right:10px;
+  transform:rotate(45deg);
+}
+
+/* Entire session row is clickable; keep its explanation subtle and lower priority
+   than tooltips on the individual action buttons and metrics. */
+.session-head[data-tooltip]::after{
+  bottom:auto;
+  top:calc(100% + 8px);
+}
+.session-head[data-tooltip]::before{
+  bottom:auto;
+  top:calc(100% + 3px);
+  transform:translateX(-50%) rotate(225deg);
+}
+
+/* Avoid tooltip pseudo-elements interfering with the existing detailed score tooltip. */
+.daily-score-hover-wrap [data-tooltip]::after,
+.daily-score-hover-wrap [data-tooltip]::before{
+  display:none;
+}
+
+@media (hover:none){
+  [data-tooltip]::after,
+  [data-tooltip]::before{
+    transition:none;
+  }
+}
+
+@media(max-width:560px){
+  [data-tooltip]::after{
+    max-width:min(250px,78vw);
+    font-size:9.5px;
+  }
+  .session-meta{
+    flex-wrap:wrap;
+  }
+}
+
+
+/* === v61 final: notification trigger timing === */
+.notif-timed-row{
+  align-items:center;
+  gap:14px;
+}
+
+.notif-label-wrap{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  flex:1;
+}
+
+.notif-timing{
+  display:block;
+  color:var(--paper-dim);
+  opacity:.68;
+  font-size:10px;
+  line-height:1.35;
+  font-weight:500;
+}
+
+@media(max-width:560px){
+  .notif-timing{
+    font-size:9px;
+  }
+}
