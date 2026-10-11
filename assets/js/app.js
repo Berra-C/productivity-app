@@ -1818,6 +1818,20 @@
   }
 
   // ---------- Açıklayıcı hover / focus tooltip sistemi ----------
+  let tooltipEl = null;
+  let tooltipTarget = null;
+  let tooltipHideTimer = null;
+
+  function ensureTooltipElement(){
+    if(tooltipEl) return tooltipEl;
+    tooltipEl = document.createElement('div');
+    tooltipEl.className = 'app-tooltip';
+    tooltipEl.setAttribute('role','tooltip');
+    tooltipEl.hidden = true;
+    document.body.appendChild(tooltipEl);
+    return tooltipEl;
+  }
+
   function upgradeTooltipElement(node){
     if(!(node instanceof Element)) return;
 
@@ -1826,7 +1840,7 @@
       const title=(el.getAttribute('title')||'').trim();
       if(title && !el.dataset.tooltip){
         el.dataset.tooltip=title;
-        el.removeAttribute('title'); // native tooltip ile çift görünmesin
+        el.removeAttribute('title');
       }
       if(el.dataset.tooltip && !el.hasAttribute('aria-label')){
         const text=(el.dataset.tooltip||'').trim();
@@ -1843,8 +1857,63 @@
     node.querySelectorAll?.('[title],[data-tooltip]').forEach(apply);
   }
 
+  function positionTooltip(target){
+    if(!tooltipEl || tooltipEl.hidden || !target?.isConnected) return;
+
+    const rect = target.getBoundingClientRect();
+    const tip = tooltipEl.getBoundingClientRect();
+    const gap = 9;
+    const edge = 10;
+
+    let top = rect.top - tip.height - gap;
+    let placement = 'top';
+    if(top < edge){
+      top = rect.bottom + gap;
+      placement = 'bottom';
+    }
+
+    let left = rect.left + (rect.width - tip.width) / 2;
+    left = Math.max(edge, Math.min(left, window.innerWidth - tip.width - edge));
+
+    if(top + tip.height > window.innerHeight - edge){
+      const above = rect.top - tip.height - gap;
+      if(above >= edge){
+        top = above;
+        placement = 'top';
+      }else{
+        top = Math.max(edge, window.innerHeight - tip.height - edge);
+      }
+    }
+
+    tooltipEl.style.left = Math.round(left) + 'px';
+    tooltipEl.style.top = Math.round(top) + 'px';
+    tooltipEl.dataset.placement = placement;
+  }
+
+  function showAppTooltip(target){
+    const text=(target?.dataset?.tooltip||'').trim();
+    if(!text) return;
+    clearTimeout(tooltipHideTimer);
+    const tip=ensureTooltipElement();
+    tooltipTarget=target;
+    tip.textContent=text;
+    tip.hidden=false;
+    requestAnimationFrame(()=>positionTooltip(target));
+  }
+
+  function hideAppTooltip(immediate=false){
+    clearTimeout(tooltipHideTimer);
+    const hide=()=>{
+      if(tooltipEl) tooltipEl.hidden=true;
+      tooltipTarget=null;
+    };
+    if(immediate) hide();
+    else tooltipHideTimer=setTimeout(hide,80);
+  }
+
   function initializeTooltips(){
     upgradeTooltipElement(document.documentElement);
+    ensureTooltipElement();
 
     const observer=new MutationObserver(mutations=>{
       mutations.forEach(m=>{
@@ -1853,8 +1922,38 @@
         });
       });
     });
-
     observer.observe(document.body,{childList:true,subtree:true});
+
+    document.addEventListener('pointerover',e=>{
+      const target=e.target.closest?.('[data-tooltip]');
+      if(target) showAppTooltip(target);
+    });
+
+    document.addEventListener('pointerout',e=>{
+      const target=e.target.closest?.('[data-tooltip]');
+      if(!target) return;
+      const next=e.relatedTarget;
+      if(next && target.contains(next)) return;
+      hideAppTooltip();
+    });
+
+    document.addEventListener('focusin',e=>{
+      const target=e.target.closest?.('[data-tooltip]');
+      if(target) showAppTooltip(target);
+    });
+
+    document.addEventListener('focusout',e=>{
+      const target=e.target.closest?.('[data-tooltip]');
+      if(target) hideAppTooltip();
+    });
+
+    window.addEventListener('scroll',()=>{
+      if(tooltipTarget) positionTooltip(tooltipTarget);
+    },{passive:true});
+
+    window.addEventListener('resize',()=>{
+      if(tooltipTarget) positionTooltip(tooltipTarget);
+    });
   }
 
   // ---------- DOM refs ----------
@@ -7989,3 +8088,4 @@
   if(new URLSearchParams(location.search).get('test')==='1'){
     setTimeout(()=>{ window.__TEST_RESULTS__=runUnitTests(); },0);
   }
+
