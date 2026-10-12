@@ -3813,6 +3813,8 @@
   text-align:left;
   white-space:normal;
   pointer-events:none;
+  opacity:1;
+  transition:opacity .12s ease, transform .12s ease;
 }
 
 .app-tooltip[hidden]{
