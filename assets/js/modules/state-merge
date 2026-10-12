@@ -1,1 +1,186 @@
+(() => {
+  'use strict';
 
+  const clone = value => JSON.parse(JSON.stringify(value ?? null));
+
+  function itemKey(item,index){
+    return item?.id || item?.key || `${item?.name || item?.species || 'item'}:${item?.date || item?.completedAt || index}`;
+  }
+
+  function mergeArray(remote=[], local=[]){
+    const map = new Map();
+    (remote || []).forEach((item,index) => map.set(itemKey(item,index), clone(item)));
+
+    (local || []).forEach((item,index) => {
+      const key = itemKey(item,index);
+      const existing = map.get(key);
+      if(!existing){
+        map.set(key, clone(item));
+        return;
+      }
+
+      const remoteUpdated = Number(existing.updatedAt || existing.completedAt || 0);
+      const localUpdated = Number(item.updatedAt || item.completedAt || 0);
+      map.set(
+        key,
+        clone(localUpdated >= remoteUpdated ? {...existing,...item} : {...item,...existing})
+      );
+    });
+
+    return [...map.values()];
+  }
+
+  function mergeSessionLog(remote={}, local={}){
+    const out = {};
+    const keys = new Set([...Object.keys(remote || {}), ...Object.keys(local || {})]);
+
+    keys.forEach(date => {
+      const map=new Map();
+
+      (remote?.[date] || []).forEach((session,index)=>{
+        map.set(itemKey(session,index),clone(session));
+      });
+
+      (local?.[date] || []).forEach((session,index)=>{
+        const key=itemKey(session,index);
+        const existing=map.get(key);
+        if(!existing){
+          map.set(key,clone(session));
+          return;
+        }
+
+        const remoteUpdated=Number(existing.updatedAt || existing.endedAt || existing.startedAt || 0);
+        const localUpdated=Number(session.updatedAt || session.endedAt || session.startedAt || 0);
+
+        // A renamed/edited session receives updatedAt, so its metadata must not be
+        // overwritten later by a stale device that still has the old label.
+        map.set(
+          key,
+          clone(localUpdated >= remoteUpdated ? {...existing,...session} : {...session,...existing})
+        );
+      });
+
+      out[date]=[...map.values()];
+    });
+
+    return out;
+  }
+
+  function validGoal(value){
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  function mergedDayFromSessions(date, remoteDay={}, localDay={}, sessions=[], fallbackGoal=60){
+    const source = {...clone(remoteDay || {}), ...clone(localDay || {})};
+
+    const workSeconds = Math.max(
+      0,
+      Math.round((sessions || []).reduce((sum,session) => sum + Math.max(0, Number(session?.duration || 0)), 0))
+    );
+
+    const distractionCategories = {};
+    let distraction = 0;
+
+    (sessions || []).forEach(session => {
+      distraction += Math.max(0, Number(session?.distractions || 0));
+      Object.entries(session?.distractionCategories || {}).forEach(([key,value]) => {
+        distractionCategories[key] = (distractionCategories[key] || 0) + Math.max(0, Number(value || 0));
+      });
+    });
+
+    const goalMinutes =
+      validGoal(localDay?.goalMinutes) ??
+      validGoal(remoteDay?.goalMinutes) ??
+      validGoal(fallbackGoal) ??
+      60;
+
+    const result = {
+      ...source,
+      resist: Math.max(0, Number(remoteDay?.resist || 0), Number(localDay?.resist || 0)),
+      workSeconds,
+      sessions: (sessions || []).length,
+      distraction,
+      distractionCategories,
+      goalMinutes
+    };
+
+    if('goalCelebrated' in result){
+      result.goalCelebrated = Boolean(
+        (remoteDay?.goalCelebrated || localDay?.goalCelebrated) &&
+        workSeconds >= goalMinutes * 60
+      );
+    }
+
+    return result;
+  }
+
+  function rebuildDays(remoteDays={}, localDays={}, sessionLog={}, fallbackGoal=60){
+    const out = {};
+    const keys = new Set([
+      ...Object.keys(remoteDays || {}),
+      ...Object.keys(localDays || {}),
+      ...Object.keys(sessionLog || {})
+    ]);
+
+    keys.forEach(date => {
+      out[date] = mergedDayFromSessions(
+        date,
+        remoteDays?.[date] || {},
+        localDays?.[date] || {},
+        Array.isArray(sessionLog?.[date]) ? sessionLog[date] : [],
+        fallbackGoal
+      );
+    });
+
+    return out;
+  }
+
+  function mergeStates(remote={}, local={}){
+    const out = {...clone(remote || {}), ...clone(local || {})};
+
+    out.tasks = mergeArray(remote.tasks, local.tasks);
+    out.events = mergeArray(remote.events, local.events);
+    out.taskTags = mergeArray(remote.taskTags, local.taskTags);
+    out.collection = mergeArray(remote.collection, local.collection);
+    out.badgeUnlockLog = mergeArray(remote.badgeUnlockLog, local.badgeUnlockLog);
+    out.sessionLog = mergeSessionLog(remote.sessionLog, local.sessionLog);
+
+    const fallbackGoal =
+      validGoal(local.dailyGoalMinutes) ??
+      validGoal(remote.dailyGoalMinutes) ??
+      60;
+
+    // days is an aggregate/cache. Rebuild its work/session/distraction metrics
+    // from the merged session log instead of letting one device overwrite another.
+    out.days = rebuildDays(
+      remote.days || {},
+      local.days || {},
+      out.sessionLog,
+      fallbackGoal
+    );
+
+    out.totalResists = Math.max(Number(remote.totalResists)||0, Number(local.totalResists)||0);
+    out.totalTodosCompleted = Math.max(Number(remote.totalTodosCompleted)||0, Number(local.totalTodosCompleted)||0);
+    out.bestGoalStreak = Math.max(Number(remote.bestGoalStreak)||0, Number(local.bestGoalStreak)||0);
+    out.treeNumber = Math.max(Number(remote.treeNumber)||1, Number(local.treeNumber)||1);
+
+    // Active timers are intentionally device-local.
+    out.activeSessionId = null;
+    out.activeSessionDate = null;
+    out.isWorking = false;
+    out.workStart = null;
+    out.breakState = null;
+    out.activeTimerOwnerId = null;
+    out.timerState = {mode:'idle',sessionId:null,runningSince:null,ownerId:null};
+
+    return out;
+  }
+
+  window.ProductivityStateMerge = {
+    mergeArray,
+    mergeSessionLog,
+    rebuildDays,
+    mergeStates
+  };
+})();
