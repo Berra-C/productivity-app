@@ -204,6 +204,58 @@
     return Number.isFinite(ms) ? ms : null;
   }
 
+  function askSessionTimeRange(dateKeyValue, currentStart, currentEnd){
+    return new Promise(resolve=>{
+      el.sessionTimeDateLabel.textContent = displayDate(dateKeyValue) + ' tarihindeki oturum';
+      el.sessionTimeStart.value = currentStart || '';
+      el.sessionTimeEnd.value = currentEnd || '';
+      el.sessionTimeError.textContent = '';
+
+      function cleanup(result){
+        modalController.close(el.sessionTimeBackdrop);
+        el.sessionTimeSave.removeEventListener('click', onSave);
+        el.sessionTimeCancel.removeEventListener('click', onCancel);
+        el.sessionTimeClose.removeEventListener('click', onCancel);
+        el.sessionTimeStart.removeEventListener('keydown', onKey);
+        el.sessionTimeEnd.removeEventListener('keydown', onKey);
+        resolve(result);
+      }
+
+      function onSave(){
+        const start = parseClockOnDate(dateKeyValue, el.sessionTimeStart.value);
+        const end = parseClockOnDate(dateKeyValue, el.sessionTimeEnd.value);
+
+        if(start===null || end===null){
+          el.sessionTimeError.textContent = 'Başlangıç ve bitiş saatini seç.';
+          return;
+        }
+        if(end<=start){
+          el.sessionTimeError.textContent = 'Bitiş saati başlangıç saatinden sonra olmalı.';
+          return;
+        }
+        cleanup({start,end});
+      }
+
+      function onCancel(){ cleanup(null); }
+      function onKey(e){
+        if(e.key==='Enter'){ e.preventDefault(); onSave(); }
+        if(e.key==='Escape'){ e.preventDefault(); onCancel(); }
+      }
+
+      el.sessionTimeSave.addEventListener('click', onSave);
+      el.sessionTimeCancel.addEventListener('click', onCancel);
+      el.sessionTimeClose.addEventListener('click', onCancel);
+      el.sessionTimeStart.addEventListener('keydown', onKey);
+      el.sessionTimeEnd.addEventListener('keydown', onKey);
+
+      modalController.open(el.sessionTimeBackdrop,{
+        onCancel,
+        focus:el.sessionTimeStart,
+        select:false
+      });
+    });
+  }
+
   function parseSessionIntervalText(dateKeyValue,text){
     const ranges=String(text||'').split(',').map(x=>x.trim()).filter(Boolean);
     if(!ranges.length) return null;
@@ -242,7 +294,11 @@
     const key=findSessionDateKey(sessionId);
     if(!session || !key) return;
 
-    const existing=sessionIntervals(session);
+    const existing=sessionIntervals(session)
+      .filter(x=>Number.isFinite(Number(x?.start)) && Number.isFinite(Number(x?.end)))
+      .map(x=>({start:Number(x.start),end:Number(x.end)}))
+      .sort((a,b)=>a.start-b.start);
+
     const currentStart=displayClockTime(session.startedAt || existing[0]?.start);
     const currentEnd=displayClockTime(session.endedAt || existing[existing.length-1]?.end);
 
@@ -251,65 +307,65 @@
       return;
     }
 
-    const startText=await askPrompt('Başlangıç saati (SS:DD)',currentStart);
-    if(startText===null) return;
-    const newStart=parseClockOnDate(key,startText);
-    if(newStart===null){
-      showToast('Başlangıç saatini 24 saat biçiminde gir. Örn: 08:45',true);
-      return;
-    }
+    const chosen=await askSessionTimeRange(key,currentStart,currentEnd);
+    if(!chosen) return;
 
-    const endText=await askPrompt('Bitiş saati (SS:DD)',currentEnd);
-    if(endText===null) return;
-    const newEnd=parseClockOnDate(key,endText);
-    if(newEnd===null){
-      showToast('Bitiş saatini 24 saat biçiminde gir. Örn: 10:20',true);
-      return;
-    }
+    const newStart=chosen.start;
+    const newEnd=chosen.end;
 
-    if(newEnd<=newStart){
-      showToast('Bitiş saati başlangıç saatinden sonra olmalı.',true);
-      return;
-    }
+    // Mevcut gerçek çalışma bloklarını yeni dış sınırlara göre kırp.
+    // Örn. 04:00–09:00 açık unutulmuşsa ve kullanıcı 06:30 yazarsa,
+    // 06:30 sonrasındaki autosave/work interval parçaları tamamen atılır.
+    let intervals = existing
+      .map(x=>({
+        start:Math.max(x.start,newStart),
+        end:Math.min(x.end,newEnd)
+      }))
+      .filter(x=>x.end>x.start);
 
-    let intervals=existing
-      .filter(x=>Number.isFinite(Number(x?.start)) && Number.isFinite(Number(x?.end)))
-      .map(x=>({start:Number(x.start),end:Number(x.end)}))
-      .sort((a,b)=>a.start-b.start);
-
+    // Eski sürümden interval detayı olmayan tek parça oturumlarda,
+    // kullanıcının verdiği saat aralığı doğrudan güvenilir kaynak kabul edilir.
     if(!intervals.length){
       intervals=[{start:newStart,end:newEnd}];
-    }else if(intervals.length===1){
-      // Tek bloklu oturumlarda kullanıcı doğrudan gerçek başlangıç/bitiş aralığını düzeltir.
-      intervals=[{start:newStart,end:newEnd}];
     }else{
-      // Çok bloklu oturumlarda iç molaları koru; yalnızca dış sınırları değiştir.
-      intervals[0].start=newStart;
-      intervals[intervals.length-1].end=newEnd;
+      // Kullanıcı başlangıcı eski ilk intervalden daha erkene aldıysa
+      // ilk çalışma bloğunu yeni başlangıca uzat.
+      if(existing.length && newStart < existing[0].start){
+        intervals[0].start=newStart;
+      }
 
-      // Değişiklik iç bloklarla çakışıyorsa kullanıcıyı yanlış veri yazmaktan koru.
-      for(let i=0;i<intervals.length;i++){
-        if(intervals[i].end<=intervals[i].start){
-          showToast('Yeni saatler mevcut çalışma bloklarıyla çakışıyor.',true);
-          return;
-        }
-        if(i>0 && intervals[i].start<intervals[i-1].end){
-          showToast('Yeni saatler mevcut çalışma bloklarıyla çakışıyor.',true);
-          return;
-        }
+      // Kullanıcı bitişi eski son intervalden daha ileri aldıysa
+      // son çalışma bloğunu yeni bitişe uzat.
+      if(existing.length && newEnd > existing[existing.length-1].end){
+        intervals[intervals.length-1].end=newEnd;
       }
     }
 
+    intervals.sort((a,b)=>a.start-b.start);
+
+    // Komşu / üst üste binen autosave parçalarını tek blokta birleştir.
+    const merged=[];
+    intervals.forEach(interval=>{
+      const prev=merged[merged.length-1];
+      if(prev && interval.start<=prev.end+1000){
+        prev.end=Math.max(prev.end,interval.end);
+      }else{
+        merged.push({...interval});
+      }
+    });
+    intervals=merged;
+
     const total=Math.round(intervals.reduce((sum,x)=>sum+(x.end-x.start)/1000,0));
     if(total<=0){
-      showToast('Toplam çalışma süresi sıfır olamaz.',true);
+      showToast('Bu saat aralığında kaydedilebilir çalışma süresi kalmıyor.',true);
       return;
     }
 
     session.workIntervals=intervals;
-    session.startedAt=intervals[0].start;
-    session.endedAt=intervals[intervals.length-1].end;
+    session.startedAt=newStart;
+    session.endedAt=newEnd;
     session.duration=total;
+    session.updatedAt=Date.now();
 
     recomputeSessionDay(key);
     saveData({force:true});
@@ -320,7 +376,7 @@
     renderStats();
     renderCalendar();
 
-    showToast('Oturumun başlangıç ve bitiş saati güncellendi.',true);
+    showToast('Oturum saatleri ve çalışma süresi güncellendi.',true);
   }
 
   function displayTaskDate(value){
@@ -2108,6 +2164,15 @@
     confirmAlt: document.getElementById('confirmAlt'),
     confirmCancel: document.getElementById('confirmCancel'),
 
+    sessionTimeBackdrop: document.getElementById('sessionTimeBackdrop'),
+    sessionTimeDateLabel: document.getElementById('sessionTimeDateLabel'),
+    sessionTimeStart: document.getElementById('sessionTimeStart'),
+    sessionTimeEnd: document.getElementById('sessionTimeEnd'),
+    sessionTimeError: document.getElementById('sessionTimeError'),
+    sessionTimeSave: document.getElementById('sessionTimeSave'),
+    sessionTimeCancel: document.getElementById('sessionTimeCancel'),
+    sessionTimeClose: document.getElementById('sessionTimeClose'),
+
     promptBackdrop: document.getElementById('promptBackdrop'),
     promptLabel: document.getElementById('promptLabel'),
     promptInput: document.getElementById('promptInput'),
@@ -3070,19 +3135,14 @@
     const b = data.breakState;
     const elapsed = getBreakElapsed();
     const remaining = b.targetSeconds - elapsed;
+
+    // Mola yalnızca ana sayaç ve durum metninde gösterilir.
+    // Günlük hedef halkası, mini hedef çubuğu, seri ve dondurma bilgileri
+    // mola boyunca çalışma ilerliyormuş gibi değişmez.
     el.workTimer.textContent = remaining >= 0 ? formatRingTime(remaining) : ('+' + formatRingTime(-remaining));
-    const pct = b.targetSeconds > 0 ? Math.min(1, elapsed / b.targetSeconds) : 1;
-    el.ringFill.style.strokeDashoffset = (RING_C * (1-pct)).toFixed(1);
-    el.ringFill.classList.toggle('reached', remaining <= 0);
-    el.ringWrap.classList.toggle('reached', remaining <= 0);
-    el.ringGoalLabel.textContent = remaining > 0
-      ? '☕ Mola · ' + Math.ceil(remaining/60) + ' dk kaldı'
-      : '☕ Mola süresi doldu';
     el.statusLine.textContent = remaining > 0
-      ? 'Dinleniyorsun — hazır olduğunda molayı geçebilirsin.'
-      : 'Mola hedefin doldu. İstersen dinlenmeye devam et ya da yeni oturuma geç.';
-    el.goalMiniFill.style.width = Math.round(pct*100) + '%';
-    el.goalMiniFill.classList.toggle('reached', remaining <= 0);
+      ? '☕ Mola · ' + Math.ceil(remaining/60) + ' dk kaldı — dinleniyorsun.'
+      : '☕ Mola süresi doldu. İstersen dinlenmeye devam et ya da yeni oturuma geç.';
 
     if(remaining <= 0 && !b.notified && !readOnly){
       b.notified = true;
@@ -3447,6 +3507,7 @@
       targetSeconds: targetMinutes ? targetMinutes*60 : null,
       targetReached: false,
       breakNotified: false,
+      updatedAt: Date.now(),
       milestonesHit: []
     };
     const sessionDate=todayKey();
@@ -3946,8 +4007,21 @@
     } else if(action === 'rename'){
       const session = findSession(sid);
       if(!session) return;
-      const name = await askPrompt('Oturum adı', session.name);
-      if(name !== null && name.trim()){ session.name = name.trim().slice(0,40); saveData(); renderSessionList(); }
+      const oldName=String(session.name||'').trim();
+      const name = await askPrompt('Oturum adı', oldName);
+      if(name !== null && name.trim()){
+        const clean=name.trim().slice(0,40);
+        const changed=renameSessionGroupEverywhere(oldName,clean);
+        if(!changed){
+          session.name=clean;
+          session.updatedAt=Date.now();
+        }
+        saveData({force:true});
+        renderSessionList();
+        renderStats();
+        renderCalendar();
+        showToast(changed>1 ? changed+' geçmiş oturum aynı ad altında güncellendi.' : 'Oturum adı güncellendi.',true);
+      }
     } else if(action === 'manage-subjects'){
       if(sid !== data.activeSessionId) return;
       openSubjectManager();
@@ -3959,8 +4033,9 @@
       if(subject !== null){
         const clean = subject.trim().slice(0,30);
         session.subject = clean || 'Genel';
+        session.updatedAt = Date.now();
         if(clean) rememberSubject(clean);
-        saveData();
+        saveData({force:true});
         renderSessionList();
         updateIntentDisplay();
         if(el.focusOverlay.classList.contains('show')) renderFocusOverlay();
@@ -4434,14 +4509,25 @@
         showToast('Bu konu zaten önerilerde var.',true); return;
       }
       const oldValue=data.subjects[index];
+      const beforeState=JSON.parse(JSON.stringify(data.sessionLog || {}));
+      renameSessionGroupEverywhere(oldValue,value);
       data.subjects[index]=value;
-      saveData();
+      saveData({force:true});
       renderSubjectManager();
       renderSubjectChips();
-      offerUndo('Konu adı değiştirildi.',()=>{
-        const currentIndex=data.subjects.findIndex(x=>x===value);
+      renderSessionList();
+      renderStats();
+      renderCalendar();
+      offerUndo('Konu adı ve geçmiş veriler güncellendi.',()=>{
+        data.sessionLog=beforeState;
+        const currentIndex=data.subjects.findIndex(x=>normalizeGroupName(x)===normalizeGroupName(value));
         if(currentIndex>=0) data.subjects[currentIndex]=oldValue;
-        saveData(); renderSubjectManager(); renderSubjectChips();
+        saveData({force:true});
+        renderSubjectManager();
+        renderSubjectChips();
+        renderSessionList();
+        renderStats();
+        renderCalendar();
       });
     }
   });
@@ -4451,6 +4537,56 @@
     el.subjectChips.innerHTML = subjects.slice(0,6).map(s=>
       '<button type="button" class="subject-chip" data-subject="'+escapeHtml(s)+'">'+escapeHtml(s)+'</button>'
     ).join('');
+  }
+
+  function normalizeGroupName(value){
+    return String(value||'').trim().toLocaleLowerCase('tr-TR');
+  }
+
+  function renameSessionGroupEverywhere(oldValue,newValue){
+    const oldKey=normalizeGroupName(oldValue);
+    const cleanNew=String(newValue||'').trim();
+    if(!oldKey || !cleanNew) return 0;
+
+    const now=Date.now();
+    let changed=0;
+
+    Object.values(data.sessionLog || {}).forEach(sessions=>{
+      if(!Array.isArray(sessions)) return;
+      sessions.forEach(session=>{
+        let touched=false;
+
+        if(normalizeGroupName(session.name)===oldKey){
+          session.name=cleanNew;
+          touched=true;
+        }
+        if(normalizeGroupName(session.subject)===oldKey){
+          session.subject=cleanNew;
+          touched=true;
+        }
+
+        if(touched){
+          session.updatedAt=now;
+          changed++;
+        }
+      });
+    });
+
+    if(Array.isArray(data.subjects)){
+      data.subjects=data.subjects.map(subject=>
+        normalizeGroupName(subject)===oldKey ? cleanNew : subject
+      );
+      // Aynı isimde iki öneri oluştuysa tekilleştir.
+      const seen=new Set();
+      data.subjects=data.subjects.filter(subject=>{
+        const key=normalizeGroupName(subject);
+        if(seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    return changed;
   }
 
   function rememberSubject(subject){
