@@ -3868,3 +3868,126 @@
     font-size:9px;
   }
 }
+
+
+/* === v63: historical session time editor === */
+#sessionTimeBackdrop{
+  z-index:96;
+}
+
+.session-time-box{
+  max-width:500px;
+  padding:0;
+  overflow:hidden;
+}
+
+.session-time-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:18px;
+  padding:20px 22px 16px;
+  border-bottom:1px solid rgba(116,217,159,.12);
+}
+
+.session-time-kicker{
+  color:var(--moss-bright);
+  font-family:'IBM Plex Mono',monospace;
+  font-size:9px;
+  letter-spacing:.12em;
+  font-weight:700;
+  margin-bottom:4px;
+}
+
+.session-time-head h3{
+  margin:0;
+  color:var(--paper);
+  font-family:'Fraunces',serif;
+  font-size:19px;
+}
+
+.session-time-head p{
+  margin:4px 0 0;
+  color:var(--paper-dim);
+  font-size:11px;
+}
+
+.session-time-grid{
+  display:grid;
+  grid-template-columns:1fr auto 1fr;
+  align-items:end;
+  gap:12px;
+  padding:20px 22px 12px;
+}
+
+.session-time-field{
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+}
+
+.session-time-field > span{
+  color:var(--paper-dim);
+  font-size:10px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.07em;
+}
+
+.session-time-field input{
+  width:100%;
+  box-sizing:border-box;
+  background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:11px;
+  color:var(--paper);
+  padding:12px 13px;
+  font-family:'IBM Plex Mono',monospace;
+  font-size:17px;
+  outline:none;
+  color-scheme:dark;
+}
+
+.session-time-field input:focus{
+  border-color:rgba(116,217,159,.55);
+  box-shadow:0 0 0 3px rgba(116,217,159,.08);
+}
+
+.session-time-arrow{
+  color:var(--moss-bright);
+  padding-bottom:13px;
+  font-size:18px;
+  opacity:.8;
+}
+
+.session-time-note{
+  margin:0 22px;
+  padding:11px 12px;
+  border:1px solid rgba(116,217,159,.13);
+  background:rgba(116,217,159,.055);
+  border-radius:10px;
+  color:var(--paper-dim);
+  font-size:11px;
+  line-height:1.5;
+}
+
+.session-time-error{
+  min-height:18px;
+  margin:7px 22px 0;
+  color:var(--red);
+  font-size:10.5px;
+}
+
+.session-time-actions{
+  padding:10px 22px 20px;
+}
+
+@media(max-width:520px){
+  .session-time-grid{
+    grid-template-columns:1fr;
+    gap:10px;
+  }
+  .session-time-arrow{
+    display:none;
+  }
+}
