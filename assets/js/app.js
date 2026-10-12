@@ -195,6 +195,15 @@
     return sessionIntervals(session).map(x=>displayClockTime(x.start)+'-'+displayClockTime(x.end)).join(', ');
   }
 
+  function parseClockOnDate(dateKeyValue, value){
+    const m=String(value||'').trim().match(/^(\d{1,2}):(\d{2})$/);
+    if(!m) return null;
+    const h=Number(m[1]), min=Number(m[2]);
+    if(h<0 || h>23 || min<0 || min>59) return null;
+    const ms=new Date(dateKeyValue+'T'+pad(h)+':'+pad(min)+':00').getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+
   function parseSessionIntervalText(dateKeyValue,text){
     const ranges=String(text||'').split(',').map(x=>x.trim()).filter(Boolean);
     if(!ranges.length) return null;
@@ -228,34 +237,90 @@
 
   async function editHistoricalSessionTiming(sessionId){
     if(sessionId===data.activeSessionId) return;
+
     const session=findSession(sessionId);
-    const oldKey=findSessionDateKey(sessionId);
-    if(!session||!oldKey) return;
-    const dateText=await askPrompt('Oturum tarihi (GG/AA/YYYY)',displayTaskDate(oldKey));
-    if(dateText===null) return;
-    const newKey=parseTaskDateInput(dateText.trim());
-    if(!newKey){ showToast('Geçerli bir tarih gir: GG/AA/YYYY',true); return; }
-    const currentText=sessionIntervalText(session) || (displayClockTime(session.startedAt)&&displayClockTime(session.endedAt)?displayClockTime(session.startedAt)+'-'+displayClockTime(session.endedAt):'');
-    const intervalText=await askPrompt('Çalışma blokları (örn. 14:00-14:25, 14:50-15:20)',currentText);
-    if(intervalText===null) return;
-    const intervals=parseSessionIntervalText(newKey,intervalText);
-    if(!intervals){ showToast('Saatleri “14:00-14:25, 14:50-15:20” biçiminde gir.',true); return; }
-    const total=Math.round(intervals.reduce((sum,x)=>sum+(x.end-x.start)/1000,0));
-    if(total<=0){ showToast('Toplam çalışma süresi sıfır olamaz.',true); return; }
-    if(newKey!==oldKey){
-      data.sessionLog[oldKey]=(data.sessionLog[oldKey]||[]).filter(x=>x.id!==sessionId);
-      if(!data.sessionLog[newKey]) data.sessionLog[newKey]=[];
-      data.sessionLog[newKey].push(session);
+    const key=findSessionDateKey(sessionId);
+    if(!session || !key) return;
+
+    const existing=sessionIntervals(session);
+    const currentStart=displayClockTime(session.startedAt || existing[0]?.start);
+    const currentEnd=displayClockTime(session.endedAt || existing[existing.length-1]?.end);
+
+    if(!currentStart || !currentEnd){
+      showToast('Bu oturumun düzenlenebilir saat kaydı bulunamadı.',true);
+      return;
     }
+
+    const startText=await askPrompt('Başlangıç saati (SS:DD)',currentStart);
+    if(startText===null) return;
+    const newStart=parseClockOnDate(key,startText);
+    if(newStart===null){
+      showToast('Başlangıç saatini 24 saat biçiminde gir. Örn: 08:45',true);
+      return;
+    }
+
+    const endText=await askPrompt('Bitiş saati (SS:DD)',currentEnd);
+    if(endText===null) return;
+    const newEnd=parseClockOnDate(key,endText);
+    if(newEnd===null){
+      showToast('Bitiş saatini 24 saat biçiminde gir. Örn: 10:20',true);
+      return;
+    }
+
+    if(newEnd<=newStart){
+      showToast('Bitiş saati başlangıç saatinden sonra olmalı.',true);
+      return;
+    }
+
+    let intervals=existing
+      .filter(x=>Number.isFinite(Number(x?.start)) && Number.isFinite(Number(x?.end)))
+      .map(x=>({start:Number(x.start),end:Number(x.end)}))
+      .sort((a,b)=>a.start-b.start);
+
+    if(!intervals.length){
+      intervals=[{start:newStart,end:newEnd}];
+    }else if(intervals.length===1){
+      // Tek bloklu oturumlarda kullanıcı doğrudan gerçek başlangıç/bitiş aralığını düzeltir.
+      intervals=[{start:newStart,end:newEnd}];
+    }else{
+      // Çok bloklu oturumlarda iç molaları koru; yalnızca dış sınırları değiştir.
+      intervals[0].start=newStart;
+      intervals[intervals.length-1].end=newEnd;
+
+      // Değişiklik iç bloklarla çakışıyorsa kullanıcıyı yanlış veri yazmaktan koru.
+      for(let i=0;i<intervals.length;i++){
+        if(intervals[i].end<=intervals[i].start){
+          showToast('Yeni saatler mevcut çalışma bloklarıyla çakışıyor.',true);
+          return;
+        }
+        if(i>0 && intervals[i].start<intervals[i-1].end){
+          showToast('Yeni saatler mevcut çalışma bloklarıyla çakışıyor.',true);
+          return;
+        }
+      }
+    }
+
+    const total=Math.round(intervals.reduce((sum,x)=>sum+(x.end-x.start)/1000,0));
+    if(total<=0){
+      showToast('Toplam çalışma süresi sıfır olamaz.',true);
+      return;
+    }
+
     session.workIntervals=intervals;
     session.startedAt=intervals[0].start;
     session.endedAt=intervals[intervals.length-1].end;
     session.duration=total;
-    recomputeSessionDay(oldKey);
-    if(newKey!==oldKey) recomputeSessionDay(newKey);
+
+    recomputeSessionDay(key);
     saveData({force:true});
-    renderToday(false); renderSessionList(); updateWorkDisplay(); renderStats(); renderCalendar();
-    showToast('Oturum saatleri ve istatistikler güncellendi.',true);
+
+    renderToday(false);
+    renderSessionList();
+    updateWorkDisplay();
+    renderStats();
+    renderCalendar();
+
+    showToast('Oturumun başlangıç ve bitiş saati güncellendi.',true);
   }
 
   function displayTaskDate(value){
@@ -1821,6 +1886,7 @@
   let tooltipEl = null;
   let tooltipTarget = null;
   let tooltipHideTimer = null;
+  let tooltipsInitialized = false;
 
   function ensureTooltipElement(){
     if(tooltipEl) return tooltipEl;
@@ -1912,6 +1978,9 @@
   }
 
   function initializeTooltips(){
+    if(tooltipsInitialized) return;
+    tooltipsInitialized = true;
+
     upgradeTooltipElement(document.documentElement);
     ensureTooltipElement();
 
@@ -3837,7 +3906,7 @@
       }
 
       html += '<div class="session-card'+(isTicking?' active':'')+(isPaused?' paused':'')+(isCurrent?' current':'')+(s.hidden?' hidden-session':'')+'" data-id="'+s.id+'">'
-        + (!isCurrent && !s.hidden ? '<button class="session-time-edit-btn" data-action="edit-session-time" data-id="'+s.id+'" data-tooltip="Oturumun başlangıç, bitiş ve çalışma saatlerini düzenle" aria-label="Oturum tarih ve saatlerini düzenle">🕒</button><button class="session-delete-btn" data-action="delete-session" data-id="'+s.id+'" data-tooltip="Bu oturumu geçmişten sil" aria-label="Oturumu sil">🗑</button>' : '')
+        + (!isCurrent && !s.hidden ? '<button class="session-time-edit-btn" data-action="edit-session-time" data-id="'+s.id+'" data-tooltip="Oturumun başlangıç ve bitiş saatini düzelt. Örn. açık unuttuysan gerçek bitiş saatini yazabilirsin." aria-label="Oturum başlangıç ve bitiş saatlerini düzenle">🕒</button><button class="session-delete-btn" data-action="delete-session" data-id="'+s.id+'" data-tooltip="Bu oturumu geçmişten sil" aria-label="Oturumu sil">🗑</button>' : '')
         + (s.hidden ? '<button class="session-restore-btn" data-action="restore-session" data-id="'+s.id+'" data-tooltip="Gizlenen oturumu yeniden görünür yap">Geri Göster</button>' : '')
         + (isCurrent ? '<div class="current-badge" data-tooltip="'+(isTicking?'Şu anda çalışan aktif oturum':'Aktif oturum şu anda duraklatılmış')+'">'+(isTicking?'▶ ŞU ANKİ OTURUM':'⏸ ŞU ANKİ OTURUM')+'</div>' : '')
         + '<div class="session-head" data-action="toggle" data-id="'+s.id+'" data-tooltip="'+(expanded?'Oturum ayrıntılarını kapat':'Oturum görevlerini ve ayrıntılarını aç')+'">'
@@ -7593,6 +7662,7 @@
     setTimeout(()=>target.classList.remove('fx-pulse'), 460);
   }, {passive:true});
 
+  initializeTooltips();
   renderToday(false);
   renderDistractionCategorySummary();
   renderSessionList();
