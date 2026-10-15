@@ -70,11 +70,11 @@
   ];
 
   const GROWTH_STAGES = [
-    {min:0,  emoji:"🌰"},
-    {min:8,  emoji:"🌱"},
-    {min:16, emoji:"🌿"},
-    {min:24, emoji:"🪴"},
-    {min:32, emoji:"🌳"}
+    {min:0,   emoji:"🌰"},
+    {min:28,  emoji:"🌱"},
+    {min:56,  emoji:"🌿"},
+    {min:84,  emoji:"🪴"},
+    {min:112, emoji:"🌳"}
   ];
 
   const SPECIES_POOL = [
@@ -97,7 +97,31 @@
     {emoji:"🌿", name:"Fesleğen"},
     {emoji:"🍀", name:"Yonca"},
     {emoji:"🌱", name:"Filiz"},
-    {emoji:"🥭", name:"Mango"}
+    {emoji:"🥭", name:"Mango"},
+    {emoji:"🌳", name:"Çınar"},
+    {emoji:"🌲", name:"Sedir"},
+    {emoji:"🌲", name:"Köknar"},
+    {emoji:"🌳", name:"Ihlamur"},
+    {emoji:"🌳", name:"Söğüt"},
+    {emoji:"🌳", name:"Manolya"},
+    {emoji:"🌲", name:"Servi"},
+    {emoji:"🌲", name:"Ardıç"},
+    {emoji:"🌿", name:"Defne"},
+    {emoji:"🌿", name:"Okaliptüs"},
+    {emoji:"🌿", name:"Biberiye"},
+    {emoji:"🌿", name:"Nane"},
+    {emoji:"🌼", name:"Lavanta"},
+    {emoji:"🌼", name:"Yasemin"},
+    {emoji:"🌸", name:"Kamelya"},
+    {emoji:"🌸", name:"Begonya"},
+    {emoji:"🍎", name:"Elma"},
+    {emoji:"🍐", name:"Armut"},
+    {emoji:"🍒", name:"Kiraz"},
+    {emoji:"🍑", name:"Şeftali"},
+    {emoji:"🍊", name:"Portakal"},
+    {emoji:"🍋", name:"Limon"},
+    {emoji:"🌳", name:"Nar"},
+    {emoji:"🌳", name:"Ceviz"}
   ];
 
   const SPECIES_COLORS = {
@@ -120,12 +144,36 @@
     'Fesleğen':   {accent:'#5fa85a', bg:'rgba(95,168,90,0.16)'},
     'Yonca':      {accent:'#52b788', bg:'rgba(82,183,136,0.16)'},
     'Filiz':      {accent:'#74d99f', bg:'rgba(116,217,159,0.16)'},
-    'Mango':      {accent:'#ff9f5a', bg:'rgba(255,159,90,0.16)'}
+    'Mango':      {accent:'#ff9f5a', bg:'rgba(255,159,90,0.16)'},
+    'Çınar':      {accent:'#b88954', bg:'rgba(184,137,84,0.16)'},
+    'Sedir':      {accent:'#477a62', bg:'rgba(71,122,98,0.16)'},
+    'Köknar':     {accent:'#3f7f67', bg:'rgba(63,127,103,0.16)'},
+    'Ihlamur':    {accent:'#8db66d', bg:'rgba(141,182,109,0.16)'},
+    'Söğüt':      {accent:'#78a889', bg:'rgba(120,168,137,0.16)'},
+    'Manolya':    {accent:'#e7b3c8', bg:'rgba(231,179,200,0.16)'},
+    'Servi':      {accent:'#38604f', bg:'rgba(56,96,79,0.16)'},
+    'Ardıç':      {accent:'#517b69', bg:'rgba(81,123,105,0.16)'},
+    'Defne':      {accent:'#6b985e', bg:'rgba(107,152,94,0.16)'},
+    'Okaliptüs':  {accent:'#7ca99c', bg:'rgba(124,169,156,0.16)'},
+    'Biberiye':   {accent:'#6e8f78', bg:'rgba(110,143,120,0.16)'},
+    'Nane':       {accent:'#69c39b', bg:'rgba(105,195,155,0.16)'},
+    'Lavanta':    {accent:'#a78bd4', bg:'rgba(167,139,212,0.16)'},
+    'Yasemin':    {accent:'#e5dfae', bg:'rgba(229,223,174,0.16)'},
+    'Kamelya':    {accent:'#dd7f9f', bg:'rgba(221,127,159,0.16)'},
+    'Begonya':    {accent:'#dd7186', bg:'rgba(221,113,134,0.16)'},
+    'Elma':       {accent:'#d95d57', bg:'rgba(217,93,87,0.16)'},
+    'Armut':      {accent:'#a7b957', bg:'rgba(167,185,87,0.16)'},
+    'Kiraz':      {accent:'#cf4962', bg:'rgba(207,73,98,0.16)'},
+    'Şeftali':    {accent:'#ed9c78', bg:'rgba(237,156,120,0.16)'},
+    'Portakal':   {accent:'#e99a3b', bg:'rgba(233,154,59,0.16)'},
+    'Limon':      {accent:'#d7cf4f', bg:'rgba(215,207,79,0.16)'},
+    'Nar':        {accent:'#c75258', bg:'rgba(199,82,88,0.16)'},
+    'Ceviz':      {accent:'#8a6847', bg:'rgba(138,104,71,0.16)'}
   };
 
-  const TREE_GOAL = 80;
-  const GROWTH_PER_WORK_MIN = 0.5;  // her dakika çalışma
-  const GROWTH_PER_TODO = 4;        // her tamamlanan görev
+  const TREE_GOAL = 140;
+  const GROWTH_PER_WORK_MIN = 0.35;  // her dakika çalışma
+  const GROWTH_PER_TODO = 3;        // her tamamlanan görev
   const WORK_AUTOSAVE_MS = 30000;
   const LONG_SESSION_REVIEW_MS = 3 * 60 * 60 * 1000; // 3 saat boyunca güvenilir tick yoksa kullanıcıya sor
   let longSessionReviewPending = false;
@@ -1110,6 +1158,60 @@
     }
   }
 
+  function captureDeviceLocalTimerState(){
+    const ownsTimer = !data?.activeTimerOwnerId || data.activeTimerOwnerId === TAB_ID;
+    const active = data?.activeSessionId ? findSession(data.activeSessionId) : null;
+
+    if(!ownsTimer || (!data?.isWorking && !active && !isBreakActive())){
+      return null;
+    }
+
+    return {
+      activeSessionId: data.activeSessionId || null,
+      activeSessionDate: data.activeSessionDate || null,
+      isWorking: !!data.isWorking,
+      workStart: data.workStart || null,
+      activeTimerOwnerId: data.activeTimerOwnerId || (data.isWorking ? TAB_ID : null),
+      timerState: data.timerState ? JSON.parse(JSON.stringify(data.timerState)) : null,
+      breakState: data.breakState ? JSON.parse(JSON.stringify(data.breakState)) : null,
+      activeSession: active ? JSON.parse(JSON.stringify(active)) : null
+    };
+  }
+
+  function restoreDeviceLocalTimerState(incoming, snapshot){
+    if(!snapshot) return incoming;
+
+    // Preserve the local running/paused session object itself. Remote/cloud state
+    // may be slightly older and must not erase an in-progress interval or duration.
+    if(snapshot.activeSession && snapshot.activeSessionId){
+      const key = snapshot.activeSessionDate || findSessionDateKey(snapshot.activeSessionId) || todayKey();
+      if(!Array.isArray(incoming.sessionLog?.[key])){
+        if(!incoming.sessionLog || typeof incoming.sessionLog!=='object') incoming.sessionLog={};
+        incoming.sessionLog[key]=[];
+      }
+
+      const sessions=incoming.sessionLog[key];
+      const index=sessions.findIndex(s=>s?.id===snapshot.activeSessionId);
+      if(index>=0) sessions[index]=snapshot.activeSession;
+      else sessions.push(snapshot.activeSession);
+    }
+
+    incoming.activeSessionId=snapshot.activeSessionId;
+    incoming.activeSessionDate=snapshot.activeSessionDate;
+    incoming.isWorking=snapshot.isWorking;
+    incoming.workStart=snapshot.workStart;
+    incoming.activeTimerOwnerId=snapshot.activeTimerOwnerId;
+    incoming.breakState=snapshot.breakState;
+    incoming.timerState=snapshot.timerState || {
+      mode:snapshot.isWorking ? 'working' : (snapshot.breakState ? 'break' : (snapshot.activeSessionId ? 'paused' : 'idle')),
+      sessionId:snapshot.activeSessionId,
+      runningSince:snapshot.workStart,
+      ownerId:snapshot.activeTimerOwnerId
+    };
+
+    return incoming;
+  }
+
   function renderAfterExternalSync(){
     renderWorkButtonRow();
     renderToday(false);
@@ -1125,12 +1227,19 @@
   }
 
   function adoptExternalState(incoming){
-    data=incoming;
+    const localTimer=captureDeviceLocalTimerState();
+    data=restoreDeviceLocalTimerState(incoming,localTimer);
     lastSemanticSnapshot=semanticSnapshot(data);
     refillDeckIfNeeded();
     reconcileStreakFreeze();
     syncTimerState();
     renderAfterExternalSync();
+
+    if(data.isWorking && data.activeTimerOwnerId===TAB_ID){
+      touchTabHeartbeat();
+      lastAutosave=Date.now();
+      ensureTimerScheduler();
+    }
   }
 
   window.__APP_CLOUD_BRIDGE__ = {
@@ -1139,12 +1248,22 @@
     },
     replaceState(raw,{persist=true}={}){
       if(!raw || typeof raw!=='object' || !looksValid(raw)) throw new Error('Geçersiz bulut verisi');
+
+      const localTimer=captureDeviceLocalTimerState();
       const incoming=migrateData(JSON.parse(JSON.stringify(raw)));
-      data=incoming;
+      data=restoreDeviceLocalTimerState(incoming,localTimer);
+
       lastSemanticSnapshot=semanticSnapshot(data);
       refillDeckIfNeeded();
       reconcileStreakFreeze();
       syncTimerState();
+
+      if(data.isWorking && data.activeTimerOwnerId===TAB_ID){
+        touchTabHeartbeat();
+        lastAutosave=Date.now();
+        ensureTimerScheduler();
+      }
+
       if(persist) saveData({force:true,suppressCloud:true});
       renderAfterExternalSync();
       return true;
@@ -3665,9 +3784,17 @@
     el.focusSubText.textContent = data.isWorking
       ? 'Odak oturumu devam ediyor'
       : 'Oturum duraklatıldı';
-    el.focusPauseBtn.textContent = data.isWorking ? 'Duraklat ⏸' : 'Devam Et ▶';
-    el.focusPauseBtn.classList.toggle('active', data.isWorking);
-    el.focusPauseBtn.classList.toggle('resume', !data.isWorking);
+
+    const focusPrimaryLabel = data.isWorking ? 'Duraklat' : 'Devam Et';
+    el.focusPauseBtn.textContent = data.isWorking ? '⏸' : '▶';
+    el.focusPauseBtn.dataset.tooltip = focusPrimaryLabel;
+    el.focusPauseBtn.setAttribute('aria-label', focusPrimaryLabel);
+    el.focusPauseBtn.classList.toggle('is-paused-action', data.isWorking);
+    el.focusPauseBtn.classList.toggle('is-resume-action', !data.isWorking);
+
+    el.focusFinishBtn.textContent = '■';
+    el.focusFinishBtn.dataset.tooltip = 'Bitir';
+    el.focusFinishBtn.setAttribute('aria-label','Bitir');
   }
 
   let focusFullscreenOwned = false;
@@ -3697,25 +3824,12 @@
     }
     lastFlipStr = ''; // yeniden açılışta saati baştan kur
     renderFocusOverlay();
-    ensureFocusControlsController().hide();
     el.focusOverlay.classList.add('show');
     await tryEnterMobileFocusLandscape();
   }
 
-  let focusControlsController = null;
-
-  function ensureFocusControlsController(){
-    if(focusControlsController) return focusControlsController;
-    focusControlsController = window.ProductivityUIHelpers?.bindTransientFocusControls?.({
-      overlay: el.focusOverlay,
-      clock: el.flipClock,
-      timeout: 3500
-    }) || {show(){},hide(){}};
-    return focusControlsController;
-  }
 
   function closeFocusMode(){
-    ensureFocusControlsController().hide();
     el.focusOverlay.classList.remove('show');
     try{ screen.orientation?.unlock?.(); }catch(error){}
     if(focusFullscreenOwned && document.fullscreenElement && document.exitFullscreen){
@@ -3724,7 +3838,6 @@
     focusFullscreenOwned = false;
   }
 
-  ensureFocusControlsController();
   el.focusToggleBtn.addEventListener('click', openFocusMode);
 
   function closeSettingsModal(){
@@ -3963,6 +4076,11 @@
         targetHtml = '<div class="session-target" data-tooltip="Oturum hedefi: çalışılan süre / belirlediğin hedef süre">'
           + '<div class="target-bar"><div class="target-fill" style="width:'+tpct+'%"></div></div>'
           + '<div class="target-caption'+(s.targetReached?' reached':'')+'">🎯 '+formatDurationLabel(Math.min(liveDur,s.targetSeconds))+' / '+formatDurationLabel(s.targetSeconds)+(s.targetReached?' ✓':'')+(liveDur>s.targetSeconds?' · +'+formatDurationLabel(liveDur-s.targetSeconds):'')+'</div>'
+          + '</div>';
+      }else{
+        targetHtml = '<div class="session-target session-target-untargeted" data-tooltip="Bu oturum hedef süre olmadan başlatıldı. Çizgi yalnızca kart düzenini korur; yüzde ilerleme göstermez.">'
+          + '<div class="target-bar untargeted"><div class="target-fill untargeted-fill"></div></div>'
+          + '<div class="target-caption untargeted-caption">⏱ '+formatDurationLabel(liveDur)+' · Hedefsiz</div>'
           + '</div>';
       }
 
@@ -8244,9 +8362,9 @@
     });
 
     test('Ağaç kazanma eşiği v62 ile daha zordur', ()=>{
-      equal(TREE_GOAL,80);
-      equal(GROWTH_PER_WORK_MIN,0.5);
-      equal(GROWTH_PER_TODO,4);
+      equal(TREE_GOAL,140);
+      equal(GROWTH_PER_WORK_MIN,0.35);
+      equal(GROWTH_PER_TODO,3);
     });
 
     test('Rastgele ağaç türü havuzdan gelir', ()=>{
