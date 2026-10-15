@@ -1025,10 +1025,6 @@
     line-height:1.45;
     margin-bottom:clamp(6px, 1vh, 12px);
   }
-  .focus-content #focusPauseBtn{
-    min-width:min(72vw, 230px);
-    max-width:280px;
-  }
   @media (max-width:430px){
     .focus-content{
       width:96vw;
@@ -1617,45 +1613,9 @@
       padding:3px 6px;
     }
   }
+  /* Takvim çalışma rengi açıklaması artık ortak .app-tooltip katmanını kullanır. */
 
-
-  /* Takvim çalışma rengi ayarı açıklaması */
-  .calendar-color-toggle::after{
-    content:attr(data-tooltip);
-    position:absolute;
-    right:0;
-    bottom:calc(100% + 10px);
-    width:250px;
-    padding:8px 10px;
-    border-radius:9px;
-    background:#081713;
-    border:1px solid rgba(116,217,159,.20);
-    color:var(--paper-dim);
-    font-size:10px;
-    font-weight:600;
-    line-height:1.4;
-    text-align:left;
-    box-shadow:0 10px 22px rgba(0,0,0,.30);
-    opacity:0;
-    transform:translateY(4px);
-    pointer-events:none;
-    transition:opacity .15s ease, transform .15s ease;
-    z-index:80;
-  }
-  .calendar-color-toggle:hover::after,
-  .calendar-color-toggle:focus-visible::after{
-    opacity:1;
-    transform:translateY(0);
-  }
-  @media(max-width:430px){
-    .calendar-color-toggle::after{
-      width:min(240px, 72vw);
-      right:-2px;
-    }
-  }
-
-
-  /* --- Haftalık takvim --- */
+/* --- Haftalık takvim --- */
   .cal-week-view{ margin-top:7px; }
   .cal-week-scroll{
     width:100%;
@@ -3600,8 +3560,7 @@
 .focus-session-label,
 .focus-current-card,
 .focus-label,
-.focus-state,
-.focus-actions{
+.focus-state{
   display:none!important;
 }
 .focus-subject{
@@ -3744,53 +3703,89 @@
 }
 
 
-/* === v59: transient Focus Mode controls === */
-.focus-content .flip-clock{
-  cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
+
+/* === v64 final: kalıcı kompakt Focus Mode kontrolleri === */
+.focus-overlay .focus-actions-compact{
+  order:4;
+  display:flex!important;
+  align-items:center;
+  justify-content:center;
+  gap:9px;
+  width:auto;
+  margin:10px auto 0!important;
+  padding:6px 8px;
+  border:1px solid rgba(116,217,159,.15);
+  border-radius:14px;
+  background:rgba(7,28,23,.62);
+  box-shadow:0 8px 22px rgba(0,0,0,.16);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  transform:none!important;
 }
-.focus-content .flip-clock:focus-visible{
-  outline:2px solid rgba(116,217,159,.62);
-  outline-offset:10px;
-  border-radius:16px;
-}
-.focus-overlay .focus-actions{
-  display:none!important;
-}
-.focus-overlay.controls-visible .focus-actions{
-  display:grid!important;
-  position:absolute;
-  left:50%;
-  bottom:max(22px,env(safe-area-inset-bottom));
-  transform:translateX(-50%);
-  grid-template-columns:1fr 1fr;
-  width:min(430px,82vw);
-  gap:10px;
-  padding:10px;
-  border:1px solid rgba(116,217,159,.18);
-  border-radius:16px;
-  background:rgba(7,28,23,.88);
-  backdrop-filter:blur(10px);
-  -webkit-backdrop-filter:blur(10px);
-  z-index:4;
-}
-.focus-overlay.controls-visible .focus-actions .work-btn{
-  display:block!important;
+
+.focus-overlay .focus-icon-btn{
+  width:38px;
+  height:34px;
+  min-width:38px;
+  padding:0!important;
   margin:0!important;
-  min-width:0;
+  display:grid!important;
+  place-items:center;
+  border:1px solid rgba(116,217,159,.18);
+  border-radius:10px;
+  background:rgba(116,217,159,.09);
+  color:var(--moss-bright);
+  font-family:'IBM Plex Mono',monospace;
+  font-size:15px;
+  line-height:1;
+  cursor:pointer;
+  transition:background .14s ease,border-color .14s ease,transform .14s ease,color .14s ease;
 }
+
+.focus-overlay .focus-icon-btn:hover,
+.focus-overlay .focus-icon-btn:focus-visible{
+  background:rgba(116,217,159,.16);
+  border-color:rgba(116,217,159,.38);
+  transform:translateY(-1px);
+  outline:none;
+}
+
+.focus-overlay .focus-icon-btn.finish{
+  color:var(--paper-dim);
+  background:rgba(255,255,255,.045);
+  border-color:rgba(255,255,255,.10);
+}
+
+.focus-overlay .focus-icon-btn.finish:hover,
+.focus-overlay .focus-icon-btn.finish:focus-visible{
+  color:var(--paper);
+  background:rgba(255,255,255,.075);
+  border-color:rgba(255,255,255,.18);
+}
+
+.focus-overlay .focus-icon-btn.is-resume-action{
+  color:var(--moss-bright);
+}
+
 @media (max-width:900px) and (orientation:landscape){
-  .focus-overlay.controls-visible .focus-actions{
-    bottom:max(8px,env(safe-area-inset-bottom));
-    width:min(420px,62vw);
-    padding:7px;
+  .focus-overlay .focus-actions-compact{
+    margin-top:6px!important;
+    padding:4px 6px;
+    gap:7px;
   }
-  .focus-overlay.controls-visible .focus-actions .work-btn{
-    padding:8px 10px!important;
-    font-size:10px!important;
+  .focus-overlay .focus-icon-btn{
+    width:34px;
+    height:30px;
+    min-width:34px;
+    font-size:13px;
   }
 }
 
+@media (max-width:560px) and (orientation:portrait){
+  .focus-overlay .focus-actions-compact{
+    margin-top:8px!important;
+  }
+}
 
 /* === v61: açıklayıcı hover / focus tooltips === */
 /* Tooltip katmanı mevcut layout'u etkilememesi için fixed overlay olarak çizilir. */
@@ -3991,3 +3986,9 @@
     display:none;
   }
 }
+
+
+/* === v64: hedefsiz oturumlarda da tutarlı süre barı === */
+.session-target-untargeted .target-bar.untargeted{position:relative;overflow:hidden;background:rgba(116,217,159,.075);border:1px solid rgba(116,217,159,.08);}
+.session-target-untargeted .untargeted-fill{width:100%;opacity:.38;background:repeating-linear-gradient(135deg,rgba(116,217,159,.22) 0 8px,rgba(116,217,159,.08) 8px 16px);}
+.session-target-untargeted .untargeted-caption{color:var(--paper-dim);opacity:.72;}
