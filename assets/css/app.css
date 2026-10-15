@@ -3992,3 +3992,48 @@
 .session-target-untargeted .target-bar.untargeted{position:relative;overflow:hidden;background:rgba(116,217,159,.075);border:1px solid rgba(116,217,159,.08);}
 .session-target-untargeted .untargeted-fill{width:100%;opacity:.38;background:repeating-linear-gradient(135deg,rgba(116,217,159,.22) 0 8px,rgba(116,217,159,.08) 8px 16px);}
 .session-target-untargeted .untargeted-caption{color:var(--paper-dim);opacity:.72;}
+
+
+/* === v64.3: Focus controls visibility hardening === */
+.focus-overlay .focus-progress-controls{
+  order:3;
+  display:flex!important;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  width:min(86vw,620px);
+  margin:0 auto;
+}
+
+.focus-overlay .focus-progress-controls .focus-target-wrap{
+  order:1;
+  width:100%!important;
+  max-width:none!important;
+  margin:0!important;
+}
+
+.focus-overlay .focus-progress-controls .focus-actions-compact{
+  order:2;
+  display:flex!important;
+  visibility:visible!important;
+  opacity:1!important;
+  position:relative!important;
+  z-index:20;
+  margin:10px auto 0!important;
+}
+
+.focus-overlay .focus-progress-controls .focus-icon-btn{
+  display:grid!important;
+  visibility:visible!important;
+  opacity:1!important;
+}
+
+.focus-overlay .focus-progress-controls .focus-target-wrap.no-target{
+  display:none!important;
+}
+
+@media(max-width:560px){
+  .focus-overlay .focus-progress-controls{
+    width:min(90vw,620px);
+  }
+}
