@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v94';
+const CACHE_VERSION = 'v95';
 const STATIC_CACHE = `productivity-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `productivity-runtime-${CACHE_VERSION}`;
 const CDN_CACHE = `productivity-cdn-${CACHE_VERSION}`;
@@ -87,6 +87,34 @@ async function cacheFirstSameOrigin(request) {
   return response;
 }
 
+
+async function networkFirstSameOriginAsset(request) {
+  try {
+    const response = await fetch(request, { cache: 'no-store' });
+    if (response && response.ok) {
+      const cache = await caches.open(RUNTIME_CACHE);
+      cache.put(request, response.clone()).catch(() => {});
+      return response;
+    }
+    throw new Error('Asset response not ok');
+  } catch (_) {
+    // First try the exact versioned request.
+    const exact = await caches.match(request);
+    if (exact) return exact;
+
+    // App-shell assets are installed without ?v=... query strings.
+    // Ignore the search string so a temporary network error does not make
+    // required JS modules disappear.
+    const fallback = await caches.match(request, { ignoreSearch: true });
+    if (fallback) return fallback;
+
+    return new Response('Required asset unavailable', {
+      status: 503,
+      headers: { 'content-type': 'text/plain; charset=utf-8' }
+    });
+  }
+}
+
 self.addEventListener('fetch', event => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -98,12 +126,19 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  if (url.hostname === 'cdn.jsdelivr.net') {
-    event.respondWith(staleWhileRevalidate(request, CDN_CACHE));
-    return;
-  }
+  // Let the browser handle external CDN/font requests directly.
+  // Intercepting cross-origin font requests here caused Firefox/CORS failures.
+  if (url.origin !== self.location.origin) return;
 
   if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirstSameOrigin(request));
+    const isVersionedAsset =
+      url.searchParams.has('v') &&
+      /\.(?:js|css)$/i.test(url.pathname);
+
+    event.respondWith(
+      isVersionedAsset
+        ? networkFirstSameOriginAsset(request)
+        : cacheFirstSameOrigin(request)
+    );
   }
 });
