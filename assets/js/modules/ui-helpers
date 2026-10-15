@@ -19,67 +19,8 @@
     return true;
   }
 
-  function bindTransientFocusControls({overlay, clock, timeout=3500}={}){
-    if(!overlay || !clock) return {show(){},hide(){},destroy(){}};
-
-    let timer = null;
-
-    const hide = () => {
-      if(timer){
-        clearTimeout(timer);
-        timer = null;
-      }
-      overlay.classList.remove('controls-visible');
-      clock.setAttribute('aria-expanded','false');
-    };
-
-    const show = () => {
-      if(timer) clearTimeout(timer);
-      overlay.classList.add('controls-visible');
-      clock.setAttribute('aria-expanded','true');
-      timer = setTimeout(hide, Math.max(1200, Number(timeout)||3500));
-    };
-
-    const toggle = () => {
-      if(overlay.classList.contains('controls-visible')) hide();
-      else show();
-    };
-
-    const clickHandler = event => {
-      if(event.target.closest('button')) return;
-      toggle();
-    };
-
-    const keyHandler = event => {
-      if(event.key === 'Enter' || event.key === ' '){
-        event.preventDefault();
-        toggle();
-      }else if(event.key === 'Escape'){
-        hide();
-      }
-    };
-
-    clock.setAttribute('role','button');
-    clock.setAttribute('tabindex','0');
-    clock.setAttribute('aria-label','Oturum kontrollerini göster veya gizle. Laptopta sayaç üzerine tıklayarak Duraklat, Devam Et ve Oturumu Bitir kontrollerini açabilirsin.');
-    clock.setAttribute('aria-expanded','false');
-
-    clock.addEventListener('click', clickHandler);
-    clock.addEventListener('keydown', keyHandler);
-
-    return {
-      show,
-      hide,
-      destroy(){
-        hide();
-        clock.removeEventListener('click', clickHandler);
-        clock.removeEventListener('keydown', keyHandler);
-      }
-    };
-  }
 
   window.ProductivityUIHelpers = {
-    scrollCurrentMonthIntoView,
-    bindTransientFocusControls
+    scrollCurrentMonthIntoView
   };
 })();
