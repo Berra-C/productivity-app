@@ -7917,6 +7917,17 @@
   }, {passive:true});
 
   initializeTooltips();
+
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge){
+    console.error(
+      'Test · Gerekli modüllerden biri yüklenemedi:',
+      {
+        uiHelpers: !!window.ProductivityUIHelpers,
+        stateMerge: !!window.ProductivityStateMerge
+      }
+    );
+  }
+
   renderToday(false);
   renderDistractionCategorySummary();
   renderSessionList();
