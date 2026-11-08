@@ -8254,7 +8254,7 @@
       initOnboarding();
     })
     .finally(()=>window.dispatchEvent(new CustomEvent('app:ready')));
-})();
+
 
   // ---------- Geliştirici birim testleri (?test=1) ----------
   function runUnitTests(){
@@ -8727,9 +8727,17 @@
       equal(canTransitionTimerMode(TIMER_MODES.IDLE,TIMER_MODES.PAUSED),false);
     });
 
+    test('Timer: IDLE -> BREAK geçerli', ()=>{
+      equal(canTransitionTimerMode(TIMER_MODES.IDLE,TIMER_MODES.BREAK),true);
+    });
+
     test('Timer: WORKING -> PAUSED ve IDLE geçerli', ()=>{
       equal(canTransitionTimerMode(TIMER_MODES.WORKING,TIMER_MODES.PAUSED),true);
       equal(canTransitionTimerMode(TIMER_MODES.WORKING,TIMER_MODES.IDLE),true);
+    });
+
+    test('Timer: WORKING -> BREAK doğrudan geçersiz', ()=>{
+      equal(canTransitionTimerMode(TIMER_MODES.WORKING,TIMER_MODES.BREAK),false);
     });
 
     test('Timer: PAUSED -> BREAK doğrudan geçersiz', ()=>{
@@ -8924,4 +8932,4 @@
   if(new URLSearchParams(location.search).get('test')==='1'){
     setTimeout(()=>{ window.__TEST_RESULTS__=runUnitTests(); },0);
   }
-
+})();
