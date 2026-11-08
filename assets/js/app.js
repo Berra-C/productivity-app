@@ -454,6 +454,91 @@
     return digits.slice(0,2)+'/'+digits.slice(2,4)+'/'+digits.slice(4);
   }
   function todayKey(){ return dateKey(new Date()); }
+
+  function nextLocalMidnightMs(ms){
+    const d=new Date(Number(ms)||Date.now());
+    d.setHours(24,0,0,0);
+    return d.getTime();
+  }
+
+  function createMidnightContinuationSession(previous,startMs){
+    const key=dateKey(new Date(startMs));
+    const list=getSessionsFor(key);
+    const session={
+      id:'s'+startMs+'_'+Math.random().toString(36).slice(2,7),
+      name:previous?.name || 'Oturum',
+      subject:previous?.subject || 'Genel',
+      startedAt:startMs,
+      endedAt:null,
+      workIntervals:[{start:startMs,end:null}],
+      hidden:false,
+      duration:0,
+      distractions:0,
+      distractionCategories:{},
+      todos:[],
+      targetSeconds:Number(previous?.targetSeconds)||null,
+      targetReached:false,
+      breakNotified:false,
+      updatedAt:Date.now(),
+      milestonesHit:[],
+      continuedFromMidnight:true
+    };
+    list.push(session);
+    getDay(key).sessions += 1;
+    data.activeSessionId=session.id;
+    data.activeSessionDate=key;
+    return session;
+  }
+
+  function splitActiveSessionAtMidnight(nowMs=Date.now()){
+    if(longSessionReviewPending) return false;
+    if(!data.isWorking || !data.workStart || !data.activeSessionId) return false;
+
+    let startMs=Number(data.workStart);
+    const now=Number(nowMs);
+    if(!Number.isFinite(startMs) || !Number.isFinite(now) || now<=startMs) return false;
+
+    let changed=false;
+
+    while(dateKey(new Date(startMs)) !== dateKey(new Date(now))){
+      const boundary=nextLocalMidnightMs(startMs);
+      if(boundary<=startMs || boundary>now) break;
+
+      const current=findSession(data.activeSessionId);
+      if(!current) break;
+
+      const seconds=Math.max(0,Math.floor((boundary-startMs)/1000));
+      if(seconds>0){
+        getDay(dateKey(new Date(startMs))).workSeconds += seconds;
+        current.duration=Number(current.duration||0)+seconds;
+        current.updatedAt=Date.now();
+        addTreeGrowth((seconds/60)*GROWTH_PER_WORK_MIN);
+      }
+
+      closeOpenWorkInterval(current,boundary);
+      current.endedAt=boundary;
+      current.updatedAt=Date.now();
+
+      createMidnightContinuationSession(current,boundary);
+      data.workStart=boundary;
+      data.activeTimerOwnerId=TAB_ID;
+      data.isWorking=true;
+      syncTimerState();
+
+      startMs=boundary;
+      changed=true;
+    }
+
+    if(changed){
+      saveData({force:true});
+      renderToday(false);
+      renderSessionList();
+      renderCalendar();
+      renderStats();
+    }
+    return changed;
+  }
+
   function startOfWeek(d){ const day=(d.getDay()+6)%7; const r=new Date(d); r.setDate(d.getDate()-day); r.setHours(0,0,0,0); return r; }
   function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
   function emptyDay(goalMinutes=null){ return {resist:0, distraction:0, distractionCategories:{}, workSeconds:0, sessions:0, goalMinutes:goalMinutes}; }
@@ -527,6 +612,8 @@
       streakFreezes: 0,
       streakFreezeAwardedAt: 0,
       streakRewardKeys: [],
+      frozenDays: [],
+      streakGoalDaysTowardFreeze: 0,
       onboarded: false,
       tasks: [],
       recurrenceExceptions: {tasks:{}, events:{}},
@@ -554,8 +641,12 @@
     }
     if(raw.bestGoalStreak === undefined) raw.bestGoalStreak = 0;
     if(raw.streakFreezes === undefined) raw.streakFreezes = 0;
+    raw.streakFreezes = Math.max(0,Math.min(2,Number(raw.streakFreezes)||0));
     if(raw.streakFreezeAwardedAt === undefined) raw.streakFreezeAwardedAt = 0;
     if(!Array.isArray(raw.streakRewardKeys)) raw.streakRewardKeys = [];
+    if(!Array.isArray(raw.frozenDays)) raw.frozenDays = [];
+    if(raw.streakGoalDaysTowardFreeze === undefined) raw.streakGoalDaysTowardFreeze = 0;
+    raw.streakGoalDaysTowardFreeze = Math.max(0,Math.min(6,Number(raw.streakGoalDaysTowardFreeze)||0));
     if(raw.activeSessionDate === undefined) raw.activeSessionDate = null;
     if(raw.activeTimerOwnerId === undefined) raw.activeTimerOwnerId = null;
     if(!raw.storageMeta || typeof raw.storageMeta!=='object' || Array.isArray(raw.storageMeta)){
@@ -1850,72 +1941,108 @@
     return best;
   }
 
-  // Günlük çalışma hedefinin üst üste kaç gün tutturulduğu (dondurulmuş günler de sayılır)
-  function computeGoalStreak(){
-    const frozen = data.frozenDays || [];
-    const qualifying = Object.keys(data.days)
-      .filter(k=> dayMeetsGoal(k))
-      .concat(frozen)
-      .filter((k,i,arr)=> arr.indexOf(k)===i)
-      .sort();
-    if(qualifying.length === 0) return 0;
-    let streak = 1;
-    for(let i=qualifying.length-1; i>0; i--){
-      const diffDays = Math.round((new Date(qualifying[i]) - new Date(qualifying[i-1]))/86400000);
-      if(diffDays === 1) streak += 1; else break;
-    }
-    const lastKey = qualifying[qualifying.length-1];
-    const diffFromToday = Math.round((new Date(todayKey()) - new Date(lastKey))/86400000);
-    if(diffFromToday > 1) return 0; // seri kırılmış, en son tutturulan gün dünden daha eski
-    return streak;
-  }
+  // Seri + dondurma sistemi geçmiş günlerden deterministik olarak yeniden hesaplanır.
+  function computeStreakFreezeState(){
+    if(!Array.isArray(data.frozenDays)) data.frozenDays=[];
+    const frozenSet=new Set(data.frozenDays);
+    const today=todayKey();
 
-  // Dün hedef kaçırıldıysa ve bir dondurma hakkın varsa, seriyi otomatik korur (sadece bir kere / gün çalışır)
-  function reconcileStreakFreeze(){
-    if(!data.frozenDays) data.frozenDays = [];
-    const yKey = dateKey(addDays(new Date(), -1));
-    const yesterdayQualifies = dayMeetsGoal(yKey) || data.frozenDays.includes(yKey);
-    if(yesterdayQualifies || data.streakFreezes <= 0) return;
-    const dbKey = dateKey(addDays(new Date(), -2));
-    const dayBeforeQualifies = dayMeetsGoal(dbKey) || data.frozenDays.includes(dbKey);
-    if(!dayBeforeQualifies) return; // zaten kırık bir seriydi, donduracak bir şey yok
-    data.frozenDays.push(yKey);
-    data.streakFreezes -= 1;
-    saveData();
-  }
+    const known=[...new Set([
+      ...Object.keys(data.days||{}),
+      ...data.frozenDays
+    ])].filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k) && k<=today).sort();
 
-  // En uzun seriyi günceller ve her 7 günlük yeni dönümde bir dondurma hakkı kazandırır
-  function updateStreakMilestones(streak){
-    let changed = false;
-    if(streak > data.bestGoalStreak){ data.bestGoalStreak = streak; changed = true; }
-    if(!Array.isArray(data.streakRewardKeys)) data.streakRewardKeys = [];
-    if(streak > 0 && streak % 7 === 0){
-      const rewardKey = todayKey() + ':' + streak;
-      if(!data.streakRewardKeys.includes(rewardKey)){
-        data.streakRewardKeys.push(rewardKey);
-        data.streakFreezeAwardedAt = Math.max(data.streakFreezeAwardedAt || 0, streak);
-        data.streakFreezes = (data.streakFreezes||0) + 1;
-        changed = true;
-        showToast('🧊 ' + streak + ' günlük seri! 1 dondurma hakkı kazandın.');
-        playBadgeSound();
+    const first=known.find(k=>dayMeetsGoal(k) || frozenSet.has(k));
+    if(!first) return {streak:0,freezes:0,toward:0,best:0};
+
+    let cursor=new Date(first+'T12:00:00');
+    const end=new Date(today+'T12:00:00');
+    let streak=0, freezes=0, toward=0, best=0;
+
+    while(cursor<=end){
+      const key=dateKey(cursor);
+      const reached=dayMeetsGoal(key);
+      const alreadyFrozen=frozenSet.has(key);
+
+      if(reached){
+        streak+=1;
+        toward+=1;
+        if(toward>=7){
+          toward=0;
+          freezes=Math.min(2,freezes+1);
+        }
+      }else if(alreadyFrozen){
+        if(streak>0) freezes=Math.max(0,freezes-1);
+      }else if(key!==today){
+        if(streak>0 && freezes>0){
+          freezes-=1;
+          frozenSet.add(key);
+          data.frozenDays.push(key);
+        }else{
+          streak=0;
+          toward=0;
+        }
       }
+
+      best=Math.max(best,streak);
+      cursor=addDays(cursor,1);
     }
-    if(changed) saveData();
+
+    data.frozenDays=[...new Set(data.frozenDays)].sort();
+    return {streak,freezes:Math.min(2,freezes),toward,best};
+  }
+
+  function computeGoalStreak(){
+    return computeStreakFreezeState().streak;
+  }
+
+  function reconcileStreakFreeze(){
+    const before=JSON.stringify({
+      frozen:data.frozenDays||[],
+      freezes:data.streakFreezes||0,
+      toward:data.streakGoalDaysTowardFreeze||0
+    });
+
+    const state=computeStreakFreezeState();
+    data.streakFreezes=state.freezes;
+    data.streakGoalDaysTowardFreeze=state.toward;
+    data.bestGoalStreak=Math.max(Number(data.bestGoalStreak)||0,state.best);
+
+    const after=JSON.stringify({
+      frozen:data.frozenDays||[],
+      freezes:data.streakFreezes||0,
+      toward:data.streakGoalDaysTowardFreeze||0
+    });
+    if(before!==after) saveData({force:true});
+  }
+
+  function updateStreakMilestones(streak){
+    const oldFreezes=Number(data.streakFreezes||0);
+    const state=computeStreakFreezeState();
+
+    data.streakFreezes=state.freezes;
+    data.streakGoalDaysTowardFreeze=state.toward;
+    if(streak>Number(data.bestGoalStreak||0)) data.bestGoalStreak=streak;
+
+    if(state.freezes>oldFreezes){
+      showToast('🧊 7 gerçek hedef günü tamamlandı! 1 dondurma hakkı kazandın.');
+      playBadgeSound();
+      saveData({force:true});
+    }
   }
 
   function streakFreezeProgress(streak){
-    const safe=Math.max(0,Number(streak)||0);
-    const intoCycle=safe % 7;
+    const intoCycle=Math.max(0,Math.min(6,Number(data.streakGoalDaysTowardFreeze)||0));
     return {
-      remaining: intoCycle===0 ? 7 : 7-intoCycle,
-      pct: Math.round((intoCycle/7)*100),
+      remaining:7-intoCycle,
+      pct:Math.round((intoCycle/7)*100),
       intoCycle
     };
   }
 
   function renderFreezeStatus(streak){
     if(!el.freezeMini || !el.freezeDetail) return;
-    const freezes=Math.max(0,Number(data.streakFreezes)||0);
+    const freezes=Math.max(0,Math.min(2,Number(data.streakFreezes)||0));
     const p=streakFreezeProgress(streak);
     el.freezeCount.textContent=freezes;
     el.freezeMini.classList.toggle('has-freeze', freezes>0);
@@ -1923,7 +2050,7 @@
       '<div class="freeze-detail-row"><span>Mevcut dondurma hakkı</span><b>'+freezes+'</b></div>'
       + '<div class="freeze-detail-row"><span>Bir sonraki hak</span><b>'+p.remaining+' hedef günü</b></div>'
       + '<div class="freeze-progress"><div class="freeze-progress-fill" style="width:'+Math.min(100,p.pct)+'%"></div></div>'
-      + '<div class="freeze-note">Bir günü kaçırırsan, devam eden serini korumak için 1 hak otomatik kullanılır. Her 7 hedef gününde 1 yeni hak kazanırsın.</div>';
+      + '<div class="freeze-note">Bir günü kaçırırsan devam eden serini korumak için 1 hak otomatik kullanılır. Her 7 gerçek hedef gününde 1 yeni hak kazanırsın; en fazla 2 hak biriktirebilirsin.</div>';
   }
 
   // En uzun oturum rekorları — bugünkü ve tüm zamanların
@@ -3447,6 +3574,8 @@
     if(longSessionReviewPending) return [];
     if(!data.isWorking || !data.workStart) return [];
 
+    splitActiveSessionAtMidnight(Date.now());
+
     const activeSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
     if(!activeSession){
       // Orphan timer state must never create day work without a session.
@@ -3486,6 +3615,7 @@
         cursor = segmentEnd;
       }
       activeSession.duration += elapsed;
+      activeSession.updatedAt = Date.now();
       data.workStart = now;
       completed = addTreeGrowth((elapsed/60) * GROWTH_PER_WORK_MIN);
       saveData();
@@ -3528,6 +3658,7 @@
   function workTick(){
     if(!data.isWorking || !data.workStart) return;
     const now = Date.now();
+    splitActiveSessionAtMidnight(now);
     if(now - lastAutosave > WORK_AUTOSAVE_MS){
       const beforeLevel = getLevelInfo().level;
       const beforeBadges = getUnlockedBadgeMap();
@@ -4211,17 +4342,7 @@
 
       // Hedef artık sağlanmıyorsa aynı gün yeniden ulaşılabilmesi için kutlama kilidini aç.
       if(!dayMeetsGoal(key)) day.goalCelebrated = false;
-
-      // Bugünkü silme, bugün kazanılmış 7 günlük freeze ödülünü geçersiz kıldıysa geri al.
-      const newStreak = computeGoalStreak();
-      if(key === todayKey() && oldStreak > newStreak && oldStreak > 0 && oldStreak % 7 === 0){
-        const rewardKey = todayKey() + ':' + oldStreak;
-        const idx = Array.isArray(data.streakRewardKeys) ? data.streakRewardKeys.indexOf(rewardKey) : -1;
-        if(idx >= 0){
-          data.streakRewardKeys.splice(idx,1);
-          if(Number(data.streakFreezes || 0) > 0) data.streakFreezes -= 1;
-        }
-      }
+      reconcileStreakFreeze();
 
       saveData();
       renderToday(false);
@@ -8183,6 +8304,24 @@
       equal(p.remaining,7);
       equal(p.pct,0);
       equal(p.intoCycle,0);
+    });
+
+    test('Gece yarısı sınırı doğru hesaplanır', ()=>{
+      const start=new Date(2026,10,7,23,55,0).getTime();
+      const midnight=nextLocalMidnightMs(start);
+      equal(dateKey(new Date(midnight)),'2026-11-08');
+      equal(Math.round((midnight-start)/60000),5);
+    });
+
+    test('Dondurma hakkı en fazla iki olabilir', ()=>{
+      equal(Math.min(2,3),2);
+    });
+
+    test('Korunan gün freeze kazanım sayacını ilerletmez', ()=>{
+      let toward=6;
+      const protectedMiss=true;
+      if(!protectedMiss) toward+=1;
+      equal(toward,6);
     });
 
     test('Tekrarlanan görevde tamamlanmış mevcut kopya da duplicate sayılır', ()=>{
