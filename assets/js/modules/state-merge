@@ -7,37 +7,89 @@
     return item?.id || item?.key || `${item?.name || item?.species || 'item'}:${item?.date || item?.completedAt || index}`;
   }
 
+  function timestamp(value){
+    if(Number.isFinite(Number(value))) return Number(value);
+    const parsed=Date.parse(value||'');
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
   function freshness(item){
-    return Number(item?.updatedAt ?? item?.completedAt ?? item?.endedAt ?? item?.createdAt ?? item?.startedAt ?? 0);
+    return Math.max(
+      timestamp(item?.updatedAt),
+      timestamp(item?.completedAt),
+      timestamp(item?.endedAt),
+      timestamp(item?.doneAt),
+      timestamp(item?.createdAt),
+      timestamp(item?.startedAt)
+    );
   }
 
   function stateFreshness(state){
     return Number(state?.storageMeta?.updatedAt || state?.updatedAt || 0);
   }
 
-  function mergeArray(remote=[],local=[]){
+  function mergeTombstoneKind(remote={},local={}){
+    const out={};
+    const ids=new Set([...Object.keys(remote||{}),...Object.keys(local||{})]);
+    ids.forEach(id=>{
+      const ts=Math.max(Number(remote?.[id])||0,Number(local?.[id])||0);
+      if(ts>0) out[id]=ts;
+    });
+    return out;
+  }
+
+  function mergeTombstones(remote={},local={}){
+    return {
+      sessions:mergeTombstoneKind(remote?.sessions,local?.sessions),
+      tasks:mergeTombstoneKind(remote?.tasks,local?.tasks),
+      events:mergeTombstoneKind(remote?.events,local?.events)
+    };
+  }
+
+  function mergeArray(remote=[],local=[],tombstones={}){
     const map=new Map();
     [...(remote||[]),...(local||[])].forEach((item,index)=>{
       const key=itemKey(item,index);
+      const deletedAt=Number(tombstones?.[key])||0;
+      const itemTs=freshness(item);
+      if(deletedAt && deletedAt>=itemTs) return;
       const existing=map.get(key);
       if(!existing){
         map.set(key,clone(item));
         return;
       }
-      const a=freshness(existing), b=freshness(item);
+      const a=freshness(existing), b=itemTs;
       if(b>a) map.set(key,clone(item));
       else if(b===a) map.set(key,clone({...existing,...item}));
     });
-    return [...map.values()];
+    return [...map.values()].filter(item=>{
+      const id=itemKey(item,0);
+      const deletedAt=Number(tombstones?.[id])||0;
+      return !deletedAt || deletedAt<freshness(item);
+    });
   }
 
-  function mergeSessionLog(remote={},local={}){
+  function mergeSessionLog(remote={},local={},sessionTombstones={}){
     const out={};
     const dates=new Set([...Object.keys(remote||{}),...Object.keys(local||{})]);
     dates.forEach(date=>{
-      out[date]=mergeArray(remote?.[date]||[],local?.[date]||[]);
+      out[date]=mergeArray(remote?.[date]||[],local?.[date]||[],sessionTombstones);
     });
     return out;
+  }
+
+  function sessionDuration(session){
+    const intervals=Array.isArray(session?.workIntervals) ? session.workIntervals : [];
+    let hasClosed=false;
+    let seconds=0;
+    intervals.forEach(interval=>{
+      const start=Number(interval?.start);
+      const end=interval?.end==null ? null : Number(interval.end);
+      if(!Number.isFinite(start) || !Number.isFinite(end) || end<=start) return;
+      hasClosed=true;
+      seconds+=Math.max(0,Math.floor((end-start)/1000));
+    });
+    return hasClosed ? Math.max(0,Math.round(seconds)) : Math.max(0,Math.round(Number(session?.duration)||0));
   }
 
   function validGoal(value){
@@ -51,7 +103,7 @@
     const source={...clone(older||{}),...clone(newer||{})};
 
     const workSeconds=Math.max(0,Math.round(
-      (sessions||[]).reduce((sum,s)=>sum+Math.max(0,Number(s?.duration||0)),0)
+      (sessions||[]).reduce((sum,s)=>sum+sessionDuration(s),0)
     ));
 
     const distractionCategories={};
@@ -88,6 +140,14 @@
       ...Object.keys(sessionLog||{})
     ]);
     keys.forEach(date=>{
+      // Preserve legacy aggregate-only days that predate session history.
+      const hasSessionBucket=Object.prototype.hasOwnProperty.call(sessionLog,date);
+      if(!hasSessionBucket){
+        const newer=preferLocal ? localDays?.[date] : remoteDays?.[date];
+        const older=preferLocal ? remoteDays?.[date] : localDays?.[date];
+        out[date]={...clone(older||{}),...clone(newer||{})};
+        return;
+      }
       out[date]=mergedDayFromSessions(
         remoteDays?.[date]||{},
         localDays?.[date]||{},
@@ -105,12 +165,19 @@
     const older=localIsNewest ? remote : local;
     const out={...clone(older||{}),...clone(newest||{})};
 
-    out.tasks=mergeArray(remote.tasks,local.tasks);
-    out.events=mergeArray(remote.events,local.events);
-    out.taskTags=mergeArray(remote.taskTags,local.taskTags);
-    out.collection=mergeArray(remote.collection,local.collection);
-    out.badgeUnlockLog=mergeArray(remote.badgeUnlockLog,local.badgeUnlockLog);
-    out.sessionLog=mergeSessionLog(remote.sessionLog,local.sessionLog);
+    out.tombstones=mergeTombstones(remote.tombstones,local.tombstones);
+    out.tasks=mergeArray(remote.tasks,local.tasks,out.tombstones.tasks);
+    out.events=mergeArray(remote.events,local.events,out.tombstones.events);
+    out.taskTags=mergeArray(remote.taskTags,local.taskTags,{});
+    out.collection=mergeArray(remote.collection,local.collection,{});
+    out.badgeUnlockLog=mergeArray(remote.badgeUnlockLog,local.badgeUnlockLog,{});
+    out.sessionLog=mergeSessionLog(remote.sessionLog,local.sessionLog,out.tombstones.sessions);
+
+    // Ensure interval-derived duration is canonical in the merged history.
+    Object.values(out.sessionLog||{}).forEach(list=>{
+      if(!Array.isArray(list)) return;
+      list.forEach(session=>{ session.duration=sessionDuration(session); });
+    });
 
     const fallbackGoal=
       validGoal(newest.dailyGoalMinutes) ??
@@ -136,7 +203,7 @@
     out.streakGoalDaysTowardFreeze=Math.max(0,Math.min(6,Number(newest.streakGoalDaysTowardFreeze)||0));
     out.frozenDays=[...new Set([...(remote.frozenDays||[]),...(local.frozenDays||[])])].sort();
 
-    // Canlı timer bu cihazda kalır; diğer cihazın timer state'i ithal edilmez.
+    // Live timer is strictly device-local: remote activity can never start/stop this device's timer.
     out.activeSessionId=local.activeSessionId ?? null;
     out.activeSessionDate=local.activeSessionDate ?? null;
     out.isWorking=!!local.isWorking;
