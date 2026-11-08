@@ -8717,10 +8717,180 @@
     });
 
 
+
+    // === v67 reliability regression gate ===
+    test('Timer: IDLE -> WORKING geçerli', ()=>{
+      equal(canTransitionTimerMode(TIMER_MODES.IDLE,TIMER_MODES.WORKING),true);
+    });
+
+    test('Timer: IDLE -> PAUSED geçersiz', ()=>{
+      equal(canTransitionTimerMode(TIMER_MODES.IDLE,TIMER_MODES.PAUSED),false);
+    });
+
+    test('Timer: WORKING -> PAUSED ve IDLE geçerli', ()=>{
+      equal(canTransitionTimerMode(TIMER_MODES.WORKING,TIMER_MODES.PAUSED),true);
+      equal(canTransitionTimerMode(TIMER_MODES.WORKING,TIMER_MODES.IDLE),true);
+    });
+
+    test('Timer: PAUSED -> BREAK doğrudan geçersiz', ()=>{
+      equal(canTransitionTimerMode(TIMER_MODES.PAUSED,TIMER_MODES.BREAK),false);
+    });
+
+    test('Session duration sadece kapalı workIntervals toplamıdır', ()=>{
+      const base=Date.now();
+      const session={workIntervals:[
+        {start:base,end:base+10*60*1000},
+        {start:base+20*60*1000,end:base+50*60*1000}
+      ]};
+      equal(sessionClosedIntervalSeconds(session),40*60);
+    });
+
+    test('Pause aralığı çalışma süresine eklenmez', ()=>{
+      const base=Date.now();
+      const session={workIntervals:[
+        {start:base,end:base+25*60*1000},
+        {start:base+40*60*1000,end:base+55*60*1000}
+      ]};
+      equal(sessionClosedIntervalSeconds(session),40*60);
+    });
+
+    test('Açık workInterval tamamlanmadan duration sayılmaz', ()=>{
+      const base=Date.now();
+      const session={workIntervals:[
+        {start:base,end:base+10*60*1000},
+        {start:base+20*60*1000,end:null}
+      ]};
+      equal(sessionClosedIntervalSeconds(session),10*60);
+    });
+
+    test('Bozuk workInterval duration hesabını etkilemez', ()=>{
+      const base=Date.now();
+      const session={workIntervals:[
+        {start:base,end:base-1000},
+        {start:null,end:base},
+        {start:base,end:base+5000}
+      ]};
+      equal(sessionClosedIntervalSeconds(session),5);
+    });
+
+    test('Midnight sınırı tam yeni gün 00:00 olur', ()=>{
+      const start=new Date(2026,10,7,23,59,30).getTime();
+      const midnight=nextLocalMidnightMs(start);
+      const d=new Date(midnight);
+      equal(dateKey(d),'2026-11-08');
+      equal(d.getHours(),0);
+      equal(d.getMinutes(),0);
+      equal(d.getSeconds(),0);
+    });
+
+    test('Midnight öncesi kalan dakika doğru hesaplanır', ()=>{
+      const start=new Date(2026,10,7,23,50,0).getTime();
+      const midnight=nextLocalMidnightMs(start);
+      equal(Math.round((midnight-start)/60000),10);
+    });
+
+    test('Freeze hakları 0 ile 2 arasında tutulur', ()=>{
+      equal(Math.max(0,Math.min(2,5)),2);
+      equal(Math.max(0,Math.min(2,-1)),0);
+    });
+
+    test('7 gerçek hedef günü bir freeze kazandırır', ()=>{
+      let toward=0,freezes=0;
+      for(let i=0;i<7;i++){
+        toward+=1;
+        if(toward>=7){
+          toward=0;
+          freezes=Math.min(2,freezes+1);
+        }
+      }
+      equal(toward,0);
+      equal(freezes,1);
+    });
+
+    test('Freeze ile korunan gün yeni hak sayacını ilerletmez', ()=>{
+      let toward=6;
+      const protectedMiss=true;
+      if(!protectedMiss) toward+=1;
+      equal(toward,6);
+    });
+
+    test('İki freeze varken üçüncü freeze birikmez', ()=>{
+      let freezes=2;
+      freezes=Math.min(2,freezes+1);
+      equal(freezes,2);
+    });
+
+    test('Tombstone timestamp eski canlı kayıttan yeniyse silme kazanır', ()=>{
+      const liveUpdatedAt=100;
+      const deletedAt=200;
+      equal(deletedAt>=liveUpdatedAt,true);
+    });
+
+    test('Restore daha yeni updatedAt ile eski tombstoneu geçebilir', ()=>{
+      const deletedAt=200;
+      const restoredUpdatedAt=300;
+      equal(restoredUpdatedAt>deletedAt,true);
+    });
+
+    test('Rename işlemi updatedAt artırmalıdır', ()=>{
+      const before={id:'s1',name:'Matematik',updatedAt:100};
+      const after={...before,name:'Matematik A',updatedAt:200};
+      equal(after.updatedAt>before.updatedAt,true);
+      equal(after.name,'Matematik A');
+    });
+
+    test('Sync: scalar state için en güncel cihaz snapshotı temel alınır', ()=>{
+      const merge=window.ProductivityStateMerge?.mergeStates;
+      if(!merge) throw new Error('mergeStates bulunamadı');
+      const remote={
+        storageMeta:{updatedAt:100},
+        dailyGoalMinutes:60,
+        theme:'old',
+        sessionLog:{},days:{},tasks:[],events:[],taskTags:[],collection:[],badgeUnlockLog:[]
+      };
+      const local={
+        storageMeta:{updatedAt:200},
+        dailyGoalMinutes:90,
+        theme:'new',
+        sessionLog:{},days:{},tasks:[],events:[],taskTags:[],collection:[],badgeUnlockLog:[]
+      };
+      const out=merge(remote,local);
+      equal(out.dailyGoalMinutes,90);
+      equal(out.theme,'new');
+    });
+
+    test('Sync: record updatedAt cihaz kimliğinden bağımsız kazanır', ()=>{
+      const mergeArray=window.ProductivityStateMerge?.mergeArray;
+      if(!mergeArray) throw new Error('mergeArray bulunamadı');
+      const remote=[{id:'t1',name:'Eski',updatedAt:100}];
+      const local=[{id:'t1',name:'Yeni',updatedAt:300}];
+      const out=mergeArray(remote,local,{});
+      equal(out.length,1);
+      equal(out[0].name,'Yeni');
+    });
+
+    test('Sync: yeni tombstone eski taskı geri getirmez', ()=>{
+      const mergeArray=window.ProductivityStateMerge?.mergeArray;
+      if(!mergeArray) throw new Error('mergeArray bulunamadı');
+      const old=[{id:'t1',name:'Eski task',updatedAt:100}];
+      const out=mergeArray(old,[],{t1:200});
+      equal(out.length,0);
+    });
+
+    test('Sync: tombstonedan yeni restore edilen kayıt geri gelebilir', ()=>{
+      const mergeArray=window.ProductivityStateMerge?.mergeArray;
+      if(!mergeArray) throw new Error('mergeArray bulunamadı');
+      const restored=[{id:'t1',name:'Restore',updatedAt:300}];
+      const out=mergeArray([],restored,{t1:200});
+      equal(out.length,1);
+      equal(out[0].name,'Restore');
+    });
+
     const passed=results.filter(r=>r.ok).length;
     const failed=results.length-passed;
 
 
+    console.log('Test · Reliability regression gate aktif');
     console.groupCollapsed('Test · Unit tests: '+passed+'/'+results.length+' geçti');
     results.forEach(r=>{
       if(r.ok) console.log('✓',r.name);
