@@ -224,6 +224,7 @@
     mergeArray,
     mergeSessionLog,
     rebuildDays,
-    mergeStates
+    mergeStates,
+    __test:{freshness,stateFreshness,mergeTombstones}
   };
 })();
