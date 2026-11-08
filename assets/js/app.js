@@ -2,7 +2,7 @@
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
   const OLD_KEY = 'direncAgaci_v1';
-  const SCHEMA_VERSION = 45;
+  const SCHEMA_VERSION = 46;
 
   const TAB_ID = (()=>{
   window.addEventListener('error',event=>{
@@ -323,8 +323,42 @@
     return out;
   }
 
+  function sessionClosedIntervalSeconds(session,{fallbackToDuration=false}={}){
+    if(!session) return 0;
+    const intervals=Array.isArray(session.workIntervals) ? session.workIntervals : [];
+    let hasUsableInterval=false;
+    let seconds=0;
+    intervals.forEach(interval=>{
+      const start=Number(interval?.start);
+      const end=interval?.end==null ? null : Number(interval.end);
+      if(!Number.isFinite(start) || !Number.isFinite(end) || end<=start) return;
+      hasUsableInterval=true;
+      seconds += Math.max(0,Math.floor((end-start)/1000));
+    });
+    if(!hasUsableInterval && fallbackToDuration) return Math.max(0,Math.round(Number(session.duration)||0));
+    return Math.max(0,Math.round(seconds));
+  }
+
+  function recomputeSessionDuration(session){
+    if(!session) return 0;
+    const next=sessionClosedIntervalSeconds(session,{fallbackToDuration:true});
+    session.duration=next;
+    return next;
+  }
+
+  function rebuildDerivedWorkData(){
+    const sessionKeys=Object.keys(data.sessionLog||{});
+    sessionKeys.forEach(key=>{
+      const list=Array.isArray(data.sessionLog[key]) ? data.sessionLog[key] : [];
+      list.forEach(recomputeSessionDuration);
+      recomputeSessionDay(key);
+    });
+    return true;
+  }
+
   function recomputeSessionDay(key){
     const list=Array.isArray(data.sessionLog?.[key])?data.sessionLog[key]:[];
+    list.forEach(recomputeSessionDuration);
     const day=getDay(key);
     day.workSeconds=Math.round(list.reduce((sum,s)=>sum+Number(s.duration||0),0));
     day.sessions=list.length;
@@ -468,6 +502,7 @@
       id:'s'+startMs+'_'+Math.random().toString(36).slice(2,7),
       name:previous?.name || 'Oturum',
       subject:previous?.subject || 'Genel',
+      createdAt:startMs,
       startedAt:startMs,
       endedAt:null,
       workIntervals:[{start:startMs,end:null}],
@@ -484,7 +519,7 @@
       continuedFromMidnight:true
     };
     list.push(session);
-    getDay(key).sessions += 1;
+    recomputeSessionDay(key);
     data.activeSessionId=session.id;
     data.activeSessionDate=key;
     return session;
@@ -508,22 +543,20 @@
       if(!current) break;
 
       const seconds=Math.max(0,Math.floor((boundary-startMs)/1000));
-      if(seconds>0){
-        getDay(dateKey(new Date(startMs))).workSeconds += seconds;
-        current.duration=Number(current.duration||0)+seconds;
-        current.updatedAt=Date.now();
-        addTreeGrowth((seconds/60)*GROWTH_PER_WORK_MIN);
-      }
-
       closeOpenWorkInterval(current,boundary);
+      recomputeSessionDuration(current);
+      recomputeSessionDay(dateKey(new Date(startMs)));
+      if(seconds>0) addTreeGrowth((seconds/60)*GROWTH_PER_WORK_MIN);
       current.endedAt=boundary;
       current.updatedAt=Date.now();
 
-      createMidnightContinuationSession(current,boundary);
-      data.workStart=boundary;
-      data.activeTimerOwnerId=TAB_ID;
-      data.isWorking=true;
-      syncTimerState();
+      const continuation=createMidnightContinuationSession(current,boundary);
+      transitionTimerMode(TIMER_MODES.WORKING,{
+        sessionId:continuation.id,
+        sessionDate:dateKey(new Date(boundary)),
+        runningSince:boundary,
+        ownerId:TAB_ID
+      });
 
       startMs=boundary;
       changed=true;
@@ -597,6 +630,7 @@
       timerState: {mode:'idle', sessionId:null, runningSince:null, ownerId:null},
       activeTimerOwnerId: null,
       storageMeta: {revision:0, updatedAt:0, writerId:null},
+      tombstones: {sessions:{}, tasks:{}, events:{}},
       intent: '',
       muted: false,
       soundVolume: 70,
@@ -656,6 +690,17 @@
       raw.storageMeta.updatedAt = Math.max(0, Number(raw.storageMeta.updatedAt)||0);
       raw.storageMeta.writerId = raw.storageMeta.writerId ? String(raw.storageMeta.writerId) : null;
     }
+    if(!raw.tombstones || typeof raw.tombstones!=='object' || Array.isArray(raw.tombstones)){
+      raw.tombstones={sessions:{},tasks:{},events:{}};
+    }
+    ['sessions','tasks','events'].forEach(kind=>{
+      if(!raw.tombstones[kind] || typeof raw.tombstones[kind]!=='object' || Array.isArray(raw.tombstones[kind])) raw.tombstones[kind]={};
+      Object.keys(raw.tombstones[kind]).forEach(id=>{
+        const ts=Number(raw.tombstones[kind][id]);
+        if(!Number.isFinite(ts) || ts<=0) delete raw.tombstones[kind][id];
+        else raw.tombstones[kind][id]=ts;
+      });
+    });
     if(raw.onboarded === undefined) raw.onboarded = true; // önceden veri varsa zaten tanışmış demektir
     if(raw.calendarActivityColors === undefined) raw.calendarActivityColors = true;
     if(raw.calendarWorkIntervals === undefined) raw.calendarWorkIntervals = true;
@@ -733,6 +778,12 @@
     raw.taskTags.forEach(tag=>{ if('labels' in tag) delete tag.labels; });
     raw.tasks.forEach((t,index)=>{
       if(!Number.isFinite(Number(t.sortOrder))) t.sortOrder=index;
+      if(t.createdAt===undefined) t.createdAt=null;
+      if(!Number.isFinite(Number(t.updatedAt))){
+        const parsedCreated=Date.parse(t.createdAt||'');
+        const parsedDone=Date.parse(t.doneAt||'');
+        t.updatedAt=Number.isFinite(parsedDone)?parsedDone:(Number.isFinite(parsedCreated)?parsedCreated:0);
+      }
       if('subtag' in t) delete t.subtag;
       if(t.repeat === undefined) t.repeat = 'none';
       if(t.repeatSourceId === undefined) t.repeatSourceId = null;
@@ -764,6 +815,11 @@
     if(!Array.isArray(raw.events)) raw.events = [];
     raw.events.forEach(ev=>{
       if(typeof ev.description!=='string') ev.description='';
+      if(ev.createdAt===undefined) ev.createdAt=null;
+      if(!Number.isFinite(Number(ev.updatedAt))){
+        const parsedCreated=Date.parse(ev.createdAt||'');
+        ev.updatedAt=Number.isFinite(parsedCreated)?parsedCreated:0;
+      }
       ev.description=ev.description.slice(0,600);
       if(ev.repeat === undefined) ev.repeat = 'none';
       if(!Array.isArray(ev.repeatDays)) ev.repeatDays = [];
@@ -818,6 +874,12 @@
           })).filter(interval=>interval.start);
         }
         if(session.hidden === undefined) session.hidden = false;
+        if(session.createdAt===undefined) session.createdAt=Number(session.startedAt)||null;
+        if(!Number.isFinite(Number(session.updatedAt))){
+          session.updatedAt=Number(session.endedAt)||Number(session.startedAt)||Number(session.createdAt)||0;
+        }
+        const closedDuration=sessionClosedIntervalSeconds(session,{fallbackToDuration:true});
+        if(Number.isFinite(closedDuration)) session.duration=closedDuration;
         if(!session.distractionCategories || typeof session.distractionCategories !== 'object' || Array.isArray(session.distractionCategories)){
           session.distractionCategories = {};
         }
@@ -1133,6 +1195,7 @@
     }
 
     refillDeckIfNeeded();
+    rebuildDerivedWorkData();
     reconcileStreakFreeze();
 
     // Recovered state follows the same v60 timer-integrity rules.
@@ -1181,6 +1244,69 @@
   let lastSaveAt = 0;
   let lastSemanticSnapshot = null;
   let reassertStorageTimer = null;
+
+  const TIMER_MODES=Object.freeze({IDLE:'idle',WORKING:'working',PAUSED:'paused',BREAK:'break'});
+  const TIMER_TRANSITIONS=Object.freeze({
+    idle:new Set(['idle','working','break']),
+    working:new Set(['working','paused','idle']),
+    paused:new Set(['paused','working','idle']),
+    break:new Set(['break','idle','working'])
+  });
+
+  function inferredTimerMode(){
+    if(data?.breakState) return TIMER_MODES.BREAK;
+    if(data?.activeSessionId) return data?.isWorking ? TIMER_MODES.WORKING : TIMER_MODES.PAUSED;
+    return TIMER_MODES.IDLE;
+  }
+
+  function canTransitionTimerMode(from,to){
+    return !!TIMER_TRANSITIONS[from]?.has(to);
+  }
+
+  function transitionTimerMode(nextMode,options={}){
+    const current=inferredTimerMode();
+    if(!canTransitionTimerMode(current,nextMode)){
+      console.warn('Geçersiz timer state geçişi engellendi:',current,'→',nextMode);
+      return false;
+    }
+
+    if(nextMode===TIMER_MODES.WORKING){
+      const sessionId=options.sessionId || data.activeSessionId;
+      const session=sessionId ? findSession(sessionId) : null;
+      if(!session) return false;
+      data.activeSessionId=sessionId;
+      data.activeSessionDate=options.sessionDate || findSessionDateKey(sessionId) || data.activeSessionDate || todayKey();
+      data.isWorking=true;
+      data.workStart=Number(options.runningSince)||Date.now();
+      data.breakState=null;
+      data.activeTimerOwnerId=options.ownerId || TAB_ID;
+    }else if(nextMode===TIMER_MODES.PAUSED){
+      const sessionId=options.sessionId || data.activeSessionId;
+      if(!sessionId || !findSession(sessionId)) return false;
+      data.activeSessionId=sessionId;
+      data.activeSessionDate=options.sessionDate || findSessionDateKey(sessionId) || data.activeSessionDate;
+      data.isWorking=false;
+      data.workStart=null;
+      data.breakState=null;
+      data.activeTimerOwnerId=null;
+    }else if(nextMode===TIMER_MODES.BREAK){
+      data.activeSessionId=null;
+      data.activeSessionDate=null;
+      data.isWorking=false;
+      data.workStart=null;
+      data.breakState=options.breakState || data.breakState || null;
+      data.activeTimerOwnerId=options.ownerId || TAB_ID;
+    }else{
+      data.activeSessionId=null;
+      data.activeSessionDate=null;
+      data.isWorking=false;
+      data.workStart=null;
+      data.breakState=null;
+      data.activeTimerOwnerId=null;
+    }
+    syncTimerState();
+    return true;
+  }
 
   function syncTimerState(){
     if(!data) return;
@@ -1320,6 +1446,7 @@
   function adoptExternalState(incoming){
     const localTimer=captureDeviceLocalTimerState();
     data=restoreDeviceLocalTimerState(incoming,localTimer);
+    rebuildDerivedWorkData();
     lastSemanticSnapshot=semanticSnapshot(data);
     refillDeckIfNeeded();
     reconcileStreakFreeze();
@@ -1343,6 +1470,7 @@
       const localTimer=captureDeviceLocalTimerState();
       const incoming=migrateData(JSON.parse(JSON.stringify(raw)));
       data=restoreDeviceLocalTimerState(incoming,localTimer);
+      rebuildDerivedWorkData();
 
       lastSemanticSnapshot=semanticSnapshot(data);
       refillDeckIfNeeded();
@@ -1434,6 +1562,32 @@
       }
     }
   };
+
+  function ensureTombstones(){
+    if(!data.tombstones || typeof data.tombstones!=='object') data.tombstones={sessions:{},tasks:{},events:{}};
+    ['sessions','tasks','events'].forEach(kind=>{
+      if(!data.tombstones[kind] || typeof data.tombstones[kind]!=='object') data.tombstones[kind]={};
+    });
+    return data.tombstones;
+  }
+
+  function recordTombstone(kind,id,deletedAt=Date.now()){
+    if(!id || !['sessions','tasks','events'].includes(kind)) return 0;
+    const tombstones=ensureTombstones();
+    const ts=Math.max(Number(tombstones[kind][id])||0,Number(deletedAt)||Date.now());
+    tombstones[kind][id]=ts;
+    return ts;
+  }
+
+  function clearTombstone(kind,id){
+    const tombstones=ensureTombstones();
+    if(tombstones[kind]) delete tombstones[kind][id];
+  }
+
+  function touchRecord(record,at=Date.now()){
+    if(record && typeof record==='object') record.updatedAt=Number(at)||Date.now();
+    return record;
+  }
 
   function getDay(key){
     if(!data.days[key]) data.days[key] = emptyDay(data.dailyGoalMinutes || 60);
@@ -1578,45 +1732,29 @@
     let completed = [];
 
     if(elapsed > 0){
-      let cursor = startMs;
-      while(cursor < safeEnd){
-        const cursorDate = new Date(cursor);
-        const nextMidnight = new Date(cursorDate);
-        nextMidnight.setHours(24,0,0,0);
-        const segmentEnd = Math.min(safeEnd, nextMidnight.getTime());
-        const segmentSeconds = Math.max(0, Math.floor((segmentEnd - cursor)/1000));
-        if(segmentSeconds > 0){
-          getDay(dateKey(cursorDate)).workSeconds += segmentSeconds;
-        }
-        cursor = segmentEnd;
-      }
-
-      active.duration += elapsed;
+      closeOpenWorkInterval(active,safeEnd);
+      recomputeSessionDuration(active);
+      recomputeSessionDay(findSessionDateKey(active.id) || dateKey(new Date(startMs)));
+      touchRecord(active);
       completed = addTreeGrowth((elapsed/60) * GROWTH_PER_WORK_MIN);
+    }else{
+      closeOpenWorkInterval(active,safeEnd);
     }
-
-    closeOpenWorkInterval(active, safeEnd);
     return completed;
   }
 
   function pauseSuspiciousTimerAt(stopMs){
     const active = data.activeSessionId ? findSession(data.activeSessionId) : null;
     if(!active){
-      data.isWorking = false;
-      data.workStart = null;
-      data.activeTimerOwnerId = null;
+      transitionTimerMode(TIMER_MODES.IDLE);
       longSessionReviewPending = false;
-      syncTimerState();
       saveData({force:true});
       return [];
     }
 
     const completed = applyActiveWorkUntil(stopMs);
-    data.isWorking = false;
-    data.workStart = null;
-    data.activeTimerOwnerId = null;
+    transitionTimerMode(TIMER_MODES.PAUSED,{sessionId:active.id});
     longSessionReviewPending = false;
-    syncTimerState();
     saveData({force:true});
     return completed;
   }
@@ -1897,6 +2035,7 @@
     }
   }
   refillDeckIfNeeded();
+  rebuildDerivedWorkData();
   reconcileStreakFreeze();
   const timerIntegrityChanged = reconcileStaleRunningTimerOnStartup();
   const todayAggregateRepaired = longSessionReviewPending ? false : repairTodayWorkAggregateFromSessions();
@@ -3403,8 +3542,8 @@
 
   function startBreak(minutes){
     const mins = Math.max(GOAL_MIN, Math.min(GOAL_MAX, Number(minutes) || 5));
-    data.breakState = { startedAt: Date.now(), targetSeconds: mins*60, notified:false };
-    data.activeTimerOwnerId = TAB_ID;
+    const breakState={ startedAt: Date.now(), targetSeconds: mins*60, notified:false };
+    transitionTimerMode(TIMER_MODES.BREAK,{breakState,ownerId:TAB_ID});
     touchTabHeartbeat();
     saveData();
     renderWorkButtonRow();
@@ -3413,8 +3552,7 @@
   }
 
   function stopBreak(){
-    data.breakState = null;
-    data.activeTimerOwnerId = null;
+    transitionTimerMode(TIMER_MODES.IDLE);
     saveData();
     renderWorkButtonRow();
     updateWorkDisplay();
@@ -3579,10 +3717,7 @@
     const activeSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
     if(!activeSession){
       // Orphan timer state must never create day work without a session.
-      data.isWorking = false;
-      data.workStart = null;
-      data.activeTimerOwnerId = null;
-      syncTimerState();
+      transitionTimerMode(TIMER_MODES.IDLE);
       saveData({force:true});
       return [];
     }
@@ -3590,11 +3725,10 @@
     const now = Date.now();
     const startMs = Number(data.workStart);
     if(!Number.isFinite(startMs) || startMs <= 0 || startMs > now + 5000){
-      data.isWorking = false;
-      data.workStart = null;
-      data.activeTimerOwnerId = null;
       closeOpenWorkInterval(activeSession, now);
-      syncTimerState();
+      recomputeSessionDuration(activeSession);
+      recomputeSessionDay(findSessionDateKey(activeSession.id) || todayKey());
+      transitionTimerMode(TIMER_MODES.PAUSED,{sessionId:activeSession.id});
       saveData({force:true});
       return [];
     }
@@ -3602,21 +3736,13 @@
     const elapsed = Math.max(0, Math.floor((now - startMs)/1000));
     let completed = [];
     if(elapsed > 0){
-      let cursor = startMs;
-      while(cursor < now){
-        const cursorDate = new Date(cursor);
-        const nextMidnight = new Date(cursorDate);
-        nextMidnight.setHours(24,0,0,0);
-        const segmentEnd = Math.min(now, nextMidnight.getTime());
-        const segmentSeconds = Math.max(0, Math.floor((segmentEnd - cursor)/1000));
-        if(segmentSeconds > 0){
-          getDay(dateKey(cursorDate)).workSeconds += segmentSeconds;
-        }
-        cursor = segmentEnd;
-      }
-      activeSession.duration += elapsed;
-      activeSession.updatedAt = Date.now();
-      data.workStart = now;
+      closeOpenWorkInterval(activeSession,now);
+      recomputeSessionDuration(activeSession);
+      const sessionKey=findSessionDateKey(activeSession.id) || dateKey(new Date(startMs));
+      recomputeSessionDay(sessionKey);
+      activeSession.updatedAt=Date.now();
+      data.workStart=now;
+      openWorkInterval(activeSession,now);
       completed = addTreeGrowth((elapsed/60) * GROWTH_PER_WORK_MIN);
       saveData();
     }
@@ -3737,17 +3863,14 @@
   function startWorking(subject, targetMinutes, seedTodoText=null){
     ensureBackgroundAlarmUnlocked();
     if(isBreakActive()) stopBreak();
-    data.isWorking = true;
-    data.activeTimerOwnerId = TAB_ID;
-    touchTabHeartbeat();
     const sessionStartedAt = Date.now();
-    data.workStart = sessionStartedAt;
     const todaySessions = getSessionsToday();
     const cleanSubject = (subject || '').trim();
     if(cleanSubject) rememberSubject(cleanSubject);
     const newSession = {
       id:'s'+sessionStartedAt+'_'+Math.random().toString(36).slice(2,7), name:'Oturum ' + (todaySessions.length+1),
       subject: cleanSubject || 'Genel',
+      createdAt: sessionStartedAt,
       startedAt: sessionStartedAt,
       endedAt: null,
       workIntervals:[{start:sessionStartedAt,end:null}],
@@ -3761,10 +3884,15 @@
       milestonesHit: []
     };
     const sessionDate=todayKey();
-    data.activeSessionDate = sessionDate;
     getSessionsFor(sessionDate).push(newSession);
-    data.activeSessionId = newSession.id;
-    getDay(sessionDate).sessions += 1;
+    recomputeSessionDay(sessionDate);
+    transitionTimerMode(TIMER_MODES.WORKING,{
+      sessionId:newSession.id,
+      sessionDate,
+      runningSince:sessionStartedAt,
+      ownerId:TAB_ID
+    });
+    touchTabHeartbeat();
     // Oturum kaydı kritik bir oluşturma işlemidir. Özellikle günün ilk oturumunda,
     // konu önerisi kaydı gibi hemen önce yapılan bir save'in bunu yutmasına izin verme.
     saveData({force:true});
@@ -3785,10 +3913,14 @@
     const beforeBadges = getUnlockedBadgeMap();
     const beforeLevel = getLevelInfo().level;
     const completedList = flushWorkTime();
-    closeOpenWorkInterval(data.activeSessionId ? findSession(data.activeSessionId) : null, Date.now());
-    data.isWorking = false;
-    data.workStart = null;
-    data.activeTimerOwnerId = null;
+    const pausingSession=data.activeSessionId ? findSession(data.activeSessionId) : null;
+    closeOpenWorkInterval(pausingSession,Date.now());
+    if(pausingSession){
+      recomputeSessionDuration(pausingSession);
+      recomputeSessionDay(findSessionDateKey(pausingSession.id) || todayKey());
+      touchRecord(pausingSession);
+      transitionTimerMode(TIMER_MODES.PAUSED,{sessionId:pausingSession.id});
+    }
     saveData();
     renderWorkButtonRow();
     const pausedSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
@@ -3805,10 +3937,13 @@
   function resumeWorking(){
     ensureBackgroundAlarmUnlocked();
     if(!data.activeSessionId || !findSession(data.activeSessionId)) return;
-    data.isWorking = true;
-    data.workStart = Date.now();
-    openWorkInterval(findSession(data.activeSessionId), data.workStart);
-    data.activeTimerOwnerId = TAB_ID;
+    const resumeAt=Date.now();
+    openWorkInterval(findSession(data.activeSessionId),resumeAt);
+    transitionTimerMode(TIMER_MODES.WORKING,{
+      sessionId:data.activeSessionId,
+      runningSince:resumeAt,
+      ownerId:TAB_ID
+    });
     touchTabHeartbeat();
     saveData();
     renderWorkButtonRow();
@@ -4036,17 +4171,16 @@
     if(data.isWorking){
       completedList = flushWorkTime();
       closeOpenWorkInterval(data.activeSessionId ? findSession(data.activeSessionId) : null, Date.now());
-      data.isWorking = false;
-      data.workStart = null;
     }
     const endingSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
     if(endingSession){
       closeOpenWorkInterval(endingSession, Date.now());
+      recomputeSessionDuration(endingSession);
+      recomputeSessionDay(findSessionDateKey(endingSession.id) || todayKey());
       if(!endingSession.endedAt) endingSession.endedAt = Date.now();
+      touchRecord(endingSession);
     }
-    data.activeSessionId = null;
-    data.activeSessionDate = null;
-    data.activeTimerOwnerId = null;
+    transitionTimerMode(TIMER_MODES.IDLE);
     saveData();
     celebrateTreeCompletions(completedList);
     renderSessionList();
@@ -4326,19 +4460,19 @@
         return;
       }
 
+      recomputeSessionDuration(session);
       const oldStreak = computeGoalStreak();
       const day = getDay(key);
-      day.workSeconds = Math.max(0, Number(day.workSeconds || 0) - Number(session.duration || 0));
-      day.sessions = Math.max(0, Number(day.sessions || 0) - 1);
-      day.distraction = Math.max(0, Number(day.distraction || 0) - Number(session.distractions || 0));
 
       if(rewardedTodos > 0){
         data.totalTodosCompleted = Math.max(0, Number(data.totalTodosCompleted || 0) - rewardedTodos);
       }
       removeTreeGrowth(totalGrowthToReverse);
 
+      recordTombstone('sessions',sid);
       data.sessionLog[key] = (data.sessionLog[key] || []).filter(x=>x.id!==sid);
       expandedSessions.delete(sid);
+      recomputeSessionDay(key);
 
       // Hedef artık sağlanmıyorsa aynı gün yeniden ulaşılabilmesi için kutlama kilidini aç.
       if(!dayMeetsGoal(key)) day.goalCelebrated = false;
@@ -4981,6 +5115,7 @@
       const merged = freshData();
       Object.assign(merged, payload);
       data = migrateData(merged);
+      rebuildDerivedWorkData();
 
       // Başka cihazdan veya eski zamandan gelen aktif sayaç çevrimdışı süreyi çalışma saymaz.
       if(data.activeSessionId && findSession(data.activeSessionId)){
@@ -6266,6 +6401,7 @@
         : null,
       repeatUntil: repeatUntil || null,
       createdAt: new Date().toISOString(),
+      updatedAt: Date.now(),
       doneAt: null,
       xpCounted: false,
       sortOrder: data.tasks.reduce((m,t)=>Math.max(m,Number(t.sortOrder)||0),-1)+1
@@ -6549,6 +6685,7 @@
     const wasDone = t.done;
     t.done = !t.done;
     t.doneAt = t.done ? new Date().toISOString() : null;
+    touchRecord(t);
     let completedList = [];
     if(!wasDone && t.done && !t.xpCounted){
       t.xpCounted = true;
@@ -6581,7 +6718,7 @@
       scope=await askRecurringEditChoice('görev');
     }
     const affected=recurringSeriesItems(data.tasks,target,'dueDate',scope);
-    affected.forEach(task=>{ task.text=text; });
+    affected.forEach(task=>{ task.text=text; touchRecord(task); });
     saveData();
     refreshUI(['tasks','calendar']);
     showToast(scope==='single' ? 'Görev güncellendi.' : affected.length+' görev güncellendi.','success');
@@ -6611,6 +6748,7 @@
 
       const stopKey=dateBeforeKey(target.dueDate);
       const removedExceptions=trimRecurrenceExceptionsFrom('tasks',sourceId,target.dueDate);
+      removeIds.forEach(id=>recordTombstone('tasks',id));
       data.tasks=data.tasks.filter(task=>!removeIds.has(task.id));
       data.tasks.forEach(task=>{
         if((task.repeatSourceId||task.id)===sourceId) task.repeatUntil=stopKey;
@@ -6624,6 +6762,8 @@
         });
         restoreRecurrenceExceptions('tasks',sourceId,removedExceptions);
         removed.sort((a,b)=>a.index-b.index).forEach(({task,index:taskIndex})=>{
+          clearTombstone('tasks',task.id);
+          touchRecord(task);
           data.tasks.splice(Math.min(taskIndex,data.tasks.length),0,task);
         });
         saveData();
@@ -6637,11 +6777,14 @@
     const exceptionAdded=isRecurring && target.dueDate
       ? addRecurrenceException('tasks',singleSourceId,target.dueDate)
       : false;
+    recordTombstone('tasks',target.id);
     data.tasks.splice(index,1);
     saveData();
     refreshUI(['tasks','calendar']);
     offerUndo('Görev silindi.', ()=>{
       if(exceptionAdded) removeRecurrenceException('tasks',singleSourceId,target.dueDate);
+      clearTombstone('tasks',removed.id);
+      touchRecord(removed);
       data.tasks.splice(Math.min(index,data.tasks.length),0,removed);
       saveData();
       refreshUI(['tasks','calendar']);
@@ -6653,11 +6796,14 @@
       .map((task,index)=>({task:JSON.parse(JSON.stringify(task)),index}))
       .filter(x=>x.task.done);
     if(!removed.length) return;
+    removed.forEach(({task})=>recordTombstone('tasks',task.id));
     data.tasks=data.tasks.filter(t=>!t.done);
     saveData();
     refreshUI(['tasks','calendar']);
     offerUndo(removed.length+' tamamlanmış görev silindi.', ()=>{
       removed.sort((a,b)=>a.index-b.index).forEach(({task,index})=>{
+        clearTombstone('tasks',task.id);
+        touchRecord(task);
         data.tasks.splice(Math.min(index,data.tasks.length),0,task);
       });
       saveData();
@@ -6958,7 +7104,8 @@
           : Number(String(date||'').slice(-2)) || null)
         : null,
       repeatUntil:null,
-      createdAt:new Date().toISOString()
+      createdAt:new Date().toISOString(),
+      updatedAt:Date.now()
     };
     DataRepository.events.add(ev);
     return ev;
@@ -7046,7 +7193,8 @@
       repeatDays:safeRepeat==='weekly'&&Array.isArray(repeatDays)?[...new Set(repeatDays.map(Number).filter(d=>d>=0&&d<=6))]:[],
       repeatAnchorDay:safeRepeat==='monthly' ? (Number(String(date||'').slice(-2)) || null) : null,
       repeatUntil:null,
-      createdAt:new Date().toISOString()
+      createdAt:new Date().toISOString(),
+      updatedAt:Date.now()
     };
     DataRepository.events.add(ev);
     if(safeRepeat!=='none') generateRecurringEventSeries(ev);
@@ -7091,7 +7239,7 @@
     const affected=['daily','weekly','monthly'].includes(ev.repeat)
       ? data.events.filter(item=>(item.repeatSourceId||item.id)===sourceId && item.date>=ev.date)
       : [ev];
-    affected.forEach(item=>{ item.description=next; });
+    affected.forEach(item=>{ item.description=next; touchRecord(item); });
     saveData();
     refreshUI('calendar');
     el.eventDetailDescription.value=next;
@@ -7124,7 +7272,7 @@
       scope=await askRecurringEditChoice('etkinlik');
     }
     const affected=recurringSeriesItems(data.events,target,'date',scope);
-    affected.forEach(event=>{ event.title=title; });
+    affected.forEach(event=>{ event.title=title; touchRecord(event); });
     saveData();
     refreshUI('calendar');
     showToast(scope==='single' ? 'Etkinlik güncellendi.' : affected.length+' etkinlik güncellendi.','success');
@@ -7154,6 +7302,7 @@
 
       const stopKey=dateBeforeKey(target.date);
       const removedExceptions=trimRecurrenceExceptionsFrom('events',sourceId,target.date);
+      removeIds.forEach(id=>recordTombstone('events',id));
       data.events=data.events.filter(event=>!removeIds.has(event.id));
       data.events.forEach(event=>{
         if((event.repeatSourceId||event.id)===sourceId) event.repeatUntil=stopKey;
@@ -7167,6 +7316,8 @@
         });
         restoreRecurrenceExceptions('events',sourceId,removedExceptions);
         removed.sort((a,b)=>a.index-b.index).forEach(({event,index:eventIndex})=>{
+          clearTombstone('events',event.id);
+          touchRecord(event);
           data.events.splice(Math.min(eventIndex,data.events.length),0,event);
         });
         saveData();
@@ -7180,11 +7331,14 @@
     const exceptionAdded=isRecurring && target.date
       ? addRecurrenceException('events',singleSourceId,target.date)
       : false;
+    recordTombstone('events',target.id);
     data.events.splice(index,1);
     saveData();
     refreshUI('calendar');
     offerUndo('Etkinlik silindi.', ()=>{
       if(exceptionAdded) removeRecurrenceException('events',singleSourceId,target.date);
+      clearTombstone('events',removed.id);
+      touchRecord(removed);
       data.events.splice(Math.min(index,data.events.length),0,removed);
       saveData();
       refreshUI('calendar');
@@ -7891,7 +8045,7 @@
     if(['daily','weekly','monthly'].includes(ev.repeat)){
       scope=await askRecurringEditChoice('etkinlik');
     }
-    recurringSeriesItems(data.events,ev,'date',scope).forEach(item=>{ item.color=color; });
+    recurringSeriesItems(data.events,ev,'date',scope).forEach(item=>{ item.color=color; touchRecord(item); });
     saveData();
     refreshUI('calendar');
   });
@@ -8526,8 +8680,46 @@
       equal('a'.repeat(650).slice(0,600).length,600);
     });
 
+    test('Timer state machine geçersiz doğrudan WORKING→BREAK geçişini reddeder', ()=>{
+      equal(canTransitionTimerMode('working','break'),false);
+      equal(canTransitionTimerMode('working','paused'),true);
+      equal(canTransitionTimerMode('paused','working'),true);
+    });
+
+    test('Session duration kapalı workIntervals toplamından türetilir', ()=>{
+      const s={duration:999,workIntervals:[{start:1000,end:61000},{start:120000,end:180000}]};
+      equal(sessionClosedIntervalSeconds(s,{fallbackToDuration:true}),120);
+    });
+
+    test('Açık work interval persisted durationa erken süre eklemez', ()=>{
+      const s={duration:60,workIntervals:[{start:1000,end:61000},{start:120000,end:null}]};
+      equal(sessionClosedIntervalSeconds(s,{fallbackToDuration:true}),60);
+    });
+
+    test('Tombstone en yeni silme zamanını korur', ()=>{
+      const original=data;
+      try{
+        data=freshData();
+        recordTombstone('tasks','x',100);
+        recordTombstone('tasks','x',50);
+        equal(data.tombstones.tasks.x,100);
+      }finally{ data=original; }
+    });
+
+    test('Tombstone undo kaydı temizler', ()=>{
+      const original=data;
+      try{
+        data=freshData();
+        recordTombstone('events','e1',123);
+        clearTombstone('events','e1');
+        equal(data.tombstones.events.e1,undefined);
+      }finally{ data=original; }
+    });
+
+
     const passed=results.filter(r=>r.ok).length;
     const failed=results.length-passed;
+
 
     console.groupCollapsed('Test · Unit tests: '+passed+'/'+results.length+' geçti');
     results.forEach(r=>{
