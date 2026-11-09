@@ -326,17 +326,14 @@
   function sessionClosedIntervalSeconds(session,{fallbackToDuration=false}={}){
     if(!session) return 0;
     const intervals=Array.isArray(session.workIntervals) ? session.workIntervals : [];
-    let hasUsableInterval=false;
-    let seconds=0;
-    intervals.forEach(interval=>{
+    const seconds=TimerCore.closedIntervalSeconds(intervals);
+    const hasClosed=intervals.some(interval=>{
       const start=Number(interval?.start);
       const end=interval?.end==null ? null : Number(interval.end);
-      if(!Number.isFinite(start) || !Number.isFinite(end) || end<=start) return;
-      hasUsableInterval=true;
-      seconds += Math.max(0,Math.floor((end-start)/1000));
+      return Number.isFinite(start) && Number.isFinite(end) && end>start;
     });
-    if(!hasUsableInterval && fallbackToDuration) return Math.max(0,Math.round(Number(session.duration)||0));
-    return Math.max(0,Math.round(seconds));
+    if(!hasClosed && fallbackToDuration) return Math.max(0,Math.round(Number(session.duration)||0));
+    return seconds;
   }
 
   function recomputeSessionDuration(session){
@@ -490,9 +487,7 @@
   function todayKey(){ return dateKey(new Date()); }
 
   function nextLocalMidnightMs(ms){
-    const d=new Date(Number(ms)||Date.now());
-    d.setHours(24,0,0,0);
-    return d.getTime();
+    return TimerCore.nextLocalMidnightMs(ms);
   }
 
   function createMidnightContinuationSession(previous,startMs){
@@ -1245,22 +1240,18 @@
   let lastSemanticSnapshot = null;
   let reassertStorageTimer = null;
 
-  const TIMER_MODES=Object.freeze({IDLE:'idle',WORKING:'working',PAUSED:'paused',BREAK:'break'});
-  const TIMER_TRANSITIONS=Object.freeze({
-    idle:new Set(['idle','working','break']),
-    working:new Set(['working','paused','idle']),
-    paused:new Set(['paused','working','idle']),
-    break:new Set(['break','idle','working'])
-  });
+  const TimerCore=window.ProductivityTimerCore;
+  if(!TimerCore) throw new Error('ProductivityTimerCore yüklenemedi');
+
+  const TIMER_MODES=TimerCore.MODES;
+  const TIMER_TRANSITIONS=TimerCore.TRANSITIONS;
 
   function inferredTimerMode(){
-    if(data?.breakState) return TIMER_MODES.BREAK;
-    if(data?.activeSessionId) return data?.isWorking ? TIMER_MODES.WORKING : TIMER_MODES.PAUSED;
-    return TIMER_MODES.IDLE;
+    return TimerCore.inferMode(data);
   }
 
   function canTransitionTimerMode(from,to){
-    return !!TIMER_TRANSITIONS[from]?.has(to);
+    return TimerCore.canTransition(from,to);
   }
 
   function transitionTimerMode(nextMode,options={}){
@@ -1460,7 +1451,90 @@
     }
   }
 
+
+  function cloudStateCounts(state){
+    return {
+      sessions:Object.values(state?.sessionLog||{}).reduce((sum,list)=>sum+(Array.isArray(list)?list.length:0),0),
+      tasks:Array.isArray(state?.tasks)?state.tasks.length:0,
+      events:Array.isArray(state?.events)?state.events.length:0,
+      days:Object.keys(state?.days||{}).length
+    };
+  }
+
+  function cloudStateRisk(localState,remoteState){
+    const local=cloudStateCounts(localState);
+    const remote=cloudStateCounts(remoteState);
+
+    const ratio=(remoteValue,localValue)=>localValue>0 ? remoteValue/localValue : 1;
+    const ratios={
+      sessions:ratio(remote.sessions,local.sessions),
+      tasks:ratio(remote.tasks,local.tasks),
+      events:ratio(remote.events,local.events),
+      days:ratio(remote.days,local.days)
+    };
+
+    const risky=
+      (local.sessions>=10 && ratios.sessions<0.55) ||
+      (local.tasks>=10 && ratios.tasks<0.50) ||
+      (local.days>=14 && ratios.days<0.55) ||
+      (local.sessions>=20 && ratios.sessions<0.30) ||
+      (local.tasks>=20 && ratios.tasks<0.30);
+
+    return {risky:Boolean(risky),local,remote,ratios};
+  }
+
+  function confirmDestructiveCloudReplace(risk){
+    if(!risk?.risky) return Promise.resolve(true);
+
+    const fmt=x=>`Oturum ${x.sessions} · Görev ${x.tasks} · Etkinlik ${x.events} · Gün ${x.days}`;
+
+    return new Promise(resolve=>{
+      const backdrop=document.createElement('div');
+      backdrop.className='modal-backdrop cloud-risk-backdrop show';
+      backdrop.innerHTML=`
+        <div class="modal cloud-risk-modal" role="dialog" aria-modal="true" aria-labelledby="cloudRiskTitle">
+          <div class="modal-header">
+            <div>
+              <h3 id="cloudRiskTitle">⚠️ Olası veri kaybı engellendi</h3>
+              <p class="muted">Buluttaki kayıt daha yeni görünüyor ancak bu cihazdaki veriden belirgin biçimde daha az içerik taşıyor.</p>
+            </div>
+          </div>
+
+          <div class="cloud-risk-compare">
+            <div class="cloud-risk-card">
+              <b>Bu cihaz</b>
+              <span>${escapeHtml(fmt(risk.local))}</span>
+            </div>
+            <div class="cloud-risk-card">
+              <b>Bulut</b>
+              <span>${escapeHtml(fmt(risk.remote))}</span>
+            </div>
+          </div>
+
+          <p class="cloud-risk-note">Otomatik değiştirme durduruldu. Güvenli seçenek bu cihazdaki veriyi korumaktır.</p>
+
+          <div class="cloud-risk-actions">
+            <button type="button" class="btn-secondary" data-action="keep-local">Bu cihazdaki veriyi koru</button>
+            <button type="button" class="btn-danger" data-action="use-cloud">Yine de bulutu kullan</button>
+          </div>
+        </div>`;
+
+      document.body.appendChild(backdrop);
+
+      const finish=value=>{
+        backdrop.remove();
+        resolve(value);
+      };
+
+      backdrop.querySelector('[data-action="keep-local"]').addEventListener('click',()=>finish(false));
+      backdrop.querySelector('[data-action="use-cloud"]').addEventListener('click',()=>finish(true));
+    });
+  }
+
   window.__APP_CLOUD_BRIDGE__ = {
+    cloudStateCounts,
+    cloudStateRisk,
+    confirmDestructiveCloudReplace,
     exportState(){
       return JSON.parse(JSON.stringify(data));
     },
@@ -8193,12 +8267,13 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityTimerCore){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
         uiHelpers: !!window.ProductivityUIHelpers,
-        stateMerge: !!window.ProductivityStateMerge
+        stateMerge: !!window.ProductivityStateMerge,
+        timerCore: !!window.ProductivityTimerCore
       }
     );
   }
@@ -8892,6 +8967,65 @@
       const out=mergeArray([],restored,{t1:200});
       equal(out.length,1);
       equal(out[0].name,'Restore');
+    });
+
+
+    test('TimerCore modülü yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityTimerCore),true);
+    });
+
+    test('TimerCore interval hesabı app helper ile aynıdır', ()=>{
+      const base=Date.now();
+      const intervals=[
+        {start:base,end:base+5*60*1000},
+        {start:base+10*60*1000,end:base+25*60*1000}
+      ];
+      equal(window.ProductivityTimerCore.closedIntervalSeconds(intervals),20*60);
+      equal(sessionClosedIntervalSeconds({workIntervals:intervals}),20*60);
+    });
+
+    test('TimerCore state inference WORKING durumunu doğru bulur', ()=>{
+      const mode=window.ProductivityTimerCore.inferMode({
+        activeSessionId:'s1',
+        isWorking:true,
+        workStart:Date.now(),
+        breakState:null
+      });
+      equal(mode,TIMER_MODES.WORKING);
+    });
+
+    test('TimerCore midnight helper app helper ile aynıdır', ()=>{
+      const ts=new Date(2026,10,8,22,30,0).getTime();
+      equal(window.ProductivityTimerCore.nextLocalMidnightMs(ts),nextLocalMidnightMs(ts));
+    });
+
+
+    test('Destructive sync guard benzer veri hacmini güvenli sayar', ()=>{
+      const local={
+        sessionLog:{a:Array.from({length:20},(_,i)=>({id:'l'+i}))},
+        tasks:Array.from({length:10},(_,i)=>({id:'t'+i})),
+        events:[],
+        days:Object.fromEntries(Array.from({length:20},(_,i)=>['2026-10-'+String(i+1).padStart(2,'0'),{}]))
+      };
+      const remote={
+        sessionLog:{a:Array.from({length:18},(_,i)=>({id:'r'+i}))},
+        tasks:Array.from({length:9},(_,i)=>({id:'t'+i})),
+        events:[],
+        days:Object.fromEntries(Array.from({length:18},(_,i)=>['2026-10-'+String(i+1).padStart(2,'0'),{}]))
+      };
+      equal(cloudStateRisk(local,remote).risky,false);
+    });
+
+    test('Destructive sync guard büyük session kaybını engeller', ()=>{
+      const local={sessionLog:{a:Array.from({length:40},(_,i)=>({id:'l'+i}))},tasks:[],events:[],days:{}};
+      const remote={sessionLog:{a:Array.from({length:5},(_,i)=>({id:'r'+i}))},tasks:[],events:[],days:{}};
+      equal(cloudStateRisk(local,remote).risky,true);
+    });
+
+    test('Destructive sync guard büyük task kaybını engeller', ()=>{
+      const local={sessionLog:{},tasks:Array.from({length:30},(_,i)=>({id:'t'+i})),events:[],days:{}};
+      const remote={sessionLog:{},tasks:Array.from({length:4},(_,i)=>({id:'r'+i})),events:[],days:{}};
+      equal(cloudStateRisk(local,remote).risky,true);
     });
 
     const passed=results.filter(r=>r.ok).length;
