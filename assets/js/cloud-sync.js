@@ -59,43 +59,10 @@
     if(!state) return false;
     return (state.tasks?.length||0)+(state.events?.length||0)+(state.collection?.length||0)+Object.values(state.sessionLog||{}).reduce((n,x)=>n+(Array.isArray(x)?x.length:0),0)>0;
   }
-  function itemKey(item,index){ return item?.id||item?.key||`${item?.name||item?.species||'item'}:${item?.date||item?.completedAt||index}`; }
-  function mergeArray(remote=[],local=[]){
-    const map=new Map();
-    remote.forEach((x,i)=>map.set(itemKey(x,i),clone(x)));
-    local.forEach((x,i)=>{
-      const key=itemKey(x,i);
-      const r=map.get(key);
-      if(!r){ map.set(key,clone(x)); return; }
-      const ru=Number(r.updatedAt||r.completedAt||0), lu=Number(x.updatedAt||x.completedAt||0);
-      map.set(key,clone(lu>=ru?{...r,...x}:{...x,...r}));
-    });
-    return [...map.values()];
-  }
-  function mergeSessionLog(remote={},local={}){
-    const out={};
-    new Set([...Object.keys(remote||{}),...Object.keys(local||{})]).forEach(date=>{
-      out[date]=mergeArray(remote?.[date]||[],local?.[date]||[]);
-    });
-    return out;
-  }
   function mergeStates(remote,local){
-    const out={...clone(remote),...clone(local)};
-    out.tasks=mergeArray(remote.tasks,local.tasks);
-    out.events=mergeArray(remote.events,local.events);
-    out.taskTags=mergeArray(remote.taskTags,local.taskTags);
-    out.collection=mergeArray(remote.collection,local.collection);
-    out.badgeUnlockLog=mergeArray(remote.badgeUnlockLog,local.badgeUnlockLog);
-    out.sessionLog=mergeSessionLog(remote.sessionLog,local.sessionLog);
-    out.days={...clone(remote.days||{}),...clone(local.days||{})};
-    out.totalResists=Math.max(Number(remote.totalResists)||0,Number(local.totalResists)||0);
-    out.totalTodosCompleted=Math.max(Number(remote.totalTodosCompleted)||0,Number(local.totalTodosCompleted)||0);
-    out.bestGoalStreak=Math.max(Number(remote.bestGoalStreak)||0,Number(local.bestGoalStreak)||0);
-    out.treeNumber=Math.max(Number(remote.treeNumber)||1,Number(local.treeNumber)||1);
-    // Aktif timer'ı cihazlar arasında taşımıyoruz; sadece geçmiş veriyi birleştiriyoruz.
-    out.activeSessionId=null; out.activeSessionDate=null; out.isWorking=false; out.workStart=null; out.breakState=null; out.activeTimerOwnerId=null;
-    out.timerState={mode:'idle',sessionId:null,runningSince:null,ownerId:null};
-    return out;
+    const merger=window.ProductivityStateMerge?.mergeStates;
+    if(typeof merger!=='function') throw new Error('State merge modülü yüklenemedi.');
+    return merger(remote||{},local||{});
   }
 
   function setStatus(kind,text){
@@ -125,6 +92,19 @@
   async function push(state,expectedRevision){
     return api('sync-push',{sessionToken:getToken(),deviceName:deviceName(),expectedRevision,state});
   }
+
+  async function allowRemoteReplacement(localState,remoteState,b){
+    const risk=b.cloudStateRisk?.(localState,remoteState);
+    if(!risk?.risky) return true;
+
+    const allow=await b.confirmDestructiveCloudReplace?.(risk);
+    if(allow) return true;
+
+    localStorage.setItem(LS.dirty,'1');
+    setStatus('pending','Bu cihazdaki veri korundu');
+    return false;
+  }
+
   async function syncNow({silent=false,initial=false}={}){
     const b=bridge(); if(!b || !getToken() || syncing || !configured()) return false;
     syncing=true; setStatus('syncing','Senkronize ediliyor…');
@@ -149,8 +129,13 @@
           base=saved.revision;
           suppressDirty=true; b.replaceState(finalState); suppressDirty=false;
         }else{
-          suppressDirty=true; b.replaceState(remoteState); suppressDirty=false;
-          base=Number(remote.revision)||0;
+          const allowRemote=await allowRemoteReplacement(local,remoteState,b);
+          if(allowRemote){
+            suppressDirty=true; b.replaceState(remoteState); suppressDirty=false;
+            base=Number(remote.revision)||0;
+          }else{
+            finalState=local;
+          }
         }
       }else if(Number(remote.revision)>base){
         if(dirty){
@@ -159,8 +144,13 @@
           base=saved.revision;
           suppressDirty=true; b.replaceState(finalState); suppressDirty=false;
         }else{
-          suppressDirty=true; b.replaceState(remoteState); suppressDirty=false;
-          base=Number(remote.revision)||0;
+          const allowRemote=await allowRemoteReplacement(local,remoteState,b);
+          if(allowRemote){
+            suppressDirty=true; b.replaceState(remoteState); suppressDirty=false;
+            base=Number(remote.revision)||0;
+          }else{
+            finalState=local;
+          }
         }
       }else if(dirty){
         try{
@@ -169,6 +159,15 @@
         }catch(err){
           if(err.status===409 && err.body?.state){
             finalState=mergeStates(err.body.state,local);
+            const mergedRisk=b.cloudStateRisk?.(local,finalState);
+            if(mergedRisk?.risky){
+              const allowMerged=await b.confirmDestructiveCloudReplace?.(mergedRisk);
+              if(!allowMerged){
+                localStorage.setItem(LS.dirty,'1');
+                setStatus('pending','Bu cihazdaki veri korundu');
+                return false;
+              }
+            }
             const saved=await push(finalState,Number(err.body.revision)||0);
             base=saved.revision;
             suppressDirty=true; b.replaceState(finalState); suppressDirty=false;
