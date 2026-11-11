@@ -1221,13 +1221,17 @@
   let reassertStorageTimer = null;
 
   const TimerCore=window.ProductivityTimerCore;
-  if(!TimerCore) throw new Error('ProductivityTimerCore yüklenemedi');
-
   const TimerService=window.ProductivityTimerService;
-  if(!TimerService) throw new Error('ProductivityTimerService yüklenemedi');
-
   const TimerControllerFactory=window.ProductivityTimerController;
-  if(!TimerControllerFactory) throw new Error('ProductivityTimerController yüklenemedi');
+
+  if(!TimerCore || !TimerService || !TimerControllerFactory){
+    const missing=[
+      !TimerCore ? 'TimerCore' : null,
+      !TimerService ? 'TimerService' : null,
+      !TimerControllerFactory ? 'TimerController' : null
+    ].filter(Boolean).join(', ');
+    throw new Error('Timer modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
+  }
 
   const TIMER_MODES=TimerCore.MODES;
   const TIMER_TRANSITIONS=TimerCore.TRANSITIONS;
@@ -9205,6 +9209,13 @@
       const merged=mergeSessionIntervalsForDisplay(session);
       equal(merged.length,1);
       equal(merged[0].end,64000);
+    });
+
+
+    test('Timer production bundle üç timer globalini birlikte sağlar', ()=>{
+      equal(Boolean(window.ProductivityTimerCore),true);
+      equal(Boolean(window.ProductivityTimerService),true);
+      equal(Boolean(window.ProductivityTimerController),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
