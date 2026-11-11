@@ -3742,6 +3742,42 @@
     }).filter(interval=>Number.isFinite(interval.start) && Number.isFinite(interval.end) && interval.end>interval.start);
   }
 
+  // Autosave, güvenilir süre hesabı için çalışan oturumu küçük interval parçalarına böler.
+  // Bu ham parçaları saklamaya devam ediyoruz; yalnızca takvim/oturum görünümünde
+  // birbirine bitişik parçaları tek, anlamlı çalışma bloğu olarak gösteriyoruz.
+  const DISPLAY_INTERVAL_MERGE_GAP_MS = 5000;
+
+  function mergeSessionIntervalsForDisplay(session,maxGapMs=DISPLAY_INTERVAL_MERGE_GAP_MS){
+    const intervals=sessionIntervals(session)
+      .slice()
+      .sort((a,b)=>a.start-b.start);
+
+    if(intervals.length<2) return intervals;
+
+    const merged=[];
+    intervals.forEach(interval=>{
+      const current={
+        start:Number(interval.start),
+        end:Number(interval.end),
+        legacyApprox:!!interval.legacyApprox
+      };
+      const previous=merged[merged.length-1];
+
+      if(
+        previous &&
+        current.start <= previous.end + maxGapMs
+      ){
+        previous.end=Math.max(previous.end,current.end);
+        previous.legacyApprox=previous.legacyApprox || current.legacyApprox;
+        return;
+      }
+
+      merged.push(current);
+    });
+
+    return merged;
+  }
+
   function workIntervalsForDate(key){
     const dayStart=new Date(key+'T00:00:00').getTime();
     const dayEnd=new Date(key+'T00:00:00').setDate(new Date(key+'T00:00:00').getDate()+1);
@@ -3749,7 +3785,7 @@
     Object.values(data.sessionLog||{}).forEach(list=>{
       if(!Array.isArray(list)) return;
       list.forEach(session=>{
-        sessionIntervals(session).forEach(interval=>{
+        mergeSessionIntervalsForDisplay(session).forEach(interval=>{
           const start=Math.max(dayStart,interval.start);
           const end=Math.min(dayEnd,interval.end);
           if(end<=start) return;
@@ -9125,6 +9161,50 @@
       fake.finish();
       equal(session.endedAt,21000);
       equal(transition,TIMER_MODES.IDLE);
+    });
+
+
+    test('Çalışma zamanı görünümü bitişik autosave interval parçalarını birleştirir', ()=>{
+      const session={
+        id:'display-merge',
+        workIntervals:[
+          {start:1000,end:31000},
+          {start:31000,end:61000},
+          {start:61000,end:91000}
+        ],
+        duration:90
+      };
+      const merged=mergeSessionIntervalsForDisplay(session);
+      equal(merged.length,1);
+      equal(merged[0].start,1000);
+      equal(merged[0].end,91000);
+    });
+
+    test('Çalışma zamanı görünümü gerçek molayı ayrı blok bırakır', ()=>{
+      const session={
+        id:'display-pause',
+        workIntervals:[
+          {start:1000,end:61000},
+          {start:71000,end:131000}
+        ],
+        duration:120
+      };
+      const merged=mergeSessionIntervalsForDisplay(session);
+      equal(merged.length,2);
+    });
+
+    test('Çalışma zamanı görünümü küçük autosave jitter boşluğunu birleştirir', ()=>{
+      const session={
+        id:'display-jitter',
+        workIntervals:[
+          {start:1000,end:31000},
+          {start:34000,end:64000}
+        ],
+        duration:60
+      };
+      const merged=mergeSessionIntervalsForDisplay(session);
+      equal(merged.length,1);
+      equal(merged[0].end,64000);
     });
 
     const passed=results.filter(r=>r.ok).length;
