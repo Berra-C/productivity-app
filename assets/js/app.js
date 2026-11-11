@@ -493,28 +493,9 @@
   function createMidnightContinuationSession(previous,startMs){
     const key=dateKey(new Date(startMs));
     const list=getSessionsFor(key);
-    const session={
-      id:'s'+startMs+'_'+Math.random().toString(36).slice(2,7),
-      name:previous?.name || 'Oturum',
-      subject:previous?.subject || 'Genel',
-      createdAt:startMs,
-      startedAt:startMs,
-      endedAt:null,
-      workIntervals:[{start:startMs,end:null}],
-      hidden:false,
-      duration:0,
-      distractions:0,
-      distractionCategories:{},
-      todos:[],
-      targetSeconds:Number(previous?.targetSeconds)||null,
-      targetReached:false,
-      breakNotified:false,
-      updatedAt:Date.now(),
-      milestonesHit:[],
-      continuedFromMidnight:true
-    };
+    const session=TimerService.createMidnightContinuation(previous,startMs);
     list.push(session);
-    recomputeSessionDay(key);
+    getDay(key).sessions += 1;
     data.activeSessionId=session.id;
     data.activeSessionDate=key;
     return session;
@@ -538,8 +519,7 @@
       if(!current) break;
 
       const seconds=Math.max(0,Math.floor((boundary-startMs)/1000));
-      closeOpenWorkInterval(current,boundary);
-      recomputeSessionDuration(current);
+      TimerService.finishSession(current,boundary);
       recomputeSessionDay(dateKey(new Date(startMs)));
       if(seconds>0) addTreeGrowth((seconds/60)*GROWTH_PER_WORK_MIN);
       current.endedAt=boundary;
@@ -1242,6 +1222,12 @@
 
   const TimerCore=window.ProductivityTimerCore;
   if(!TimerCore) throw new Error('ProductivityTimerCore yüklenemedi');
+
+  const TimerService=window.ProductivityTimerService;
+  if(!TimerService) throw new Error('ProductivityTimerService yüklenemedi');
+
+  const TimerControllerFactory=window.ProductivityTimerController;
+  if(!TimerControllerFactory) throw new Error('ProductivityTimerController yüklenemedi');
 
   const TIMER_MODES=TimerCore.MODES;
   const TIMER_TRANSITIONS=TimerCore.TRANSITIONS;
@@ -3917,6 +3903,35 @@
     }
   }
 
+
+  const timerController=TimerControllerFactory.create({
+    now:()=>Date.now(),
+    todayKey,
+    getTodaySessionCount:()=>getSessionsToday().length,
+    addSession:(key,session)=>getSessionsFor(key).push(session),
+    getActiveSession:()=>data.activeSessionId ? findSession(data.activeSessionId) : null,
+    getSessionDateKey:sessionId=>findSessionDateKey(sessionId),
+    recomputeSessionDay,
+    transitionMode:(mode,options)=>transitionTimerMode(mode,options),
+    persist:options=>saveData(options),
+    ensureReady:()=>ensureBackgroundAlarmUnlocked(),
+    isBreakActive:()=>isBreakActive(),
+    stopBreak:()=>stopBreak(),
+    rememberSubject,
+    ownerId:()=>TAB_ID,
+    touchHeartbeat:()=>touchTabHeartbeat(),
+    isWorking:()=>Boolean(data.isWorking),
+    beforePause:()=>flushWorkTime(),
+    beforeFinish:()=>{
+      const completed=flushWorkTime();
+      TimerService.closeOpenInterval(
+        data.activeSessionId ? findSession(data.activeSessionId) : null,
+        Date.now()
+      );
+      return completed;
+    }
+  });
+
   function renderWorkButtonRow(){
     let html;
     if(isBreakActive()){
@@ -3935,46 +3950,12 @@
 
   // Yeni bir oturum başlatır (sadece aktif/duraklatılmış oturum yokken çağrılır)
   function startWorking(subject, targetMinutes, seedTodoText=null){
-    ensureBackgroundAlarmUnlocked();
-    if(isBreakActive()) stopBreak();
-    const sessionStartedAt = Date.now();
-    const todaySessions = getSessionsToday();
-    const cleanSubject = (subject || '').trim();
-    if(cleanSubject) rememberSubject(cleanSubject);
-    const newSession = {
-      id:'s'+sessionStartedAt+'_'+Math.random().toString(36).slice(2,7), name:'Oturum ' + (todaySessions.length+1),
-      subject: cleanSubject || 'Genel',
-      createdAt: sessionStartedAt,
-      startedAt: sessionStartedAt,
-      endedAt: null,
-      workIntervals:[{start:sessionStartedAt,end:null}],
-      hidden: false,
-      duration:0, distractions:0, distractionCategories:{},
-      todos: seedTodoText ? [{id:'t'+sessionStartedAt+'seed', text:String(seedTodoText).trim().slice(0,80), done:false, linkedTaskId:null}] : [],
-      targetSeconds: targetMinutes ? targetMinutes*60 : null,
-      targetReached: false,
-      breakNotified: false,
-      updatedAt: Date.now(),
-      milestonesHit: []
-    };
-    const sessionDate=todayKey();
-    getSessionsFor(sessionDate).push(newSession);
-    recomputeSessionDay(sessionDate);
-    transitionTimerMode(TIMER_MODES.WORKING,{
-      sessionId:newSession.id,
-      sessionDate,
-      runningSince:sessionStartedAt,
-      ownerId:TAB_ID
-    });
-    touchTabHeartbeat();
-    // Oturum kaydı kritik bir oluşturma işlemidir. Özellikle günün ilk oturumunda,
-    // konu önerisi kaydı gibi hemen önce yapılan bir save'in bunu yutmasına izin verme.
-    saveData({force:true});
+    const result=timerController.start({subject,targetMinutes,seedTodoText});
+    const newSession=result.session;
 
     expandedSessions.add(newSession.id);
-
     renderWorkButtonRow();
-    lastAutosave = Date.now();
+    lastAutosave=Date.now();
     ensureTimerScheduler();
     renderToday(false);
     renderSessionList();
@@ -3984,44 +3965,29 @@
 
   // Oturumu duraklatır ama aynı oturumu (süresiyle birlikte) canlı tutar
   function pauseWorking(){
-    const beforeBadges = getUnlockedBadgeMap();
-    const beforeLevel = getLevelInfo().level;
-    const completedList = flushWorkTime();
-    const pausingSession=data.activeSessionId ? findSession(data.activeSessionId) : null;
-    closeOpenWorkInterval(pausingSession,Date.now());
-    if(pausingSession){
-      recomputeSessionDuration(pausingSession);
-      recomputeSessionDay(findSessionDateKey(pausingSession.id) || todayKey());
-      touchRecord(pausingSession);
-      transitionTimerMode(TIMER_MODES.PAUSED,{sessionId:pausingSession.id});
-    }
-    saveData();
+    const beforeBadges=getUnlockedBadgeMap();
+    const beforeLevel=getLevelInfo().level;
+    const result=timerController.pause();
+    const completedList=result.completedList || [];
+
     renderWorkButtonRow();
-    const pausedSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
-    el.workTimer.textContent = formatRingTime(pausedSession ? pausedSession.duration : 0);
+    const pausedSession=data.activeSessionId ? findSession(data.activeSessionId) : null;
+    el.workTimer.textContent=formatRingTime(pausedSession ? pausedSession.duration : 0);
     renderToday(completedList.length > 0);
     renderSessionList();
     updateIntentDisplay();
     celebrateTreeCompletions(completedList);
     showToast('Duraklatıldı. "Devam Et" ile kaldığın yerden sürdürebilirsin.', true);
-    reportProgress(beforeLevel, beforeBadges);
+    reportProgress(beforeLevel,beforeBadges);
   }
 
   // Duraklatılmış oturuma kaldığı yerden devam eder — yeni oturum açmaz
   function resumeWorking(){
-    ensureBackgroundAlarmUnlocked();
-    if(!data.activeSessionId || !findSession(data.activeSessionId)) return;
-    const resumeAt=Date.now();
-    openWorkInterval(findSession(data.activeSessionId),resumeAt);
-    transitionTimerMode(TIMER_MODES.WORKING,{
-      sessionId:data.activeSessionId,
-      runningSince:resumeAt,
-      ownerId:TAB_ID
-    });
-    touchTabHeartbeat();
-    saveData();
+    const result=timerController.resume();
+    if(!result.session) return;
+
     renderWorkButtonRow();
-    lastAutosave = Date.now();
+    lastAutosave=Date.now();
     ensureTimerScheduler();
     renderToday(false);
     renderSessionList();
@@ -4239,27 +4205,15 @@
   function endSession(){
     // Oturum hangi arayüzden bitirilirse bitirilsin Focus Mode kapalı kalmalı.
     closeFocusMode();
-    const beforeBadges = getUnlockedBadgeMap();
-    const beforeLevel = getLevelInfo().level;
-    let completedList = [];
-    if(data.isWorking){
-      completedList = flushWorkTime();
-      closeOpenWorkInterval(data.activeSessionId ? findSession(data.activeSessionId) : null, Date.now());
-    }
-    const endingSession = data.activeSessionId ? findSession(data.activeSessionId) : null;
-    if(endingSession){
-      closeOpenWorkInterval(endingSession, Date.now());
-      recomputeSessionDuration(endingSession);
-      recomputeSessionDay(findSessionDateKey(endingSession.id) || todayKey());
-      if(!endingSession.endedAt) endingSession.endedAt = Date.now();
-      touchRecord(endingSession);
-    }
-    transitionTimerMode(TIMER_MODES.IDLE);
-    saveData();
+    const beforeBadges=getUnlockedBadgeMap();
+    const beforeLevel=getLevelInfo().level;
+    const result=timerController.finish();
+    const completedList=result.completedList || [];
+
     celebrateTreeCompletions(completedList);
     renderSessionList();
     updateIntentDisplay();
-    reportProgress(beforeLevel, beforeBadges);
+    reportProgress(beforeLevel,beforeBadges);
     showToast('Oturum bitirildi. Şimdi kısa bir mola zamanı ☕', true);
     startBreak(5);
   }
@@ -8267,13 +8221,15 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityTimerCore){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
         uiHelpers: !!window.ProductivityUIHelpers,
         stateMerge: !!window.ProductivityStateMerge,
-        timerCore: !!window.ProductivityTimerCore
+        timerCore: !!window.ProductivityTimerCore,
+        timerService: !!window.ProductivityTimerService,
+        timerController: !!window.ProductivityTimerController
       }
     );
   }
@@ -9026,6 +8982,149 @@
       const local={sessionLog:{},tasks:Array.from({length:30},(_,i)=>({id:'t'+i})),events:[],days:{}};
       const remote={sessionLog:{},tasks:Array.from({length:4},(_,i)=>({id:'r'+i})),events:[],days:{}};
       equal(cloudStateRisk(local,remote).risky,true);
+    });
+
+
+    test('TimerService modülü yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityTimerService),true);
+    });
+
+    test('TimerService yeni sessionı açık interval ile oluşturur', ()=>{
+      const now=1000000;
+      const s=window.ProductivityTimerService.createSession({
+        now,
+        name:'Test',
+        subject:'Matematik',
+        targetSeconds:1500
+      });
+      equal(s.startedAt,now);
+      equal(s.workIntervals.length,1);
+      equal(s.workIntervals[0].start,now);
+      equal(s.workIntervals[0].end,null);
+      equal(s.duration,0);
+    });
+
+    test('TimerService pause açık intervalı kapatır ve duration hesaplar', ()=>{
+      const s={
+        workIntervals:[{start:1000,end:null}],
+        duration:0,
+        updatedAt:1000
+      };
+      window.ProductivityTimerService.pauseSession(s,11000);
+      equal(s.workIntervals[0].end,11000);
+      equal(s.duration,10);
+    });
+
+    test('TimerService resume yeni açık interval açar', ()=>{
+      const s={
+        workIntervals:[{start:1000,end:11000}],
+        duration:10,
+        updatedAt:11000
+      };
+      window.ProductivityTimerService.resumeSession(s,21000);
+      equal(s.workIntervals.length,2);
+      equal(s.workIntervals[1].start,21000);
+      equal(s.workIntervals[1].end,null);
+    });
+
+    test('TimerService finish endedAt ve duration üretir', ()=>{
+      const s={
+        workIntervals:[{start:1000,end:null}],
+        duration:0,
+        endedAt:null,
+        updatedAt:1000
+      };
+      window.ProductivityTimerService.finishSession(s,61000);
+      equal(s.duration,60);
+      equal(s.endedAt,61000);
+    });
+
+
+    test('TimerController modülü yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityTimerController),true);
+    });
+
+    test('TimerController start lifecycle sırasını yürütür', ()=>{
+      const sessions=[];
+      const transitions=[];
+      const saves=[];
+      const fake=window.ProductivityTimerController.create({
+        now:()=>1000,
+        todayKey:()=>'2026-11-10',
+        getTodaySessionCount:()=>2,
+        addSession:(key,session)=>sessions.push({key,session}),
+        getActiveSession:()=>sessions[0]?.session || null,
+        getSessionDateKey:()=> '2026-11-10',
+        recomputeSessionDay:()=>{},
+        transitionMode:(mode,options)=>{ transitions.push({mode,options}); return true; },
+        persist:options=>{ saves.push(options||{}); return true; },
+        ownerId:()=> 'tab-test',
+        touchHeartbeat:()=>{},
+        isWorking:()=>false
+      });
+      const result=fake.start({subject:'Matematik',targetMinutes:25});
+      equal(result.session.name,'Oturum 3');
+      equal(result.session.subject,'Matematik');
+      equal(result.session.targetSeconds,1500);
+      equal(transitions[0].mode,TIMER_MODES.WORKING);
+      equal(saves.length,1);
+      equal(Boolean(saves[0].force),true);
+    });
+
+    test('TimerController pause lifecycle intervalı kapatır', ()=>{
+      const session={
+        id:'s1',
+        workIntervals:[{start:1000,end:null}],
+        duration:0,
+        updatedAt:1000
+      };
+      let transition=null;
+      let saved=0;
+      const fake=window.ProductivityTimerController.create({
+        now:()=>11000,
+        todayKey:()=>'2026-11-10',
+        getTodaySessionCount:()=>1,
+        addSession:()=>{},
+        getActiveSession:()=>session,
+        getSessionDateKey:()=> '2026-11-10',
+        recomputeSessionDay:()=>{},
+        transitionMode:(mode)=>{ transition=mode; return true; },
+        persist:()=>{ saved+=1; return true; },
+        beforePause:()=>['tree'],
+        isWorking:()=>true
+      });
+      const result=fake.pause();
+      equal(session.duration,10);
+      equal(transition,TIMER_MODES.PAUSED);
+      equal(result.completedList.length,1);
+      equal(saved,1);
+    });
+
+    test('TimerController finish IDLE durumuna geçirir', ()=>{
+      const session={
+        id:'s1',
+        workIntervals:[{start:1000,end:11000}],
+        duration:10,
+        endedAt:null,
+        updatedAt:11000
+      };
+      let transition=null;
+      const fake=window.ProductivityTimerController.create({
+        now:()=>21000,
+        todayKey:()=>'2026-11-10',
+        getTodaySessionCount:()=>1,
+        addSession:()=>{},
+        getActiveSession:()=>session,
+        getSessionDateKey:()=> '2026-11-10',
+        recomputeSessionDay:()=>{},
+        transitionMode:(mode)=>{ transition=mode; return true; },
+        persist:()=>true,
+        beforeFinish:()=>[],
+        isWorking:()=>false
+      });
+      fake.finish();
+      equal(session.endedAt,21000);
+      equal(transition,TIMER_MODES.IDLE);
     });
 
     const passed=results.filter(r=>r.ok).length;
