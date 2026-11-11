@@ -356,6 +356,98 @@
 })();
 /* === v75 INLINE TIMER RUNTIME END === */
 
+/* === v76 INLINE SESSION REPOSITORY START === */
+(() => {
+  'use strict';
+
+  function create({getState,dateKeyFromMs,persist}={}){
+    if(typeof getState!=='function') throw new Error('SessionRepository getState gerekli');
+    if(typeof dateKeyFromMs!=='function') throw new Error('SessionRepository dateKeyFromMs gerekli');
+
+    function state(){
+      const value=getState();
+      if(!value || typeof value!=='object') throw new Error('SessionRepository state bulunamadı');
+      if(!value.sessionLog || typeof value.sessionLog!=='object' || Array.isArray(value.sessionLog)) value.sessionLog={};
+      return value;
+    }
+
+    function forDate(key){
+      const s=state();
+      if(!Array.isArray(s.sessionLog[key])) s.sessionLog[key]=[];
+      return s.sessionLog[key];
+    }
+
+    function byId(id){
+      if(!id) return null;
+      const s=state();
+      for(const [key,sessions] of Object.entries(s.sessionLog||{})){
+        if(!Array.isArray(sessions)) continue;
+        const index=sessions.findIndex(item=>item?.id===id);
+        if(index>=0) return {key,index,session:sessions[index]};
+      }
+      return null;
+    }
+
+    function add(key,session){
+      if(!key || !session) return null;
+      forDate(key).push(session);
+      return session;
+    }
+
+    function removeById(id){
+      const found=byId(id);
+      if(!found) return null;
+      const list=forDate(found.key);
+      return list.splice(found.index,1)[0] || null;
+    }
+
+    function repairDate(key){
+      const s=state();
+      const target=forDate(key);
+      const seen=new Set(target.map(session=>session?.id).filter(Boolean));
+      let moved=0;
+
+      for(const [otherKey,sessions] of Object.entries(s.sessionLog||{})){
+        if(otherKey===key || !Array.isArray(sessions)) continue;
+        for(let i=sessions.length-1;i>=0;i--){
+          const session=sessions[i];
+          const started=Number(session?.startedAt);
+          if(!session?.id || !Number.isFinite(started) || dateKeyFromMs(started)!==key || seen.has(session.id)) continue;
+          sessions.splice(i,1);
+          target.push(session);
+          seen.add(session.id);
+          moved+=1;
+        }
+      }
+
+      if(moved>0 && typeof persist==='function') persist({force:true});
+      return {sessions:target,moved,changed:moved>0};
+    }
+
+    function allEntries(){
+      const out=[];
+      const s=state();
+      for(const [key,sessions] of Object.entries(s.sessionLog||{})){
+        if(!Array.isArray(sessions)) continue;
+        sessions.forEach((session,index)=>out.push({key,index,session}));
+      }
+      return out;
+    }
+
+    return Object.freeze({
+      forDate,
+      byId,
+      add,
+      removeById,
+      repairDate,
+      allEntries
+    });
+  }
+
+  window.ProductivitySessionRepository={create};
+})();
+/* === v76 INLINE SESSION REPOSITORY END === */
+
 
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
@@ -1581,14 +1673,16 @@
   const TimerCore=window.ProductivityTimerCore;
   const TimerService=window.ProductivityTimerService;
   const TimerControllerFactory=window.ProductivityTimerController;
+  const SessionRepositoryFactory=window.ProductivitySessionRepository;
 
-  if(!TimerCore || !TimerService || !TimerControllerFactory){
+  if(!TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory){
     const missing=[
       !TimerCore ? 'TimerCore' : null,
       !TimerService ? 'TimerService' : null,
-      !TimerControllerFactory ? 'TimerController' : null
+      !TimerControllerFactory ? 'TimerController' : null,
+      !SessionRepositoryFactory ? 'SessionRepository' : null
     ].filter(Boolean).join(', ');
-    throw new Error('Timer modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
+    throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
 
   const TIMER_MODES=TimerCore.MODES;
@@ -1962,20 +2056,6 @@
         return data.events.splice(index,1)[0] || null;
       }
     },
-    sessions:{
-      forDate:key=>{
-        if(!Array.isArray(data.sessionLog[key])) data.sessionLog[key]=[];
-        return data.sessionLog[key];
-      },
-      byId(id){
-        for(const [key,sessions] of Object.entries(data.sessionLog||{})){
-          if(!Array.isArray(sessions)) continue;
-          const session=sessions.find(item=>item.id===id);
-          if(session) return {key,session};
-        }
-        return null;
-      }
-    },
     days:{
       byKey:key=>data.days[key] || null,
       ensure(key){
@@ -2019,38 +2099,26 @@
     return data.days[key];
   }
 
+  const SessionRepository=SessionRepositoryFactory.create({
+    getState:()=>data,
+    dateKeyFromMs:ms=>dateKey(new Date(ms)),
+    persist:options=>saveData(options)
+  });
+
   function getSessionsFor(key){
-    return DataRepository.sessions.forDate(key);
+    return SessionRepository.forDate(key);
   }
   function repairTodaySessionBucket(){
-    const key=todayKey();
-    const today=getSessionsFor(key);
-    const seen=new Set(today.map(session=>session?.id).filter(Boolean));
-    let changed=false;
-    for(const [otherKey,sessions] of Object.entries(data.sessionLog||{})){
-      if(otherKey===key || !Array.isArray(sessions)) continue;
-      for(let i=sessions.length-1;i>=0;i--){
-        const session=sessions[i];
-        const started=Number(session?.startedAt);
-        if(!session?.id || !Number.isFinite(started) || dateKey(new Date(started))!==key || seen.has(session.id)) continue;
-        sessions.splice(i,1);
-        today.push(session);
-        seen.add(session.id);
-        changed=true;
-      }
-    }
-    if(changed) saveData({force:true});
-    return today;
+    return SessionRepository.repairDate(todayKey()).sessions;
   }
   function getSessionsToday(){ return repairTodaySessionBucket(); }
   function findSession(id){
-    if(!id) return null;
-    const found=DataRepository.sessions.byId(id);
+    const found=SessionRepository.byId(id);
     return found ? found.session : null;
   }
 
   function findSessionDateKey(id){
-    const found=DataRepository.sessions.byId(id);
+    const found=SessionRepository.byId(id);
     return found ? found.key : null;
   }
 
@@ -9034,12 +9102,12 @@
       }
     });
 
-    test('DataRepository session ID ile kayıt ve tarih döndürür', ()=>{
+    test('SessionRepository session ID ile kayıt ve tarih döndürür', ()=>{
       const oldData=data;
       try{
         data=freshData();
         data.sessionLog['2026-09-12']=[{id:'session-test'}];
-        const found=DataRepository.sessions.byId('session-test');
+        const found=SessionRepository.byId('session-test');
         equal(found.key,'2026-09-12');
         equal(found.session.id,'session-test');
       }finally{
@@ -9581,6 +9649,55 @@
       equal(Boolean(window.ProductivityTimerCore),true);
       equal(Boolean(window.ProductivityTimerService),true);
       equal(Boolean(window.ProductivityTimerController),true);
+    });
+
+
+    test('SessionRepository yanlış gün bucketındaki oturumu doğru güne taşır', ()=>{
+      const mock={sessionLog:{
+        '2026-11-10':[],
+        '2026-11-09':[{id:'move-me',startedAt:new Date('2026-11-10T09:00:00').getTime()}]
+      }};
+      let persisted=0;
+      const repo=window.ProductivitySessionRepository.create({
+        getState:()=>mock,
+        dateKeyFromMs:ms=>{
+          const d=new Date(ms);
+          return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+        },
+        persist:()=>{ persisted+=1; }
+      });
+      const result=repo.repairDate('2026-11-10');
+      equal(result.moved,1);
+      equal(result.sessions[0].id,'move-me');
+      equal(mock.sessionLog['2026-11-09'].length,0);
+      equal(persisted,1);
+    });
+
+    test('SessionRepository removeById doğru oturumu kaldırır', ()=>{
+      const mock={sessionLog:{'2026-11-10':[{id:'keep'},{id:'remove'}]}};
+      const repo=window.ProductivitySessionRepository.create({
+        getState:()=>mock,
+        dateKeyFromMs:()=> '2026-11-10'
+      });
+      const removed=repo.removeById('remove');
+      equal(removed.id,'remove');
+      equal(repo.forDate('2026-11-10').length,1);
+      equal(repo.forDate('2026-11-10')[0].id,'keep');
+    });
+
+    test('SessionRepository allEntries sessionları tarih bilgisiyle döndürür', ()=>{
+      const mock={sessionLog:{
+        '2026-11-10':[{id:'a'}],
+        '2026-11-11':[{id:'b'}]
+      }};
+      const repo=window.ProductivitySessionRepository.create({
+        getState:()=>mock,
+        dateKeyFromMs:()=> '2026-11-10'
+      });
+      const rows=repo.allEntries();
+      equal(rows.length,2);
+      equal(rows[1].key,'2026-11-11');
+      equal(rows[1].session.id,'b');
     });
 
     const passed=results.filter(r=>r.ok).length;
