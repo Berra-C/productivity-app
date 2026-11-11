@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v101';
+const CACHE_VERSION = 'v103';
 const STATIC_CACHE = `productivity-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `productivity-runtime-${CACHE_VERSION}`;
 const CDN_CACHE = `productivity-cdn-${CACHE_VERSION}`;
@@ -10,6 +10,9 @@ const APP_SHELL = [
   './assets/css/app.css',
   './assets/js/modules/ui-helpers.js',
   './assets/js/modules/state-merge.js',
+  './assets/js/modules/timer-core.js',
+  './assets/js/modules/timer-service.js',
+  './assets/js/modules/timer-controller.js',
   './assets/js/app.js',
   './assets/js/cloud-config.js',
   './assets/js/cloud-sync.js',
