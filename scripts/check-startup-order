@@ -1,0 +1,83 @@
+const fs = require('fs');
+const path = require('path');
+
+const root = path.resolve(__dirname, '..');
+const source = fs.readFileSync(path.join(root, 'assets/js/app-main.js'), 'utf8');
+
+const declarations = [
+  ['StatePersistence', 'const StatePersistence=window.ProductivityStatePersistence;'],
+  ['StateWriterFactory', 'const StateWriterFactory=window.ProductivityStateWriter;'],
+  ['TimerCore', 'const TimerCore=window.ProductivityTimerCore;'],
+  ['TimerService', 'const TimerService=window.ProductivityTimerService;'],
+  ['TimerControllerFactory', 'const TimerControllerFactory=window.ProductivityTimerController;'],
+  ['SessionRepositoryFactory', 'const SessionRepositoryFactory=window.ProductivitySessionRepository;'],
+  ['TaskRepositoryFactory', 'const TaskRepositoryFactory=window.ProductivityTaskRepository;'],
+  ['EventRepositoryFactory', 'const EventRepositoryFactory=window.ProductivityEventRepository;'],
+  ['GamificationCore', 'const GamificationCore=window.ProductivityGamificationCore;'],
+  ['TreeService', 'const TreeService=window.ProductivityTreeService;'],
+  ['AnalyticsCore', 'const AnalyticsCore=window.ProductivityAnalyticsCore;'],
+  ['CalendarCore', 'const CalendarCore=window.ProductivityCalendarCore;'],
+  ['ViewFormatters', 'const ViewFormatters=window.ProductivityViewFormatters;'],
+  ['SummaryView', 'const SummaryView=window.ProductivitySummaryView;'],
+  ['CalendarView', 'const CalendarView=window.ProductivityCalendarView;'],
+  ['StatsView', 'const StatsView=window.ProductivityStatsView;'],
+  ['TaskView', 'const TaskView=window.ProductivityTaskView;'],
+  ['CollectionView', 'const CollectionView=window.ProductivityCollectionView;'],
+  ['SessionView', 'const SessionView=window.ProductivitySessionView;'],
+  ['FocusView', 'const FocusView=window.ProductivityFocusView;'],
+  ['WorkControlsView', 'const WorkControlsView=window.ProductivityWorkControlsView;']
+];
+
+const consumers = [
+  ['AppStorageRepository', 'const AppStorageRepository = StatePersistence.createRepository('],
+  ['data load', 'let data = loadData();'],
+  ['StateWriter initialization', 'stateWriter=StateWriterFactory.create(']
+];
+
+let failed = false;
+
+for (const [name, declarationText] of declarations) {
+  const declarationIndex = source.indexOf(declarationText);
+
+  if (declarationIndex < 0) {
+    console.error(`missing module declaration: ${name}`);
+    failed = true;
+    continue;
+  }
+
+  for (const [consumerName, consumerText] of consumers) {
+    const consumerIndex = source.indexOf(consumerText);
+
+    if (consumerIndex < 0) {
+      console.error(`missing startup consumer: ${consumerName}`);
+      failed = true;
+      continue;
+    }
+
+    if (declarationIndex > consumerIndex) {
+      console.error(
+        `${name} is declared after ${consumerName}; lexical TDZ startup risk`
+      );
+      failed = true;
+    }
+  }
+}
+
+const storageIndex = source.indexOf("const STORAGE_KEY = 'direncAgaci_v2';");
+const backupIndex = source.indexOf("const BACKUP_KEY = STORAGE_KEY + '_backup';");
+const repositoryIndex = source.indexOf(
+  'const AppStorageRepository = StatePersistence.createRepository('
+);
+
+if (
+  storageIndex < 0 ||
+  backupIndex < 0 ||
+  repositoryIndex < 0 ||
+  !(storageIndex < backupIndex && backupIndex < repositoryIndex)
+) {
+  console.error('BACKUP_KEY must be initialized before AppStorageRepository');
+  failed = true;
+}
+
+if (failed) process.exit(1);
+console.log('startup declaration order checks passed');
