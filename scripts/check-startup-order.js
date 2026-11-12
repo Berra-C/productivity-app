@@ -30,7 +30,12 @@ const declarations = [
   ['SessionView', 'const SessionView=window.ProductivitySessionView;'],
   ['FocusView', 'const FocusView=window.ProductivityFocusView;'],
   ['WorkControlsView', 'const WorkControlsView=window.ProductivityWorkControlsView;'],
-  ['ModalService', 'const ModalService=window.ProductivityModalService;']
+  ['ModalService', 'const ModalService=window.ProductivityModalService;'],
+  ['StateMigrationFactory', 'const StateMigrationFactory=window.ProductivityStateMigration;'],
+  ['RecoveryStoreFactory', 'const RecoveryStoreFactory=window.ProductivityRecoveryStore;'],
+  ['StateRecoveryServiceFactory', 'const StateRecoveryServiceFactory=window.ProductivityStateRecoveryService;'],
+  ['DestructiveSyncGuard', 'const DestructiveSyncGuard=window.ProductivityDestructiveSyncGuard;'],
+  ['ExternalStateService', 'const ExternalStateService=window.ProductivityExternalStateService;']
 ];
 
 const consumers = [
@@ -81,6 +86,22 @@ if (
   !(storageIndex < backupIndex && backupIndex < repositoryIndex)
 ) {
   console.error('BACKUP_KEY must be initialized before AppStorageRepository');
+  failed = true;
+}
+
+
+const migrationInstance = source.indexOf('const StateMigration=StateMigrationFactory.create(');
+const recoveryStoreInstance = source.indexOf('const RecoveryStore=RecoveryStoreFactory.create(');
+const repositoryInit = source.indexOf('const AppStorageRepository = StatePersistence.createRepository(');
+
+if (
+  migrationInstance < 0 ||
+  recoveryStoreInstance < 0 ||
+  repositoryInit < 0 ||
+  migrationInstance > repositoryInit ||
+  recoveryStoreInstance > repositoryInit
+) {
+  console.error('StateMigration and RecoveryStore must initialize before AppStorageRepository');
   failed = true;
 }
 
