@@ -29,8 +29,11 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 12. **Tree service** — tree growth, completion and rollback mutations.
 13. **Analytics core** — focus, planning, productive-hour and weekly review calculations.
 14. **Calendar core** — calendar time-window and work-interval projection rules.
-15. **App main** — composition root, UI rendering and remaining feature orchestration.
-16. **Cloud sync** — optional cloud transport and account synchronization.
+15. **View formatters** — shared display formatting and trend markup.
+16. **Summary view** — pure weekly/monthly summary HTML builder.
+17. **Calendar view** — pure month/year/week/agenda HTML builders and overlap layout.
+18. **App main** — composition root, DOM binding and remaining feature orchestration.
+19. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -48,8 +51,13 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Split calendar and analytics rendering from the main composition file; core calculations are now extracted.
+- Continue splitting remaining statistics/chart DOM rendering from the main composition file.
 
 ## Change log organization
 
 Version change notes are stored under `changes/` to keep the project root clean.
+
+## View layer rule
+
+View modules build deterministic HTML or layout data and do not attach event listeners.
+`app-main.js` owns DOM insertion, event binding, modal behavior, scrolling and browser side effects.
