@@ -4116,8 +4116,60 @@
 /* ===== assets/js/app-main.js ===== */
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
+  const BACKUP_KEY = STORAGE_KEY + '_backup';
   const OLD_KEY = 'direncAgaci_v1';
   const SCHEMA_VERSION = 46;
+
+  // Runtime modules must be initialized before repositories/state consume them.
+  // Startup-order checks enforce this invariant.
+  const StatePersistence=window.ProductivityStatePersistence;
+  const StateWriterFactory=window.ProductivityStateWriter;
+  const TimerCore=window.ProductivityTimerCore;
+  const TimerService=window.ProductivityTimerService;
+  const TimerControllerFactory=window.ProductivityTimerController;
+  const SessionRepositoryFactory=window.ProductivitySessionRepository;
+  const TaskRepositoryFactory=window.ProductivityTaskRepository;
+  const EventRepositoryFactory=window.ProductivityEventRepository;
+  const GamificationCore=window.ProductivityGamificationCore;
+  const TreeService=window.ProductivityTreeService;
+  const AnalyticsCore=window.ProductivityAnalyticsCore;
+  const CalendarCore=window.ProductivityCalendarCore;
+  const ViewFormatters=window.ProductivityViewFormatters;
+  const SummaryView=window.ProductivitySummaryView;
+  const CalendarView=window.ProductivityCalendarView;
+  const StatsView=window.ProductivityStatsView;
+  const TaskView=window.ProductivityTaskView;
+  const CollectionView=window.ProductivityCollectionView;
+  const SessionView=window.ProductivitySessionView;
+  const FocusView=window.ProductivityFocusView;
+  const WorkControlsView=window.ProductivityWorkControlsView;
+
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView){
+    const missing=[
+      !StatePersistence ? 'StatePersistence' : null,
+      !StateWriterFactory ? 'StateWriter' : null,
+      !TimerCore ? 'TimerCore' : null,
+      !TimerService ? 'TimerService' : null,
+      !TimerControllerFactory ? 'TimerController' : null,
+      !SessionRepositoryFactory ? 'SessionRepository' : null,
+      !TaskRepositoryFactory ? 'TaskRepository' : null,
+      !EventRepositoryFactory ? 'EventRepository' : null,
+      !GamificationCore ? 'GamificationCore' : null,
+      !TreeService ? 'TreeService' : null,
+      !AnalyticsCore ? 'AnalyticsCore' : null,
+      !CalendarCore ? 'CalendarCore' : null,
+      !ViewFormatters ? 'ViewFormatters' : null,
+      !SummaryView ? 'SummaryView' : null,
+      !CalendarView ? 'CalendarView' : null,
+      !StatsView ? 'StatsView' : null,
+      !TaskView ? 'TaskView' : null,
+      !CollectionView ? 'CollectionView' : null,
+      !SessionView ? 'SessionView' : null,
+      !FocusView ? 'FocusView' : null,
+      !WorkControlsView ? 'WorkControlsView' : null
+    ].filter(Boolean).join(', ');
+    throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
+  }
 
   const TAB_ID = (()=>{
   window.addEventListener('error',event=>{
@@ -5243,7 +5295,6 @@
     readBackup:()=>AppStorageRepository.readBackup()
   };
 
-  const BACKUP_KEY = STORAGE_KEY + '_backup';
 
   // Tek depolama kapısı: UI ve iş mantığı localStorage/IndexedDB ayrıntılarını doğrudan bilmez.
   // Bugün primary localStorage + IndexedDB mirror kullanır; ileride implementation
@@ -5253,54 +5304,7 @@
   let stateWriter = null;
   let reassertStorageTimer = null;
 
-  const StatePersistence=window.ProductivityStatePersistence;
-  const StateWriterFactory=window.ProductivityStateWriter;
-  const TimerCore=window.ProductivityTimerCore;
-  const TimerService=window.ProductivityTimerService;
-  const TimerControllerFactory=window.ProductivityTimerController;
-  const SessionRepositoryFactory=window.ProductivitySessionRepository;
-  const TaskRepositoryFactory=window.ProductivityTaskRepository;
-  const EventRepositoryFactory=window.ProductivityEventRepository;
-  const GamificationCore=window.ProductivityGamificationCore;
-  const TreeService=window.ProductivityTreeService;
-  const AnalyticsCore=window.ProductivityAnalyticsCore;
-  const CalendarCore=window.ProductivityCalendarCore;
-  const ViewFormatters=window.ProductivityViewFormatters;
-  const SummaryView=window.ProductivitySummaryView;
-  const CalendarView=window.ProductivityCalendarView;
-  const StatsView=window.ProductivityStatsView;
-  const TaskView=window.ProductivityTaskView;
-  const CollectionView=window.ProductivityCollectionView;
-  const SessionView=window.ProductivitySessionView;
-  const FocusView=window.ProductivityFocusView;
-  const WorkControlsView=window.ProductivityWorkControlsView;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView){
-    const missing=[
-      !StatePersistence ? 'StatePersistence' : null,
-      !StateWriterFactory ? 'StateWriter' : null,
-      !TimerCore ? 'TimerCore' : null,
-      !TimerService ? 'TimerService' : null,
-      !TimerControllerFactory ? 'TimerController' : null,
-      !SessionRepositoryFactory ? 'SessionRepository' : null,
-      !TaskRepositoryFactory ? 'TaskRepository' : null,
-      !EventRepositoryFactory ? 'EventRepository' : null,
-      !GamificationCore ? 'GamificationCore' : null,
-      !TreeService ? 'TreeService' : null,
-      !AnalyticsCore ? 'AnalyticsCore' : null,
-      !CalendarCore ? 'CalendarCore' : null,
-      !ViewFormatters ? 'ViewFormatters' : null,
-      !SummaryView ? 'SummaryView' : null,
-      !CalendarView ? 'CalendarView' : null,
-      !StatsView ? 'StatsView' : null,
-      !TaskView ? 'TaskView' : null,
-      !CollectionView ? 'CollectionView' : null,
-      !SessionView ? 'SessionView' : null,
-      !FocusView ? 'FocusView' : null,
-      !WorkControlsView ? 'WorkControlsView' : null
-    ].filter(Boolean).join(', ');
-    throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
-  }
 
   const TIMER_MODES=TimerCore.MODES;
   const TIMER_TRANSITIONS=TimerCore.TRANSITIONS;
