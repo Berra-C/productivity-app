@@ -412,6 +412,136 @@
   };
 })();
 
+/* ===== assets/js/modules/state-writer.js ===== */
+(() => {
+  'use strict';
+
+  function create(options={}){
+    const getState=options.getState;
+    const persistence=options.persistence;
+    const semanticSnapshot=options.semanticSnapshot;
+    const now=typeof options.now==='function' ? options.now : ()=>Date.now();
+    const writerId=typeof options.writerId==='function'
+      ? options.writerId
+      : ()=>options.writerId || null;
+    const syncBeforeSave=typeof options.syncBeforeSave==='function'
+      ? options.syncBeforeSave
+      : ()=>{};
+    const shouldMirror=typeof options.shouldMirror==='function'
+      ? options.shouldMirror
+      : ()=>true;
+    const onSaved=typeof options.onSaved==='function'
+      ? options.onSaved
+      : ()=>{};
+
+    if(typeof getState!=='function') throw new Error('StateWriter getState gerekli');
+    if(!persistence || typeof persistence.commitSnapshot!=='function'){
+      throw new Error('StateWriter persistence gerekli');
+    }
+    if(typeof semanticSnapshot!=='function'){
+      throw new Error('StateWriter semanticSnapshot gerekli');
+    }
+
+    let lastSemanticSnapshot=null;
+    let lastSaveAt=0;
+
+    function acceptCurrentState(){
+      const state=getState();
+      lastSemanticSnapshot=semanticSnapshot(state);
+      return lastSemanticSnapshot;
+    }
+
+    function save(options={}){
+      syncBeforeSave();
+
+      const state=getState();
+      if(!state || typeof state!=='object'){
+        throw new Error('StateWriter geçerli state bulamadı');
+      }
+
+      const semantic=semanticSnapshot(state);
+      if(
+        !options.force &&
+        lastSemanticSnapshot!==null &&
+        semantic===lastSemanticSnapshot
+      ){
+        return {
+          ok:true,
+          skipped:true,
+          meta:state.storageMeta || null
+        };
+      }
+
+      const previousMeta=state.storageMeta
+        ? {...state.storageMeta}
+        : null;
+      const storedMeta=typeof persistence.readPrimaryMeta==='function'
+        ? persistence.readPrimaryMeta()
+        : null;
+      const localMeta=state.storageMeta || {};
+      const timestamp=Number(now()) || Date.now();
+
+      state.storageMeta={
+        revision:Math.max(
+          Number(localMeta.revision)||0,
+          Number(storedMeta?.revision)||0
+        )+1,
+        updatedAt:timestamp,
+        writerId:writerId()
+      };
+
+      const serialized=JSON.stringify(state);
+      const committed=persistence.commitSnapshot(serialized,{
+        mirror:Boolean(shouldMirror())
+      });
+
+      if(!committed){
+        if(previousMeta) state.storageMeta=previousMeta;
+        else delete state.storageMeta;
+
+        return {
+          ok:false,
+          skipped:false,
+          meta:state.storageMeta || null
+        };
+      }
+
+      lastSemanticSnapshot=semantic;
+      lastSaveAt=timestamp;
+
+      const detail={
+        revision:Number(state.storageMeta?.revision)||0,
+        updatedAt:Number(state.storageMeta?.updatedAt)||timestamp
+      };
+
+      if(!options.suppressCloud) onSaved(detail);
+
+      return {
+        ok:true,
+        skipped:false,
+        meta:{...state.storageMeta}
+      };
+    }
+
+    function getLastSaveAt(){
+      return lastSaveAt;
+    }
+
+    function hasBaseline(){
+      return lastSemanticSnapshot!==null;
+    }
+
+    return Object.freeze({
+      save,
+      acceptCurrentState,
+      getLastSaveAt,
+      hasBaseline
+    });
+  }
+
+  window.ProductivityStateWriter={create};
+})();
+
 /* ===== assets/js/modules/timer-core.js ===== */
 (() => {
   'use strict';
@@ -2013,19 +2143,20 @@
   // değiştirilirken çağıran kodların değişmemesi için bu katman korunur.
 
 
-  let lastSaveAt = 0;
-  let lastSemanticSnapshot = null;
+  let stateWriter = null;
   let reassertStorageTimer = null;
 
   const StatePersistence=window.ProductivityStatePersistence;
+  const StateWriterFactory=window.ProductivityStateWriter;
   const TimerCore=window.ProductivityTimerCore;
   const TimerService=window.ProductivityTimerService;
   const TimerControllerFactory=window.ProductivityTimerController;
   const SessionRepositoryFactory=window.ProductivitySessionRepository;
 
-  if(!StatePersistence || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
+      !StateWriterFactory ? 'StateWriter' : null,
       !TimerCore ? 'TimerCore' : null,
       !TimerService ? 'TimerService' : null,
       !TimerControllerFactory ? 'TimerController' : null,
@@ -2116,35 +2247,11 @@
   }
 
   function saveData(options={}){
-    syncTimerState();
+    if(!stateWriter) return false;
     try{
-      const semantic=semanticSnapshot(data);
-      if(!options.force && lastSemanticSnapshot!==null && semantic===lastSemanticSnapshot){
-        return true;
-      }
-
-      const storedMeta=readPrimaryStorageMeta();
-      const localMeta=data.storageMeta || {};
-      data.storageMeta = {
-        revision: Math.max(Number(localMeta.revision)||0, Number(storedMeta?.revision)||0) + 1,
-        updatedAt: Date.now(),
-        writerId: TAB_ID
-      };
-
-      const serialized = JSON.stringify(data);
-      const committed=AppStorageRepository.commitSnapshot(serialized,{
-        mirror:!startupNeedsIDBRecovery
-      });
-      if(!committed) return false;
-
-      lastSemanticSnapshot = semantic;
-      lastSaveAt = Date.now();
-      if(!options.suppressCloud){
-        window.dispatchEvent(new CustomEvent('app:data-saved',{detail:{revision:data.storageMeta?.revision||0,updatedAt:data.storageMeta?.updatedAt||Date.now()}}));
-      }
-      return true;
+      return stateWriter.save(options).ok;
     }catch(err){
-      console.error('Veri kaydedilemedi:', err);
+      console.error('Veri kaydedilemedi:',err);
       return false;
     }
   }
@@ -2221,7 +2328,7 @@
     const localTimer=captureDeviceLocalTimerState();
     data=restoreDeviceLocalTimerState(incoming,localTimer);
     rebuildDerivedWorkData();
-    lastSemanticSnapshot=semanticSnapshot(data);
+    stateWriter?.acceptCurrentState();
     refillDeckIfNeeded();
     reconcileStreakFreeze();
     syncTimerState();
@@ -2329,7 +2436,7 @@
       data=restoreDeviceLocalTimerState(incoming,localTimer);
       rebuildDerivedWorkData();
 
-      lastSemanticSnapshot=semanticSnapshot(data);
+      stateWriter?.acceptCurrentState();
       refillDeckIfNeeded();
       reconcileStreakFreeze();
       syncTimerState();
@@ -2859,6 +2966,19 @@
   }
 
   let data = loadData();
+
+  stateWriter=StateWriterFactory.create({
+    getState:()=>data,
+    persistence:AppStorageRepository,
+    semanticSnapshot:value=>StatePersistence.semanticSnapshot(value),
+    writerId:()=>TAB_ID,
+    syncBeforeSave:()=>syncTimerState(),
+    shouldMirror:()=>!startupNeedsIDBRecovery,
+    onSaved:detail=>{
+      window.dispatchEvent(new CustomEvent('app:data-saved',{detail}));
+    }
+  });
+
   if(data.breakState === undefined) data.breakState = null;
   if(data.activeSessionId && !data.activeSessionDate){
     for(const [k,sessions] of Object.entries(data.sessionLog || {})){
@@ -9028,13 +9148,14 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
         uiHelpers: !!window.ProductivityUIHelpers,
         stateMerge: !!window.ProductivityStateMerge,
         statePersistence: !!window.ProductivityStatePersistence,
+        stateWriter: !!window.ProductivityStateWriter,
         sessionRepository: !!window.ProductivitySessionRepository,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
@@ -10076,6 +10197,88 @@
       const newer={revision:5,updatedAt:1,writerId:'a'};
       const older={revision:4,updatedAt:999999,writerId:'z'};
       equal(window.ProductivityStatePersistence.compareStorageMeta(newer,older)>0,true);
+    });
+
+
+    test('StateWriter modülü yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityStateWriter),true);
+    });
+
+    test('StateWriter değişmeyen state için yeni revision üretmez', ()=>{
+      const state={value:1,storageMeta:{revision:4,updatedAt:10,writerId:'x'}};
+      let commits=0;
+      const writer=window.ProductivityStateWriter.create({
+        getState:()=>state,
+        persistence:{
+          readPrimaryMeta:()=>({revision:4}),
+          commitSnapshot:()=>{ commits+=1; return true; }
+        },
+        semanticSnapshot:value=>JSON.stringify({value:value.value}),
+        writerId:()=> 'test',
+        now:()=>100
+      });
+      writer.acceptCurrentState();
+      const result=writer.save();
+      equal(result.skipped,true);
+      equal(commits,0);
+      equal(state.storageMeta.revision,4);
+    });
+
+    test('StateWriter stored revision ile local revisionın büyüğünden ilerler', ()=>{
+      const state={value:2,storageMeta:{revision:3,updatedAt:10,writerId:'x'}};
+      let serialized='';
+      const writer=window.ProductivityStateWriter.create({
+        getState:()=>state,
+        persistence:{
+          readPrimaryMeta:()=>({revision:8}),
+          commitSnapshot:value=>{ serialized=value; return true; }
+        },
+        semanticSnapshot:value=>JSON.stringify({value:value.value}),
+        writerId:()=> 'tab-test',
+        now:()=>500
+      });
+      const result=writer.save({force:true,suppressCloud:true});
+      equal(result.ok,true);
+      equal(state.storageMeta.revision,9);
+      equal(state.storageMeta.updatedAt,500);
+      equal(JSON.parse(serialized).storageMeta.revision,9);
+    });
+
+    test('StateWriter başarısız committe storageMeta değerini geri alır', ()=>{
+      const state={value:3,storageMeta:{revision:7,updatedAt:70,writerId:'old'}};
+      const writer=window.ProductivityStateWriter.create({
+        getState:()=>state,
+        persistence:{
+          readPrimaryMeta:()=>({revision:7}),
+          commitSnapshot:()=>false
+        },
+        semanticSnapshot:value=>JSON.stringify({value:value.value}),
+        writerId:()=> 'new',
+        now:()=>800
+      });
+      const result=writer.save({force:true});
+      equal(result.ok,false);
+      equal(state.storageMeta.revision,7);
+      equal(state.storageMeta.updatedAt,70);
+      equal(state.storageMeta.writerId,'old');
+    });
+
+    test('StateWriter suppressCloud callbacki çalıştırmaz', ()=>{
+      const state={value:4,storageMeta:{revision:0,updatedAt:0,writerId:null}};
+      let emitted=0;
+      const writer=window.ProductivityStateWriter.create({
+        getState:()=>state,
+        persistence:{
+          readPrimaryMeta:()=>null,
+          commitSnapshot:()=>true
+        },
+        semanticSnapshot:value=>JSON.stringify({value:value.value}),
+        writerId:()=> 'test',
+        now:()=>900,
+        onSaved:()=>{ emitted+=1; }
+      });
+      writer.save({force:true,suppressCloud:true});
+      equal(emitted,0);
     });
 
     const passed=results.filter(r=>r.ok).length;
