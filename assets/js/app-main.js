@@ -220,11 +220,7 @@
   }
 
   function displaySessionTimeRange(session){
-    const start = displayClockTime(session?.startedAt);
-    const end = displayClockTime(session?.endedAt);
-    if(start && end) return start+'–'+end;
-    if(start) return start;
-    return '';
+    return SessionView.displayTimeRange(session,displayClockTime);
   }
 
   function sessionIntervalText(session){
@@ -1159,8 +1155,11 @@
   const StatsView=window.ProductivityStatsView;
   const TaskView=window.ProductivityTaskView;
   const CollectionView=window.ProductivityCollectionView;
+  const SessionView=window.ProductivitySessionView;
+  const FocusView=window.ProductivityFocusView;
+  const WorkControlsView=window.ProductivityWorkControlsView;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -1179,7 +1178,10 @@
       !CalendarView ? 'CalendarView' : null,
       !StatsView ? 'StatsView' : null,
       !TaskView ? 'TaskView' : null,
-      !CollectionView ? 'CollectionView' : null
+      !CollectionView ? 'CollectionView' : null,
+      !SessionView ? 'SessionView' : null,
+      !FocusView ? 'FocusView' : null,
+      !WorkControlsView ? 'WorkControlsView' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -3737,19 +3739,13 @@
   });
 
   function renderWorkButtonRow(){
-    let html;
-    if(isBreakActive()){
-      html = '<button id="breakAdjustBtn" class="work-btn resume">Mola Süresi ⚙️</button>'
-           + '<button id="breakSkipBtn" class="work-btn finish">Molayı Geç · Yeni Oturum ▶</button>';
-    } else if(data.isWorking){
-      html = '<button id="workToggle" class="work-btn active">Duraklat ⏸</button>';
-    } else if(data.activeSessionId && findSession(data.activeSessionId)){
-      html = '<button id="workResumeBtn" class="work-btn resume">Devam Et ▶</button>'
-           + '<button id="workFinishBtn" class="work-btn finish">Bitir ✓</button>';
-    } else {
-      html = '<button id="workToggle" class="work-btn idle">Çalışmaya Başla ▶</button>';
-    }
-    el.workButtonRow.innerHTML = html;
+    el.workButtonRow.innerHTML=WorkControlsView.build({
+      breakActive:isBreakActive(),
+      isWorking:data.isWorking,
+      hasActiveSession:Boolean(
+        data.activeSessionId && findSession(data.activeSessionId)
+      )
+    });
   }
 
   // Yeni bir oturum başlatır (sadece aktif/duraklatılmış oturum yokken çağrılır)
@@ -3848,63 +3844,62 @@
   }
 
   function renderFocusOverlay(){
-    const session = data.activeSessionId ? findSession(data.activeSessionId) : null;
+    const session=data.activeSessionId
+      ? findSession(data.activeSessionId)
+      : null;
+
     if(!session){
       closeFocusMode();
       return;
     }
 
-    const liveElapsed = (data.isWorking && data.workStart) ? Math.floor((Date.now()-data.workStart)/1000) : 0;
-    const liveDur = Number(session.duration||0) + liveElapsed;
-    updateFlipClock(liveDur);
+    const model=FocusView.buildModel({
+      session,
+      isWorking:data.isWorking,
+      workStart:data.workStart,
+      currentTodo:getCurrentTodoTask(),
+      now:Date.now(),
+      formatDurationLabel
+    });
 
-    const sessionTitle = session.subject && session.subject!=='Genel'
-      ? session.subject
-      : (session.name || 'Oturum');
-    el.focusSubjectText.textContent = sessionTitle;
+    updateFlipClock(model.liveDuration);
+    el.focusSubjectText.textContent=model.subjectText;
+    el.focusTaskText.textContent=model.taskText;
+    el.focusCurrentCard.classList.toggle('no-task',model.noTask);
 
-    const current = getCurrentTodoTask();
-    if(current){
-      el.focusTaskText.textContent = current.todo.text;
-      el.focusCurrentCard.classList.remove('no-task');
-      const kicker=el.focusCurrentCard.querySelector('.focus-current-kicker');
-      if(kicker) kicker.textContent='Şimdi yap';
-    }else{
-      el.focusTaskText.textContent = 'Aktif görev yok';
-      el.focusCurrentCard.classList.add('no-task');
-      const kicker=el.focusCurrentCard.querySelector('.focus-current-kicker');
-      if(kicker) kicker.textContent='Oturum';
-    }
+    const kicker=el.focusCurrentCard.querySelector('.focus-current-kicker');
+    if(kicker) kicker.textContent=model.kicker;
 
-    if(session.targetSeconds){
-      const target=Number(session.targetSeconds);
-      const pct=Math.min(100,Math.round(liveDur/target*100));
-      const remaining=Math.max(0,target-liveDur);
-      el.focusTargetWrap.classList.remove('no-target');
-      el.focusTargetText.textContent = 'Hedef · '+formatDurationLabel(target);
-      el.focusTargetPct.textContent = pct+'%';
-      el.focusTargetFill.style.width=pct+'%';
-      el.focusTargetFill.classList.toggle('reached', liveDur>=target);
-    }else{
-      el.focusTargetWrap.classList.add('no-target');
-      el.focusTargetFill.style.width='0%';
-      el.focusTargetFill.classList.remove('reached');
-    }
+    el.focusTargetWrap.classList.toggle(
+      'no-target',
+      !model.target.hasTarget
+    );
 
-    el.focusSubText.textContent = data.isWorking
-      ? 'Odak oturumu devam ediyor'
-      : 'Oturum duraklatıldı';
+    el.focusTargetText.textContent=model.target.text;
+    el.focusTargetPct.textContent=model.target.percentText;
+    el.focusTargetFill.style.width=model.target.percent+'%';
+    el.focusTargetFill.classList.toggle(
+      'reached',
+      model.target.reached
+    );
 
-    const focusPrimaryLabel = data.isWorking ? 'Duraklat' : 'Devam Et';
-    el.focusPauseBtn.textContent = data.isWorking ? '⏸' : '▶';
-    el.focusPauseBtn.dataset.tooltip = focusPrimaryLabel;
-    el.focusPauseBtn.setAttribute('aria-label', focusPrimaryLabel);
-    el.focusPauseBtn.classList.toggle('is-paused-action', data.isWorking);
-    el.focusPauseBtn.classList.toggle('is-resume-action', !data.isWorking);
+    el.focusSubText.textContent=model.subText;
 
-    el.focusFinishBtn.textContent = '■';
-    el.focusFinishBtn.dataset.tooltip = 'Bitir';
-    el.focusFinishBtn.setAttribute('aria-label','Bitir');
+    el.focusPauseBtn.textContent=model.pause.icon;
+    el.focusPauseBtn.dataset.tooltip=model.pause.label;
+    el.focusPauseBtn.setAttribute('aria-label',model.pause.label);
+    el.focusPauseBtn.classList.toggle(
+      'is-paused-action',
+      model.pause.isPausedAction
+    );
+    el.focusPauseBtn.classList.toggle(
+      'is-resume-action',
+      model.pause.isResumeAction
+    );
+
+    el.focusFinishBtn.textContent=model.finish.icon;
+    el.focusFinishBtn.dataset.tooltip=model.finish.label;
+    el.focusFinishBtn.setAttribute('aria-label',model.finish.label);
   }
 
   let focusFullscreenOwned = false;
@@ -4085,10 +4080,8 @@
   }
 
   // ---------- Oturum listesi / to-do ----------
-  function sessionCompletionPct(s){
-    if(!s.todos || s.todos.length===0) return null;
-    const done = s.todos.filter(t=>t.done).length;
-    return Math.round(done / s.todos.length * 100);
+  function sessionCompletionPct(session){
+    return SessionView.completionPct(session);
   }
 
   let workHistoryOpen = false;
@@ -4108,106 +4101,35 @@
 
   function renderSessionList(){
     updateWorkHistorySummary();
-    const workPanel = document.getElementById('panel-work');
+
+    const workPanel=document.getElementById('panel-work');
+    const activeSession=data.activeSessionId
+      ? findSession(data.activeSessionId)
+      : null;
+
     if(workPanel){
-      const hasCurrentSession = !!(data.activeSessionId && findSession(data.activeSessionId));
-      workPanel.classList.toggle('session-in-progress', hasCurrentSession);
-      workPanel.classList.toggle('session-paused', hasCurrentSession && !data.isWorking);
+      workPanel.classList.toggle('session-in-progress',Boolean(activeSession));
+      workPanel.classList.toggle(
+        'session-paused',
+        Boolean(activeSession) && !data.isWorking
+      );
     }
-    const allSessions = getSessionsToday();
-    const hiddenCount = allSessions.filter(session=>session.hidden).length;
-    const list = showHiddenSessions ? allSessions : allSessions.filter(session=>!session.hidden);
-    if(allSessions.length === 0){
-      el.sessionList.innerHTML = '<div class="session-empty">Bugün henüz oturum başlatmadın.</div>';
-      return;
-    }
-    if(list.length === 0 && hiddenCount > 0){
-      el.sessionList.innerHTML = '<div class="session-hidden-tools"><button class="session-hidden-toggle" data-action="toggle-hidden-sessions" data-tooltip="Daha önce görünümden gizlenen oturumları listele">👁 '+hiddenCount+' gizlenen oturumu göster</button></div>';
-      return;
-    }
-    // Var olan (aktif/duraklatılmış) oturumu en öne al ve belirginleştir
-    const sorted = [...list].sort((a,b)=>{
-      const aCur = a.id === data.activeSessionId ? 1 : 0;
-      const bCur = b.id === data.activeSessionId ? 1 : 0;
-      return bCur - aCur;
+
+    const view=SessionView.buildList({
+      sessions:getSessionsToday(),
+      activeSessionId:data.activeSessionId,
+      isWorking:data.isWorking,
+      workStart:data.workStart,
+      showHidden:showHiddenSessions,
+      expandedIds:expandedSessions,
+      now:Date.now(),
+      escapeHtml,
+      formatDurationLabel,
+      displayClockTime,
+      sessionFocusScore
     });
 
-    let html = '';
-    let printedHistoryHeading = false;
-    sorted.forEach(s=>{
-      const isCurrent = s.id === data.activeSessionId;
-      const isTicking = isCurrent && data.isWorking;
-      const isPaused = isCurrent && !data.isWorking;
-      const expanded = expandedSessions.has(s.id);
-      const liveDur = isTicking && data.workStart ? s.duration + Math.floor((Date.now()-data.workStart)/1000) : s.duration;
-      const pct = sessionCompletionPct(s);
-      const pctLabel = pct===null ? 'Görev eklenmedi' : ('%' + pct + ' tamamlandı');
-      const hasSubject = s.subject && s.subject !== 'Genel';
-      const subjectTag = hasSubject ? '<span class="subject-tag">📘 '+escapeHtml(s.subject)+'</span>' : '';
-      const subjectEdit = isCurrent
-        ? '<button class="session-subject-edit" data-action="edit-subject" data-id="'+s.id+'" data-tooltip="Bu oturumun ders veya konu bilgisini değiştir">'+(hasSubject?'Değiştir':'＋ Ders / konu ekle')+'</button>'
-          + '<button class="session-subject-edit" data-action="manage-subjects" data-id="'+s.id+'" data-tooltip="Kaydedilmiş ders / konu önerilerini yönet">⚙ Konular</button>'
-        : '';
-
-      if(!isCurrent && !printedHistoryHeading && (data.activeSessionId && findSession(data.activeSessionId))){
-        printedHistoryHeading = true;
-        html += '<div class="session-history-heading">Geçmiş Oturumlar</div>';
-      }
-
-      let todosHtml = '';
-      if(s.todos && s.todos.length){
-        s.todos.forEach(t=>{
-          todosHtml += '<div class="todo-item">'
-            + '<button class="todo-check'+(t.done?' done':'')+'" data-action="toggle-todo" data-id="'+s.id+'" data-todo="'+t.id+'" data-tooltip="'+(t.done?'Görevi yeniden aç':'Görevi tamamlandı olarak işaretle')+'" aria-label="'+(t.done?'Görevi yeniden aç':'Görevi tamamlandı olarak işaretle')+'">'+(t.done?'✓':'')+'</button>'
-            + '<span class="todo-text'+(t.done?' done':'')+'">'+escapeHtml(t.text)+'</span>'
-            + '<button class="todo-del" data-action="delete-todo" data-id="'+s.id+'" data-todo="'+t.id+'" data-tooltip="Bu oturum görevini sil" aria-label="Oturum görevini sil">✕</button>'
-            + '</div>';
-        });
-      } else {
-        todosHtml = '<div class="todo-empty">Henüz görev eklenmedi.</div>';
-      }
-
-      let targetHtml = '';
-      if(s.targetSeconds){
-        const tpct = Math.min(100, liveDur / s.targetSeconds * 100);
-        targetHtml = '<div class="session-target" data-tooltip="Oturum hedefi: çalışılan süre / belirlediğin hedef süre">'
-          + '<div class="target-bar"><div class="target-fill" style="width:'+tpct+'%"></div></div>'
-          + '<div class="target-caption'+(s.targetReached?' reached':'')+'">🎯 '+formatDurationLabel(Math.min(liveDur,s.targetSeconds))+' / '+formatDurationLabel(s.targetSeconds)+(s.targetReached?' ✓':'')+(liveDur>s.targetSeconds?' · +'+formatDurationLabel(liveDur-s.targetSeconds):'')+'</div>'
-          + '</div>';
-      }else{
-        targetHtml = '<div class="session-target session-target-untargeted" data-tooltip="Bu oturum hedef süre olmadan başlatıldı. Çizgi yalnızca kart düzenini korur; yüzde ilerleme göstermez.">'
-          + '<div class="target-bar untargeted"><div class="target-fill untargeted-fill"></div></div>'
-          + '<div class="target-caption untargeted-caption">⏱ '+formatDurationLabel(liveDur)+' · Hedefsiz</div>'
-          + '</div>';
-      }
-
-      html += '<div class="session-card'+(isTicking?' active':'')+(isPaused?' paused':'')+(isCurrent?' current':'')+(s.hidden?' hidden-session':'')+'" data-id="'+s.id+'">'
-        + (!isCurrent && !s.hidden ? '<button class="session-time-edit-btn" data-action="edit-session-time" data-id="'+s.id+'" data-tooltip="Oturumun başlangıç ve bitiş saatini düzelt. Örn. açık unuttuysan gerçek bitiş saatini yazabilirsin." aria-label="Oturum başlangıç ve bitiş saatlerini düzenle">🕒</button><button class="session-delete-btn" data-action="delete-session" data-id="'+s.id+'" data-tooltip="Bu oturumu geçmişten sil" aria-label="Oturumu sil">🗑</button>' : '')
-        + (s.hidden ? '<button class="session-restore-btn" data-action="restore-session" data-id="'+s.id+'" data-tooltip="Gizlenen oturumu yeniden görünür yap">Geri Göster</button>' : '')
-        + (isCurrent ? '<div class="current-badge" data-tooltip="'+(isTicking?'Şu anda çalışan aktif oturum':'Aktif oturum şu anda duraklatılmış')+'">'+(isTicking?'▶ ŞU ANKİ OTURUM':'⏸ ŞU ANKİ OTURUM')+'</div>' : '')
-        + '<div class="session-head" data-action="toggle" data-id="'+s.id+'" data-tooltip="'+(expanded?'Oturum ayrıntılarını kapat':'Oturum görevlerini ve ayrıntılarını aç')+'">'
-        +   '<span class="chevron" aria-hidden="true">'+(expanded?'▾':'▸')+'</span>'
-        +   '<span class="session-name">'+escapeHtml(s.name)+(isTicking?' <span class="live-dot">●</span>':'')+(isPaused?' <span class="paused-tag">⏸ Duraklatıldı</span>':'')+'</span>'
-        +   '<button class="session-edit" data-action="rename" data-id="'+s.id+'" data-tooltip="Oturumun adını değiştir" aria-label="Oturum adını değiştir">✏️</button>'
-        +   '<span class="session-meta">'
-        +     (displaySessionTimeRange(s)?'<span class="meta-time metric-help" tabindex="0" data-tooltip="Oturumun başlangıç ve bitiş saatleri">🕒 '+displaySessionTimeRange(s)+'</span>':'')
-        +     '<span class="meta-duration metric-help" tabindex="0" data-tooltip="Bu oturumda kaydedilen toplam odaklı çalışma süresi. Duraklatılan süreler dahil edilmez.">⏱ '+formatDurationLabel(liveDur)+'</span>'
-        +     '<span class="meta-distract metric-help" tabindex="0" data-tooltip="Bu oturum sırasında kaydettiğin dikkat dağınıklığı sayısı">😕 '+s.distractions+'</span>'
-        +     '<span class="meta-focus metric-help" tabindex="0" data-tooltip="Odak puanı (0–100): dikkat dağınıklığı ve kesintiler puanı düşürür; hedefe ulaşmak ve oturum görevlerini tamamlamak puanı artırabilir.">🧠 '+sessionFocusScore(s)+'</span>'
-        +   '</span>'
-        + '</div>'
-        + ((subjectTag || subjectEdit) ? '<div class="session-subject-row">'+subjectTag+subjectEdit+'</div>' : '')
-        + '<div class="session-pct">'+pctLabel+'</div>'
-        + targetHtml
-        + (expanded ? ('<div class="session-body">'+todosHtml+'<div class="todo-add-row"><input type="text" class="todo-input" placeholder="Yeni görev ekle..." aria-label="Oturuma yeni görev ekle" /><button class="todo-add-btn" data-action="add-todo" data-id="'+s.id+'" data-tooltip="Yazdığın görevi bu oturuma ekle" aria-label="Oturuma görevi ekle">+</button></div></div>') : '')
-        + '</div>';
-    });
-    if(hiddenCount > 0){
-      html += '<div class="session-hidden-tools"><button class="session-hidden-toggle" data-action="toggle-hidden-sessions">'
-        + (showHiddenSessions ? 'Gizlenenleri Sakla' : '👁 '+hiddenCount+' gizlenen oturumu göster')
-        + '</button></div>';
-    }
-    el.sessionList.innerHTML = html;
+    el.sessionList.innerHTML=view.html;
   }
 
   el.sessionList.addEventListener('click', async (e)=>{
@@ -7243,7 +7165,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView || !window.ProductivitySessionView || !window.ProductivityFocusView || !window.ProductivityWorkControlsView){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -7264,6 +7186,9 @@
         statsView: !!window.ProductivityStatsView,
         taskView: !!window.ProductivityTaskView,
         collectionView: !!window.ProductivityCollectionView,
+        sessionView: !!window.ProductivitySessionView,
+        focusView: !!window.ProductivityFocusView,
+        workControlsView: !!window.ProductivityWorkControlsView,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -8679,6 +8604,62 @@
         displayDate:value=>String(value)
       });
       equal(html.includes('<b>40</b> büyüme puanı'),true);
+    });
+
+
+    test('SessionView, FocusView ve WorkControlsView modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivitySessionView),true);
+      equal(Boolean(window.ProductivityFocusView),true);
+      equal(Boolean(window.ProductivityWorkControlsView),true);
+    });
+
+    test('SessionView görev tamamlama yüzdesini hesaplar', ()=>{
+      equal(window.ProductivitySessionView.completionPct({
+        todos:[{done:true},{done:false}]
+      }),50);
+      equal(window.ProductivitySessionView.completionPct({todos:[]}),null);
+    });
+
+    test('SessionView aktif oturumu listenin başına taşır', ()=>{
+      const view=window.ProductivitySessionView.buildList({
+        sessions:[
+          {id:'old',name:'Eski',duration:60,distractions:0,todos:[]},
+          {id:'current',name:'Aktif',duration:60,distractions:0,todos:[]}
+        ],
+        activeSessionId:'current',
+        isWorking:false,
+        expandedIds:new Set(),
+        escapeHtml:value=>String(value),
+        formatDurationLabel:value=>String(value),
+        displayClockTime:()=> '',
+        sessionFocusScore:()=>100
+      });
+      equal(view.html.indexOf('data-id="current"') < view.html.indexOf('data-id="old"'),true);
+      equal(view.html.includes('Geçmiş Oturumlar'),true);
+    });
+
+    test('FocusView hedef yüzdesini ve pause aksiyonunu üretir', ()=>{
+      const model=window.ProductivityFocusView.buildModel({
+        session:{name:'Test',duration:300,targetSeconds:600},
+        isWorking:true,
+        workStart:1000,
+        now:121000,
+        formatDurationLabel:value=>String(value)
+      });
+      equal(model.liveDuration,420);
+      equal(model.target.percent,70);
+      equal(model.pause.label,'Duraklat');
+      equal(model.pause.icon,'⏸');
+    });
+
+    test('WorkControlsView paused session için devam ve bitir butonlarını üretir', ()=>{
+      const html=window.ProductivityWorkControlsView.build({
+        breakActive:false,
+        isWorking:false,
+        hasActiveSession:true
+      });
+      equal(html.includes('workResumeBtn'),true);
+      equal(html.includes('workFinishBtn'),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
