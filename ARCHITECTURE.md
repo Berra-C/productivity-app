@@ -23,8 +23,10 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 6. **Timer service** — session/interval lifecycle mutation.
 7. **Timer controller** — start/pause/resume/finish orchestration.
 8. **Session repository** — session lookup and date-bucket access.
-9. **App main** — composition root, UI rendering, gamification and remaining feature orchestration.
-10. **Cloud sync** — optional cloud transport and account synchronization.
+9. **Task repository** — task lookup, collection mutation and task-specific queries.
+10. **Event repository** — event lookup, collection mutation and event-specific queries.
+11. **App main** — composition root, UI rendering, gamification and remaining feature orchestration.
+12. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -42,6 +44,5 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Separate task/event repositories from generic `DataRepository`.
 - Move gamification calculations into a dedicated domain module.
 - Split calendar and analytics rendering from the main composition file.
