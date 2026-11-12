@@ -1156,8 +1156,11 @@
   const ViewFormatters=window.ProductivityViewFormatters;
   const SummaryView=window.ProductivitySummaryView;
   const CalendarView=window.ProductivityCalendarView;
+  const StatsView=window.ProductivityStatsView;
+  const TaskView=window.ProductivityTaskView;
+  const CollectionView=window.ProductivityCollectionView;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -1173,7 +1176,10 @@
       !CalendarCore ? 'CalendarCore' : null,
       !ViewFormatters ? 'ViewFormatters' : null,
       !SummaryView ? 'SummaryView' : null,
-      !CalendarView ? 'CalendarView' : null
+      !CalendarView ? 'CalendarView' : null,
+      !StatsView ? 'StatsView' : null,
+      !TaskView ? 'TaskView' : null,
+      !CollectionView ? 'CollectionView' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -5124,55 +5130,25 @@
   }
 
   function renderSubjectBreakdown(){
-    const keys = getPeriodKeys(currentPeriod);
-    const keySet = new Set(keys);
-    const rows = new Map();
-
-    Object.entries(data.sessionLog || {}).forEach(([key, sessions])=>{
-      if(!keySet.has(key) || !Array.isArray(sessions)) return;
-      sessions.forEach(session=>{
-        const subj = (session.subject && session.subject !== 'Genel') ? session.subject : 'Genel';
-        const cur = rows.get(subj) || {seconds:0, sessions:0, distractions:0, targetSessions:0, reachedTargets:0};
-        let secs = Number(session.duration || 0);
-        if(session.id === data.activeSessionId && data.isWorking && data.workStart){
-          secs += Math.floor((Date.now()-data.workStart)/1000);
+    const breakdown=AnalyticsCore.subjectBreakdown(
+      sessionsForKeys(getPeriodKeys(currentPeriod)),
+      (session,key)=>{
+        let seconds=Number(session.duration||0);
+        if(
+          session.id===data.activeSessionId &&
+          data.isWorking &&
+          data.workStart
+        ){
+          seconds+=Math.floor((Date.now()-data.workStart)/1000);
         }
-        cur.seconds += Math.max(0, secs);
-        cur.sessions += 1;
-        cur.distractions += Number(session.distractions || 0);
-        if(session.targetSeconds){
-          cur.targetSessions += 1;
-          if(secs >= Number(session.targetSeconds)) cur.reachedTargets += 1;
-        }
-        rows.set(subj, cur);
-      });
-    });
+        return seconds;
+      }
+    );
 
-    const breakdown = [...rows.entries()].sort((a,b)=>b[1].seconds-a[1].seconds);
-    if(breakdown.length === 0){
-      el.subjectBreakdownBody.innerHTML = '<div class="todo-empty">Bu dönemde henüz çalışma kaydı yok.</div>';
-      return;
-    }
-
-    const max = Math.max(1, breakdown[0][1].seconds);
-    el.subjectBreakdownBody.innerHTML = breakdown.map(([subj, stats])=>{
-      const pct = Math.max(4, Math.round(stats.seconds/max*100));
-      const avg = stats.sessions ? Math.round(stats.seconds/stats.sessions) : 0;
-      const avgDistract = stats.sessions ? (stats.distractions/stats.sessions).toFixed(1) : '0.0';
-      const targetRate = stats.targetSessions
-        ? Math.round(stats.reachedTargets/stats.targetSessions*100)+'% hedef'
-        : 'hedef verisi yok';
-      return '<div class="subject-row">'
-        + '<div class="subject-row-top"><span>'+escapeHtml(subj)+'</span><span>'+formatDurationLabel(stats.seconds)+'</span></div>'
-        + '<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+pct+'%"></div></div>'
-        + '<div class="subject-row-meta">'
-        + '<span>'+stats.sessions+' oturum</span>'
-        + '<span>ort. '+formatDurationLabel(avg)+'</span>'
-        + '<span>😕 '+avgDistract+'/oturum</span>'
-        + '<span>🎯 '+targetRate+'</span>'
-        + '</div>'
-        + '</div>';
-    }).join('');
+    el.subjectBreakdownBody.innerHTML=StatsView.buildSubjectBreakdown(
+      breakdown,
+      {escapeHtml,formatDurationLabel}
+    );
   }
 
   const WEEKDAY_SHORT = ['Paz','Pzt','Sal','Çar','Per','Cum','Cmt'];
@@ -5238,160 +5214,49 @@
   }
 
   function buildSubjectChartData(period){
-    const slots = getPeriodSlots(period);
-    const perSlot = slots.map(slot=>{
-      const totals = {};
-      slot.keys.forEach(k=>{
-        const list = data.sessionLog[k] || [];
-        list.forEach(s=>{
-          let dur = s.duration;
-          if(s.id === data.activeSessionId && data.isWorking && data.workStart && k === todayKey()){
-            dur += Math.floor((Date.now()-data.workStart)/1000);
-          }
-          if(dur <= 0) return;
-          const subj = s.subject || 'Genel';
-          totals[subj] = (totals[subj]||0) + Math.round(dur/60);
-        });
-      });
-      return totals;
+    const slots=getPeriodSlots(period);
+    return AnalyticsCore.subjectChartData(slots,{
+      sessionsForKey:key=>getSessionsFor(key),
+      sessionSeconds:(session,key)=>{
+        let duration=Number(session.duration||0);
+        if(
+          session.id===data.activeSessionId &&
+          data.isWorking &&
+          data.workStart &&
+          key===todayKey()
+        ){
+          duration+=Math.floor((Date.now()-data.workStart)/1000);
+        }
+        return duration;
+      },
+      maxSubjects:6
     });
-
-    const grandTotals = {};
-    perSlot.forEach(t=> Object.entries(t).forEach(([k,v])=> grandTotals[k] = (grandTotals[k]||0) + v));
-    let subjects = Object.entries(grandTotals).sort((a,b)=> b[1]-a[1]).map(x=>x[0]);
-
-    // en fazla 6 ders + gerisini "Diğer" altında topla, grafik karışmasın
-    if(subjects.length > 6){
-      const others = subjects.slice(6);
-      subjects = subjects.slice(0,6);
-      perSlot.forEach(t=>{
-        let sum = 0;
-        others.forEach(o=>{ if(t[o]){ sum += t[o]; delete t[o]; } });
-        if(sum > 0) t['Diğer'] = (t['Diğer']||0) + sum;
-      });
-      subjects.push('Diğer');
-    }
-
-    return { labels: slots.map(s=>s.label), subjects, perSlot };
   }
 
   function renderSubjectChart(){
-    const {labels, subjects, perSlot} = buildSubjectChartData(currentPeriod);
-    const chartW = 680;
-    const barAreaBottom = 148, barAreaTop = 16;
-    const labelY = 168;
-    const gap = 10;
-    const n = labels.length;
+    const chart=StatsView.buildSubjectChart({
+      ...buildSubjectChartData(currentPeriod),
+      chartType:currentChartType,
+      subjectColor,
+      escapeHtml
+    });
 
-    if(subjects.length === 0){
-      el.chartSvg.innerHTML = '<text x="340" y="88" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="IBM Plex Sans, sans-serif">Bu dönemde ders kaydı yok</text>';
-      el.chartLegend.innerHTML = '';
-      return;
-    }
-
-    const totalsPerSlot = perSlot.map(t=> subjects.reduce((s,subj)=> s+(t[subj]||0), 0));
-    const max = Math.max(...totalsPerSlot, 1);
-    let svg = '';
-
-    if(currentChartType === 'line'){
-      const stepX = n > 1 ? (chartW - gap*2) / (n-1) : 0;
-      subjects.forEach(subj=>{
-        const color = subjectColor(subj);
-        const points = perSlot.map((t,i)=>{
-          const v = t[subj]||0;
-          const x = gap + i*stepX;
-          const y = barAreaBottom - (v/max) * (barAreaBottom - barAreaTop);
-          return {x, y, v};
-        });
-        const linePath = points.map((p,i)=> (i===0?'M':'L') + p.x.toFixed(1)+','+p.y.toFixed(1)).join(' ');
-        svg += '<path class="chart-line" d="'+linePath+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>';
-        points.forEach(p=>{
-          if(p.v > 0) svg += '<circle class="line-point" cx="'+p.x.toFixed(1)+'" cy="'+p.y.toFixed(1)+'" r="2.8" fill="'+color+'"><title>'+subj+': '+p.v+' dk</title></circle>';
-        });
-      });
-      for(let i=0;i<n;i++){
-        const x = gap + i*stepX;
-        svg += '<text x="'+x.toFixed(1)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-      }
-    } else {
-      const barW = (chartW - gap*(n+1)) / n;
-      perSlot.forEach((t,i)=>{
-        const x = gap + i*(barW+gap);
-        let yCursor = barAreaBottom;
-        subjects.forEach(subj=>{
-          const v = t[subj]||0;
-          if(v <= 0) return;
-          const h = (v/max) * (barAreaBottom - barAreaTop);
-          yCursor -= h;
-          svg += '<rect class="chart-bar" x="'+x+'" y="'+yCursor.toFixed(1)+'" width="'+barW+'" height="'+h.toFixed(1)+'" fill="'+subjectColor(subj)+'"><title>'+subj+': '+v+' dk</title></rect>';
-        });
-        svg += '<text x="'+(x+barW/2)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-      });
-    }
-
-    el.chartSvg.innerHTML = svg;
-    el.chartLegend.innerHTML = subjects.map(s=>
-      '<div class="chart-legend-item"><span class="chart-legend-dot" style="background:'+subjectColor(s)+'"></span>'+escapeHtml(s)+'</div>'
-    ).join('');
+    el.chartSvg.innerHTML=chart.svg;
+    el.chartLegend.innerHTML=chart.legend;
   }
 
   function renderChart(){
-    const {labels, values} = buildChartData(currentPeriod);
-    const goalMinutesForChart = (currentPeriod==='day' && currentMetric==='work') ? Number(data.dailyGoalMinutes||60) : 0;
-    const max = Math.max(...values, goalMinutesForChart, 1);
-    const n = values.length;
-    const chartW = 680;
-    const barAreaBottom = 148, barAreaTop = 16;
-    const labelY = 168;
-    const gap = 10;
+    const {labels,values}=buildChartData(currentPeriod);
+    const goalMinutes=(currentPeriod==='day' && currentMetric==='work')
+      ? Number(data.dailyGoalMinutes||60)
+      : 0;
 
-    if(currentChartType === 'line'){
-      const stepX = n > 1 ? (chartW - gap*2) / (n-1) : 0;
-      const points = values.map((v,i)=>{
-        const x = gap + i*stepX;
-        const y = barAreaBottom - (v/max) * (barAreaBottom - barAreaTop);
-        return {x, y, v};
-      });
-      const linePath = points.map((p,i)=> (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
-      const areaPath = linePath + ' L' + points[points.length-1].x.toFixed(1) + ',' + barAreaBottom + ' L' + points[0].x.toFixed(1) + ',' + barAreaBottom + ' Z';
-
-      let svg = '<defs><linearGradient id="lineAreaGrad" x1="0" y1="0" x2="0" y2="1">'
-        + '<stop offset="0%" stop-color="var(--moss-bright)" stop-opacity="0.35"/>'
-        + '<stop offset="100%" stop-color="var(--moss-bright)" stop-opacity="0"/>'
-        + '</linearGradient><pattern id="goalStripe" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="var(--gold)" stroke-width="2"/></pattern></defs>';
-      svg += '<path d="'+areaPath+'" fill="url(#lineAreaGrad)" stroke="none"></path>';
-      svg += '<path class="chart-line" d="'+linePath+'" fill="none" stroke="var(--moss-bright)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>';
-      points.forEach((p,i)=>{
-        const isLast = i === points.length-1;
-        svg += '<circle class="line-point" cx="'+p.x.toFixed(1)+'" cy="'+p.y.toFixed(1)+'" r="3.5" fill="'+(isLast?'var(--gold)':'var(--moss-bright)')+'"><title>'+labels[i]+': '+p.v+'</title></circle>';
-        svg += '<text x="'+p.x.toFixed(1)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-        if(p.v > 0) svg += '<text x="'+p.x.toFixed(1)+'" y="'+(p.y-8)+'" text-anchor="middle" font-size="8.5" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+p.v+'</text>';
-      });
-      if(goalMinutesForChart>0){
-        const gy=barAreaBottom-(goalMinutesForChart/max)*(barAreaBottom-barAreaTop);
-        svg+='<line x1="0" y1="'+gy+'" x2="'+chartW+'" y2="'+gy+'" stroke="url(#goalStripe)" stroke-width="4"><title>Günlük hedef: '+goalMinutesForChart+' dk</title></line>';
-      }
-      el.chartSvg.innerHTML = svg;
-      return;
-    }
-
-    const barW = (chartW - gap*(n+1)) / n;
-    let bars = '<defs><pattern id="goalStripeBar" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="var(--gold)" stroke-width="2"/></pattern></defs>';
-    values.forEach((v,i)=>{
-      const h = (v/max) * (barAreaBottom - barAreaTop);
-      const x = gap + i*(barW+gap);
-      const y = barAreaBottom - h;
-      const isLast = i === n-1;
-      const color = isLast ? 'var(--gold)' : 'var(--moss-bright)';
-      bars += '<rect class="chart-bar" x="'+x+'" y="'+y+'" width="'+barW+'" height="'+Math.max(h,1.5)+'" rx="3" fill="'+color+'"><title>'+labels[i]+': '+v+'</title></rect>';
-      bars += '<text x="'+(x+barW/2)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-      if(v > 0) bars += '<text x="'+(x+barW/2)+'" y="'+(y-4)+'" text-anchor="middle" font-size="8.5" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+v+'</text>';
+    el.chartSvg.innerHTML=StatsView.buildMetricChart({
+      labels,
+      values,
+      chartType:currentChartType,
+      goalMinutes
     });
-    if(goalMinutesForChart>0){
-      const gy=barAreaBottom-(goalMinutesForChart/max)*(barAreaBottom-barAreaTop);
-      bars+='<line x1="0" y1="'+gy+'" x2="'+chartW+'" y2="'+gy+'" stroke="url(#goalStripeBar)" stroke-width="4"><title>Günlük hedef: '+goalMinutesForChart+' dk</title></line>';
-    }
-    el.chartSvg.innerHTML = bars;
   }
 
   // ================= YILLIK ISI HARİTASI =================
@@ -5405,43 +5270,23 @@
   }
 
   function renderHeatmap(){
-    const lookback = 365;
-    if(el.heatmapTitle) el.heatmapTitle.textContent = 'Yıllık Aktivite (Günlük Hedefe Göre)';
-
-    const today = new Date();
-    const startAligned = startOfWeek(addDays(today, -(lookback-1)));
-    const totalDays = Math.round((today - startAligned)/86400000) + 1;
-    const weeks = Math.ceil(totalDays/7);
-    const cellSize = 9, gap = 2;
-
-    let rects = '';
-    let lastMonth = -1;
-    for(let w=0; w<weeks; w++){
-      for(let d=0; d<7; d++){
-        const date = addDays(startAligned, w*7+d);
-        if(date > today) continue;
-        const k = dateKey(date);
-        const ratio = goalRatioFor(data.days[k]);
-        let level = 0;
-        if(ratio > 0){
-          level = ratio >= 1 ? 4 : ratio >= 0.5 ? 3 : ratio >= 0.25 ? 2 : 1;
-        }
-        const x = w*(cellSize+gap);
-        const y = d*(cellSize+gap) + 14;
-        const pctLabel = Math.round(ratio*100) + '% hedef';
-        rects += '<rect class="heat-cell level-'+level+'" x="'+x+'" y="'+y+'" width="'+cellSize+'" height="'+cellSize+'" rx="2.2"><title>'+displayDate(k)+': '+pctLabel+'</title></rect>';
-
-        if(d === 0 && date.getMonth() !== lastMonth){
-          lastMonth = date.getMonth();
-          rects += '<text x="'+x+'" y="9" font-size="7.8" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+MONTH_SHORT[lastMonth]+'</text>';
-        }
-      }
+    if(el.heatmapTitle){
+      el.heatmapTitle.textContent='Yıllık Aktivite (Günlük Hedefe Göre)';
     }
 
-    const svgW = weeks*(cellSize+gap);
-    const svgH = 7*(cellSize+gap) + 14;
-    el.heatmapSvg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + svgH);
-    el.heatmapSvg.innerHTML = rects;
+    const heatmap=StatsView.buildHeatmap({
+      today:new Date(),
+      lookback:365,
+      startOfWeek,
+      addDays,
+      dateKey,
+      goalRatioFor:key=>goalRatioFor(data.days[key]),
+      displayDate,
+      monthShort:MONTH_SHORT
+    });
+
+    el.heatmapSvg.setAttribute('viewBox',heatmap.viewBox);
+    el.heatmapSvg.innerHTML=heatmap.svg;
   }
 
   function formatMinutes(seconds){
@@ -5449,90 +5294,20 @@
   }
 
   function sessionAnalyticsForKeys(keys){
-    const sessions=sessionsForKeys(keys);
-    const hourly=Array.from({length:24},()=>({seconds:0,sessions:0}));
-    let totalSeconds=0;
-    let longest=null;
-    let timedSessions=0;
-    const activeDays=new Set();
-
-    sessions.forEach(({key,session})=>{
-      const seconds=sessionSecondsForAnalytics(session);
-      totalSeconds += seconds;
-      if(seconds>0) activeDays.add(key);
-      if(!longest || seconds>longest.seconds){
-        longest={seconds,subject:(session.subject && session.subject!=='Genel')?session.subject:'Genel'};
-      }
-      if(session.startedAt){
-        const started=new Date(session.startedAt);
-        if(!Number.isNaN(started.getTime())){
-          const hour=started.getHours();
-          hourly[hour].seconds += seconds;
-          hourly[hour].sessions += 1;
-          timedSessions++;
-        }
-      }
-    });
-
-    let bestHour=-1,bestSeconds=0;
-    hourly.forEach((bucket,hour)=>{
-      if(bucket.seconds>bestSeconds){
-        bestSeconds=bucket.seconds;
-        bestHour=hour;
-      }
-    });
-
-    return {
-      sessionCount:sessions.length,
-      totalSeconds,
-      avgSeconds:sessions.length?Math.round(totalSeconds/sessions.length):0,
-      longest,
-      activeDays:activeDays.size,
-      hourly,
-      bestHour,
-      bestSeconds,
-      timedSessions
-    };
+    return AnalyticsCore.sessionAnalytics(
+      sessionsForKeys(keys),
+      session=>sessionSecondsForAnalytics(session)
+    );
   }
 
   function renderSessionAnalytics(){
     if(!el.sessionAnalyticsBody) return;
-    const keys=getPeriodKeys(currentPeriod);
-    const stats=sessionAnalyticsForKeys(keys);
 
-    if(!stats.sessionCount){
-      el.sessionAnalyticsBody.innerHTML='<div class="todo-empty">Bu dönemde henüz oturum kaydı yok.</div>';
-      return;
-    }
-
-    const bestLabel=stats.bestHour>=0 ? pad(stats.bestHour)+':00–'+pad((stats.bestHour+1)%24)+':00' : '—';
-    const longestLabel=stats.longest ? formatDurationLabel(stats.longest.seconds) : '—';
-    const shownHours=[0,2,4,6,8,10,12,14,16,18,20,22];
-    const pairTotals=shownHours.map(hour=>stats.hourly[hour].seconds + stats.hourly[hour+1].seconds);
-    const maxHour=Math.max(...pairTotals,1);
-
-    const bars=shownHours.map((hour,index)=>{
-      const bucketSeconds=pairTotals[index];
-      const height=Math.max(bucketSeconds>0?5:2,Math.round(bucketSeconds/maxHour*92));
-      const isBest=stats.bestHour===hour || stats.bestHour===hour+1;
-      const title=pad(hour)+':00–'+pad((hour+2)%24)+':00 · '+formatDurationLabel(bucketSeconds);
-      return '<div class="hour-col'+(isBest?' best':'')+'" title="'+title+'">'
-        + '<div class="hour-bar-wrap"><div class="hour-bar" style="height:'+height+'%"></div></div>'
-        + '<span class="hour-label">'+pad(hour)+'</span>'
-        + '</div>';
-    }).join('');
-
-    el.sessionAnalyticsBody.innerHTML=
-      '<div class="session-analytics-grid">'
-      + '<div class="session-analytics-stat"><div class="k">Ortalama Oturum</div><div class="v">'+formatDurationLabel(stats.avgSeconds)+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">En Uzun Oturum</div><div class="v">'+longestLabel+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">En Verimli Başlangıç</div><div class="v">'+bestLabel+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">Aktif Gün</div><div class="v">'+stats.activeDays+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">Zaman Damgalı Oturum</div><div class="v">'+stats.timedSessions+' / '+stats.sessionCount+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">Toplam Oturum</div><div class="v">'+stats.sessionCount+'</div></div>'
-      + '</div>'
-      + '<div class="hour-analytics">'+bars+'</div>'
-      + '<div class="hour-analytics-note">Saat grafiği oturumların <b>başlangıç saatine</b> göre gruplandırılır. Eski kayıtlarda başlangıç saati yoksa bu grafiğe dahil edilmez.</div>';
+    const stats=sessionAnalyticsForKeys(getPeriodKeys(currentPeriod));
+    el.sessionAnalyticsBody.innerHTML=StatsView.buildSessionAnalytics(stats,{
+      pad,
+      formatDurationLabel
+    });
   }
 
   function renderStatsWeekNav(){
@@ -6170,24 +5945,15 @@
     return '<span class="task-due-badge '+cls+'">📅 '+escapeHtml(label)+'</span>';
   }
 
-  function renderTaskCard(t){
-    const tag = tagById(normalizedTaskTagId(t));
-    const tagHtml = tag ? '<span class="task-tag" style="--tag-color:'+safeTagColor(tag.color)+'">#'+escapeHtml(tag.name)+'</span>' : '';
-    const borderStyle = tag ? ' style="border-left-color:'+safeTagColor(tag.color)+'"' : '';
-    const dueHtml = taskDueBadge(t.dueDate, t.time, t.done);
-    const repeatHtml = t.repeat && t.repeat!=='none' ? '<span class="task-repeat-badge">↻ '+repeatTaskLabel(t.repeat,t.repeatDays)+'</span>' : '';
-    return '<div class="task-card'+(t.done?' completed':'')+'" draggable="true" data-task-id="'+t.id+'"'+borderStyle+'>'
-      + '<span class="task-drag-handle" title="Sürükleyerek sırala">☰</span>'
-      + '<button class="task-check'+(t.done?' done':'')+'" data-action="toggle-task" data-id="'+t.id+'">'+(t.done?'✓':'')+'</button>'
-      + '<div class="task-card-body">'
-      +   '<div class="task-text'+(t.done?' done':'')+'">'+escapeHtml(t.text)+'</div>'
-      +   tagHtml
-      + '</div>'
-      + ((dueHtml || repeatHtml) ? '<div class="task-right-meta">'+dueHtml+repeatHtml+'</div>' : '')
-      + (!t.done ? '<button class="task-focus-btn" data-action="focus-task" data-id="'+t.id+'" title="Bu görev için çalışma oturumu başlat">▶ Odaklan</button>' : '')
-      + '<button class="task-del" data-action="edit-task" data-id="'+t.id+'" aria-label="Görevi düzenle" title="Görevi düzenle">✎</button>'
-      + '<button class="task-del" data-action="delete-task" data-id="'+t.id+'" aria-label="Görevi sil">✕</button>'
-      + '</div>';
+  function renderTaskCard(task){
+    return TaskView.buildCard(task,{
+      tagById,
+      normalizedTaskTagId,
+      safeTagColor,
+      escapeHtml,
+      taskDueBadge,
+      repeatTaskLabel
+    });
   }
 
   if(el.taskCreateToggle && el.taskCreatePanel){
@@ -6242,53 +6008,22 @@
 
   function renderTaskList(){
     renderTaskTagControls();
-    const today = todayKey();
-    const searchQuery=(el.taskSearchInput?.value || '').trim().toLocaleLowerCase('tr-TR');
-    const filtered = data.tasks.filter(t=>{
-      if(currentTaskFilter !== 'all' && normalizedTaskTagId(t) !== currentTaskFilter) return false;
 
-      if(currentTaskStatusFilter==='active' && t.done) return false;
-      if(currentTaskStatusFilter==='done' && !t.done) return false;
-
-      if(currentTaskDateFilter!=='all'){
-        if(currentTaskDateFilter==='overdue' && !(t.dueDate && t.dueDate < today && !t.done)) return false;
-        if(currentTaskDateFilter==='today' && t.dueDate !== today) return false;
-        if(currentTaskDateFilter==='upcoming' && !(t.dueDate && t.dueDate > today)) return false;
-        if(currentTaskDateFilter==='nodate' && t.dueDate) return false;
-      }
-
-      if(!searchQuery) return true;
-      const haystack=[t.text||'', t.dueDate||'', t.time||''].join(' ').toLocaleLowerCase('tr-TR');
-      return haystack.includes(searchQuery);
+    const groups=TaskView.filterAndGroup(TaskRepository.all(),{
+      today:todayKey(),
+      taskFilter:currentTaskFilter,
+      statusFilter:currentTaskStatusFilter,
+      dateFilter:currentTaskDateFilter,
+      searchQuery:el.taskSearchInput?.value || '',
+      normalizedTaskTagId
     });
-    const active = filtered.filter(t=>!t.done).sort((a,b)=>(Number(a.sortOrder)||0)-(Number(b.sortOrder)||0));
-    const done = filtered.filter(t=>t.done).sort((a,b)=> (b.doneAt||'').localeCompare(a.doneAt||''));
 
-    if(filtered.length === 0){
-      const filteredView = searchQuery || currentTaskFilter!=='all' || currentTaskStatusFilter!=='all' || currentTaskDateFilter!=='all';
-      el.taskListBody.innerHTML = filteredView
-        ? '<div class="task-empty">Bu arama ve filtrelere uyan görev bulunamadı.</div>'
-        : '<div class="task-empty">Henüz görev yok. Yukarıdan yeni bir görev ekleyebilirsin.</div>';
-      el.clearDoneTasksBtn.style.display = 'none';
-      return;
-    }
+    el.taskListBody.innerHTML=TaskView.buildList(
+      groups,
+      task=>renderTaskCard(task)
+    );
 
-    const overdue = active.filter(t=>t.dueDate && t.dueDate < today);
-    const dueToday = active.filter(t=>t.dueDate === today);
-    const upcoming = active.filter(t=>t.dueDate && t.dueDate > today);
-    const noDate = active.filter(t=>!t.dueDate);
-
-    let html = '';
-    if(overdue.length){ html += '<div class="task-group-title">⚠️ Gecikmiş</div>' + overdue.map(renderTaskCard).join(''); }
-    if(dueToday.length){ html += '<div class="task-group-title">Bugün</div>' + dueToday.map(renderTaskCard).join(''); }
-    if(upcoming.length){ html += '<div class="task-group-title">Yaklaşan</div>' + upcoming.map(renderTaskCard).join(''); }
-    if(noDate.length){ html += '<div class="task-group-title">Tarihsiz</div>' + noDate.map(renderTaskCard).join(''); }
-    if(done.length){
-      html += '<div class="task-group-title task-group-title-with-action"><span>Tamamlanan</span><button class="task-group-clear-done" data-action="clear-completed-inline" type="button">Tümünü sil</button></div>'
-        + done.map(renderTaskCard).join('');
-    }
-    el.taskListBody.innerHTML = html || '<div class="task-empty">Görev yok. Yukarıdan ekleyebilirsin.</div>';
-    el.clearDoneTasksBtn.style.display = 'none';
+    el.clearDoneTasksBtn.style.display='none';
   }
 
   function toggleTaskDone(id){
@@ -7442,48 +7177,16 @@
 
   // ================= KOLEKSİYON =================
   function renderCollection(){
-    const stage = getGrowthStage(data.treeProgress);
-    const progressPct = Math.min(100, data.treeProgress / TREE_GOAL * 100);
-
-    let html = '<div class="tree-progress-card">'
-      + '<div class="tp-emoji">'+stage.emoji+'</div>'
-      + '<div class="tp-info">'
-      +   '<div class="tp-title">Ağaç #'+data.treeNumber+' büyüyor</div>'
-      +   '<div class="tp-bar"><div class="tp-fill" style="width:'+progressPct+'%"></div></div>'
-      +   '<div class="tp-caption">'+Math.round(data.treeProgress)+' / '+TREE_GOAL+' büyüme puanı — tür tamamlanınca belli olacak 🌱</div>'
-      + '</div>'
-      + '</div>';
-
-    if(data.collection.length > 0){
-      const uniqueCount = uniqueSpeciesCount();
-      html += '<div class="collection-stats">'
-        + '<div class="collection-stat"><div class="cs-num">'+data.collection.length+'</div><div class="cs-lbl">Toplam Ağaç</div></div>'
-        + '<div class="collection-stat"><div class="cs-num">'+uniqueCount+' / '+SPECIES_POOL.length+'</div><div class="cs-lbl">Keşfedilen Tür</div></div>'
-        + '</div>';
-    }
-
-    if(data.collection.length === 0){
-      const remaining = Math.max(0, Math.ceil(TREE_GOAL - data.treeProgress));
-      html += '<div class="empty-state">Henüz tamamlanmış ağacın yok.<br>İlk ağacını tamamlamak için <b>'+remaining+'</b> büyüme puanı daha gerek.</div>';
-      el.collectionContent.innerHTML = html;
-      return;
-    }
-
-    const items = [...data.collection].reverse();
-    html += '<div class="collection-grid">';
-    items.forEach((item, i)=>{
-      const d = new Date(item.completedAt);
-      const dateStr = displayDate(d);
-      const colors = SPECIES_COLORS[item.species] || {accent:'#74d99f', bg:'rgba(116,217,159,0.16)'};
-      html += '<div class="tree-card" style="--accent:'+colors.accent+';--accent-bg:'+colors.bg+';animation-delay:'+(i*0.04)+'s">'
-        + '<span class="badge-num">Ağaç #'+item.treeNumber+'</span>'
-        + '<div class="emoji">'+item.emoji+'</div>'
-        + '<div class="species">'+item.species+'</div>'
-        + '<div class="date">'+dateStr+'</div>'
-        + '</div>';
+    el.collectionContent.innerHTML=CollectionView.build({
+      treeProgress:data.treeProgress,
+      treeNumber:data.treeNumber,
+      collection:data.collection,
+      treeGoal:TREE_GOAL,
+      speciesPoolSize:SPECIES_POOL.length,
+      growthStage:getGrowthStage(data.treeProgress),
+      speciesColors:SPECIES_COLORS,
+      displayDate
     });
-    html += '</div>';
-    el.collectionContent.innerHTML = html;
   }
 
 
@@ -7540,7 +7243,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -7558,6 +7261,9 @@
         viewFormatters: !!window.ProductivityViewFormatters,
         summaryView: !!window.ProductivitySummaryView,
         calendarView: !!window.ProductivityCalendarView,
+        statsView: !!window.ProductivityStatsView,
+        taskView: !!window.ProductivityTaskView,
+        collectionView: !!window.ProductivityCollectionView,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -8920,6 +8626,59 @@
       equal(html.includes('id="summaryPrintArea"'),true);
       equal(html.includes('id="shareBtn"'),true);
       equal(html.includes('id="summaryPrintBtn"'),true);
+    });
+
+
+    test('StatsView, TaskView ve CollectionView modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityStatsView),true);
+      equal(Boolean(window.ProductivityTaskView),true);
+      equal(Boolean(window.ProductivityCollectionView),true);
+    });
+
+    test('AnalyticsCore subject breakdown süreye göre sıralanır', ()=>{
+      const rows=window.ProductivityAnalyticsCore.subjectBreakdown([
+        {key:'2026-11-12',session:{subject:'A',duration:300}},
+        {key:'2026-11-12',session:{subject:'B',duration:900}}
+      ],session=>session.duration);
+      equal(rows[0][0],'B');
+      equal(rows[0][1].seconds,900);
+    });
+
+    test('StatsView metric chart SVG üretir', ()=>{
+      const svg=window.ProductivityStatsView.buildMetricChart({
+        labels:['Pzt','Sal'],
+        values:[10,20],
+        chartType:'bar',
+        goalMinutes:30
+      });
+      equal(svg.includes('chart-bar'),true);
+      equal(svg.includes('Günlük hedef: 30 dk'),true);
+    });
+
+    test('TaskView filtreleri gecikmiş görevleri ayırır', ()=>{
+      const groups=window.ProductivityTaskView.filterAndGroup([
+        {id:'1',text:'Eski',dueDate:'2026-11-10',done:false,sortOrder:0},
+        {id:'2',text:'Bugün',dueDate:'2026-11-12',done:false,sortOrder:1}
+      ],{
+        today:'2026-11-12',
+        dateFilter:'overdue',
+        normalizedTaskTagId:()=>null
+      });
+      equal(groups.filtered.length,1);
+      equal(groups.overdue[0].id,'1');
+    });
+
+    test('CollectionView boş koleksiyonda kalan büyümeyi gösterir', ()=>{
+      const html=window.ProductivityCollectionView.build({
+        treeProgress:100,
+        treeNumber:2,
+        collection:[],
+        treeGoal:140,
+        speciesPoolSize:44,
+        growthStage:{emoji:'🌿'},
+        displayDate:value=>String(value)
+      });
+      equal(html.includes('<b>40</b> büyüme puanı'),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
