@@ -35,8 +35,11 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 18. **Stats view** — chart, heatmap, subject and session analytics markup.
 19. **Task view** — task filtering, grouping and task-card markup.
 20. **Collection view** — tree progress and collection-grid markup.
-21. **App main** — composition root, DOM binding and remaining feature orchestration.
-22. **Cloud sync** — optional cloud transport and account synchronization.
+21. **Session view** — session cards, todos, target progress and hidden/history markup.
+22. **Focus view** — Focus Mode presentation model derived from active-session state.
+23. **Work controls view** — timer/break control-button markup.
+24. **App main** — composition root, DOM binding and remaining feature orchestration.
+25. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -54,7 +57,7 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Extract session-list rendering and remaining modal/browser interaction clusters from the main composition file.
+- Extract reusable modal/browser interaction infrastructure from the main composition file.
 
 ## Change log organization
 
