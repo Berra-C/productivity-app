@@ -328,6 +328,168 @@
     };
   }
 
+
+  function sessionAnalytics(entries=[],sessionSeconds=()=>0){
+    const hourly=Array.from({length:24},()=>({seconds:0,sessions:0}));
+    let totalSeconds=0;
+    let longest=null;
+    let timedSessions=0;
+    const activeDays=new Set();
+
+    (Array.isArray(entries)?entries:[]).forEach(({key,session})=>{
+      if(!session) return;
+      const seconds=Math.max(0,Number(sessionSeconds(session,key))||0);
+      totalSeconds+=seconds;
+
+      if(seconds>0) activeDays.add(key);
+
+      const subject=session.subject && session.subject!=='Genel'
+        ? session.subject
+        : 'Genel';
+
+      if(!longest || seconds>longest.seconds){
+        longest={seconds,subject};
+      }
+
+      if(session.startedAt){
+        const started=new Date(session.startedAt);
+        if(!Number.isNaN(started.getTime())){
+          const hour=started.getHours();
+          hourly[hour].seconds+=seconds;
+          hourly[hour].sessions+=1;
+          timedSessions+=1;
+        }
+      }
+    });
+
+    let bestHour=-1;
+    let bestSeconds=0;
+
+    hourly.forEach((bucket,hour)=>{
+      if(bucket.seconds>bestSeconds){
+        bestSeconds=bucket.seconds;
+        bestHour=hour;
+      }
+    });
+
+    return {
+      sessionCount:Array.isArray(entries)?entries.length:0,
+      totalSeconds,
+      avgSeconds:entries.length?Math.round(totalSeconds/entries.length):0,
+      longest,
+      activeDays:activeDays.size,
+      hourly,
+      bestHour,
+      bestSeconds,
+      timedSessions
+    };
+  }
+
+  function subjectBreakdown(entries=[],sessionSeconds=()=>0){
+    const rows=new Map();
+
+    (Array.isArray(entries)?entries:[]).forEach(({key,session})=>{
+      if(!session) return;
+
+      const subject=session.subject && session.subject!=='Genel'
+        ? session.subject
+        : 'Genel';
+
+      const current=rows.get(subject) || {
+        seconds:0,
+        sessions:0,
+        distractions:0,
+        targetSessions:0,
+        reachedTargets:0
+      };
+
+      const seconds=Math.max(0,Number(sessionSeconds(session,key))||0);
+
+      current.seconds+=seconds;
+      current.sessions+=1;
+      current.distractions+=Number(session.distractions||0);
+
+      if(session.targetSeconds){
+        current.targetSessions+=1;
+        if(seconds>=Number(session.targetSeconds)){
+          current.reachedTargets+=1;
+        }
+      }
+
+      rows.set(subject,current);
+    });
+
+    return [...rows.entries()].sort(
+      (a,b)=>b[1].seconds-a[1].seconds
+    );
+  }
+
+  function subjectChartData(slots=[],options={}){
+    const sessionsForKey=typeof options.sessionsForKey==='function'
+      ? options.sessionsForKey
+      : ()=>[];
+    const sessionSeconds=typeof options.sessionSeconds==='function'
+      ? options.sessionSeconds
+      : session=>Number(session?.duration)||0;
+    const maxSubjects=Math.max(1,Number(options.maxSubjects)||6);
+
+    const perSlot=(Array.isArray(slots)?slots:[]).map(slot=>{
+      const totals={};
+
+      (slot.keys||[]).forEach(key=>{
+        (sessionsForKey(key)||[]).forEach(session=>{
+          const duration=Math.max(0,Number(sessionSeconds(session,key))||0);
+          if(duration<=0) return;
+
+          const subject=session.subject || 'Genel';
+          totals[subject]=(totals[subject]||0)+Math.round(duration/60);
+        });
+      });
+
+      return totals;
+    });
+
+    const grandTotals={};
+
+    perSlot.forEach(totals=>{
+      Object.entries(totals).forEach(([subject,value])=>{
+        grandTotals[subject]=(grandTotals[subject]||0)+value;
+      });
+    });
+
+    let subjects=Object.entries(grandTotals)
+      .sort((a,b)=>b[1]-a[1])
+      .map(entry=>entry[0]);
+
+    if(subjects.length>maxSubjects){
+      const others=subjects.slice(maxSubjects);
+      subjects=subjects.slice(0,maxSubjects);
+
+      perSlot.forEach(totals=>{
+        let sum=0;
+
+        others.forEach(subject=>{
+          if(totals[subject]){
+            sum+=totals[subject];
+            delete totals[subject];
+          }
+        });
+
+        if(sum>0){
+          totals['Diğer']=(totals['Diğer']||0)+sum;
+        }
+      });
+
+      subjects.push('Diğer');
+    }
+
+    return {
+      labels:slots.map(slot=>slot.label),
+      subjects,
+      perSlot
+    };
+  }
+
   window.ProductivityAnalyticsCore={
     planningStats,
     productiveHourStats,
@@ -336,6 +498,9 @@
     normalizePlanText,
     timedEventDurationSeconds,
     scheduledStudyStats,
-    weeklyReviewStats
+    weeklyReviewStats,
+    sessionAnalytics,
+    subjectBreakdown,
+    subjectChartData
   };
 })();
