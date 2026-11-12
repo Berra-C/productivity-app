@@ -542,6 +542,615 @@
   window.ProductivityStateWriter={create};
 })();
 
+/* ===== assets/js/modules/state-migration.js ===== */
+(() => {
+  'use strict';
+
+  function create(options={}){
+    const schemaVersion=Math.max(1,Number(options.schemaVersion)||1);
+    const closedIntervalSeconds=typeof options.closedIntervalSeconds==='function'
+      ? options.closedIntervalSeconds
+      : session=>Math.max(0,Number(session?.duration)||0);
+    const logger=options.logger || console;
+
+    function validate(raw){
+      if(!raw || typeof raw!=='object' || Array.isArray(raw)) return false;
+      if(typeof raw.totalResists!=='number' || typeof raw.treeProgress!=='number') return false;
+      if(!raw.days || typeof raw.days!=='object' || Array.isArray(raw.days)) return false;
+      if(raw.tasks !== undefined && !Array.isArray(raw.tasks)) return false;
+      if(raw.events !== undefined && !Array.isArray(raw.events)) return false;
+      if(raw.taskTags !== undefined && !Array.isArray(raw.taskTags)) return false;
+      if(raw.collection !== undefined && !Array.isArray(raw.collection)) return false;
+      if(raw.sessionLog !== undefined && (!raw.sessionLog || typeof raw.sessionLog!=='object' || Array.isArray(raw.sessionLog))) return false;
+      return true;
+    }
+
+    function migrate(raw){
+
+    if(raw.schemaVersion === undefined){
+      // v1/v2 (sürüm alanı yoktu) -> eksik alanları doldur
+      if(raw.muted === undefined) raw.muted = false;
+      if(!raw.sessionLog) raw.sessionLog = {};
+      if(raw.activeSessionId === undefined) raw.activeSessionId = null;
+      if(raw.breakState === undefined) raw.breakState = null;
+      if(raw.totalTodosCompleted === undefined) raw.totalTodosCompleted = 0;
+      if(raw.notificationsEnabled === undefined) raw.notificationsEnabled = false;
+      if(!raw.badgeUnlockLog) raw.badgeUnlockLog = [];
+      if(!raw.dailyGoalMinutes) raw.dailyGoalMinutes = 60;
+      if(!raw.subjects) raw.subjects = [];
+    }
+    if(raw.bestGoalStreak === undefined) raw.bestGoalStreak = 0;
+    if(raw.streakFreezes === undefined) raw.streakFreezes = 0;
+    raw.streakFreezes = Math.max(0,Math.min(2,Number(raw.streakFreezes)||0));
+    if(raw.streakFreezeAwardedAt === undefined) raw.streakFreezeAwardedAt = 0;
+    if(!Array.isArray(raw.streakRewardKeys)) raw.streakRewardKeys = [];
+    if(!Array.isArray(raw.frozenDays)) raw.frozenDays = [];
+    if(raw.streakGoalDaysTowardFreeze === undefined) raw.streakGoalDaysTowardFreeze = 0;
+    raw.streakGoalDaysTowardFreeze = Math.max(0,Math.min(6,Number(raw.streakGoalDaysTowardFreeze)||0));
+    if(raw.activeSessionDate === undefined) raw.activeSessionDate = null;
+    if(raw.activeTimerOwnerId === undefined) raw.activeTimerOwnerId = null;
+    if(!raw.storageMeta || typeof raw.storageMeta!=='object' || Array.isArray(raw.storageMeta)){
+      raw.storageMeta = {revision:0, updatedAt:0, writerId:null};
+    }else{
+      raw.storageMeta.revision = Math.max(0, Number(raw.storageMeta.revision)||0);
+      raw.storageMeta.updatedAt = Math.max(0, Number(raw.storageMeta.updatedAt)||0);
+      raw.storageMeta.writerId = raw.storageMeta.writerId ? String(raw.storageMeta.writerId) : null;
+    }
+    if(!raw.tombstones || typeof raw.tombstones!=='object' || Array.isArray(raw.tombstones)){
+      raw.tombstones={sessions:{},tasks:{},events:{}};
+    }
+    ['sessions','tasks','events'].forEach(kind=>{
+      if(!raw.tombstones[kind] || typeof raw.tombstones[kind]!=='object' || Array.isArray(raw.tombstones[kind])) raw.tombstones[kind]={};
+      Object.keys(raw.tombstones[kind]).forEach(id=>{
+        const ts=Number(raw.tombstones[kind][id]);
+        if(!Number.isFinite(ts) || ts<=0) delete raw.tombstones[kind][id];
+        else raw.tombstones[kind][id]=ts;
+      });
+    });
+    if(raw.onboarded === undefined) raw.onboarded = true; // önceden veri varsa zaten tanışmış demektir
+    if(raw.calendarActivityColors === undefined) raw.calendarActivityColors = true;
+    if(raw.calendarWorkIntervals === undefined) raw.calendarWorkIntervals = true;
+    if(!Number.isFinite(Number(raw.soundVolume))) raw.soundVolume = 70;
+    raw.soundVolume = Math.max(0, Math.min(100, Number(raw.soundVolume)));
+    if(!raw.soundCategories || typeof raw.soundCategories!=='object'){
+      raw.soundCategories = {interface:true, achievement:true, alarm:true};
+    }else{
+      if(raw.soundCategories.interface === undefined) raw.soundCategories.interface = true;
+      if(raw.soundCategories.achievement === undefined) raw.soundCategories.achievement = true;
+      if(raw.soundCategories.alarm === undefined) raw.soundCategories.alarm = true;
+    }
+    if(!Array.isArray(raw.subjects)) raw.subjects = [];
+    if(!raw.notificationCategories || typeof raw.notificationCategories!=='object'){
+      raw.notificationCategories = {sessionTarget:true, breakReminder:true, dailyGoal:true};
+    }else{
+      if(raw.notificationCategories.sessionTarget === undefined) raw.notificationCategories.sessionTarget = true;
+      if(raw.notificationCategories.breakReminder === undefined) raw.notificationCategories.breakReminder = true;
+      if(raw.notificationCategories.dailyGoal === undefined) raw.notificationCategories.dailyGoal = true;
+    }
+    if(raw.totalResists === undefined) raw.totalResists = 0;
+    if(raw.treeProgress === undefined) raw.treeProgress = 0;
+    if(raw.treeNumber === undefined) raw.treeNumber = 1;
+    if(!Array.isArray(raw.speciesDeck)) raw.speciesDeck = [];
+    if(!Array.isArray(raw.collection)) raw.collection = [];
+    if(!Array.isArray(raw.badgeUnlockLog)) raw.badgeUnlockLog = [];
+    if(!raw.days || typeof raw.days!=='object' || Array.isArray(raw.days)) raw.days = {};
+    if(!raw.sessionLog || typeof raw.sessionLog!=='object' || Array.isArray(raw.sessionLog)) raw.sessionLog = {};
+    Object.keys(raw.sessionLog).forEach(key=>{
+      if(!Array.isArray(raw.sessionLog[key])) raw.sessionLog[key]=[];
+    });
+    const legacyGoalMinutes = Number(raw.dailyGoalMinutes) || 60;
+    Object.keys(raw.days).forEach(k=>{
+      const d = raw.days[k];
+      if(!d || typeof d !== 'object') return;
+      if(!Number.isFinite(Number(d.goalMinutes)) || Number(d.goalMinutes) <= 0){
+        d.goalMinutes = legacyGoalMinutes;
+      }
+      if(!d.distractionCategories || typeof d.distractionCategories !== 'object' || Array.isArray(d.distractionCategories)){
+        d.distractionCategories = {};
+      }
+    });
+    if(!raw.recurrenceExceptions || typeof raw.recurrenceExceptions!=='object' || Array.isArray(raw.recurrenceExceptions)){
+      raw.recurrenceExceptions = {tasks:{}, events:{}};
+    }
+    if(!raw.recurrenceExceptions.tasks || typeof raw.recurrenceExceptions.tasks!=='object' || Array.isArray(raw.recurrenceExceptions.tasks)){
+      raw.recurrenceExceptions.tasks = {};
+    }
+    if(!raw.recurrenceExceptions.events || typeof raw.recurrenceExceptions.events!=='object' || Array.isArray(raw.recurrenceExceptions.events)){
+      raw.recurrenceExceptions.events = {};
+    }
+    ['tasks','events'].forEach(kind=>{
+      Object.keys(raw.recurrenceExceptions[kind]).forEach(sourceId=>{
+        const list=raw.recurrenceExceptions[kind][sourceId];
+        if(!Array.isArray(list)){
+          delete raw.recurrenceExceptions[kind][sourceId];
+          return;
+        }
+        raw.recurrenceExceptions[kind][sourceId]=[...new Set(list.filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x))))].sort();
+        if(raw.recurrenceExceptions[kind][sourceId].length===0) delete raw.recurrenceExceptions[kind][sourceId];
+      });
+    });
+
+    if(!Array.isArray(raw.tasks)) raw.tasks = [];
+    if(!Array.isArray(raw.taskTags)){
+      raw.taskTags = [
+        {id:'tag_is', name:'İş', color:'#7aa2f7'},
+        {id:'tag_kisisel', name:'Kişisel', color:'#74d99f'}
+      ];
+      const legacyMap = {'İş':'tag_is','Kişisel':'tag_kisisel'};
+      raw.tasks.forEach(t=>{ t.tagId = legacyMap[t.tag] || null; });
+    } else {
+      raw.tasks.forEach(t=>{ if(t.tagId === undefined) t.tagId = null; });
+    }
+    raw.taskTags.forEach(tag=>{ if('labels' in tag) delete tag.labels; });
+    raw.tasks.forEach((t,index)=>{
+      if(!Number.isFinite(Number(t.sortOrder))) t.sortOrder=index;
+      if(t.createdAt===undefined) t.createdAt=null;
+      if(!Number.isFinite(Number(t.updatedAt))){
+        const parsedCreated=Date.parse(t.createdAt||'');
+        const parsedDone=Date.parse(t.doneAt||'');
+        t.updatedAt=Number.isFinite(parsedDone)?parsedDone:(Number.isFinite(parsedCreated)?parsedCreated:0);
+      }
+      if('subtag' in t) delete t.subtag;
+      if(t.repeat === undefined) t.repeat = 'none';
+      if(t.repeatSourceId === undefined) t.repeatSourceId = null;
+      if(!Array.isArray(t.repeatDays)) t.repeatDays = [];
+      if(t.repeatAnchorDay === undefined) t.repeatAnchorDay = null;
+      if(t.repeatUntil === undefined) t.repeatUntil = null;
+    });
+    const monthlyTaskAnchorBySource = {};
+    raw.tasks.forEach(t=>{
+      if(t.repeat!=='monthly' || !t.dueDate) return;
+      const source=t.repeatSourceId || t.id;
+      const day=Number(String(t.dueDate).slice(-2));
+      if(Number.isFinite(day)){
+        monthlyTaskAnchorBySource[source]=Math.max(monthlyTaskAnchorBySource[source]||0,day);
+      }
+    });
+    raw.tasks.forEach(t=>{
+      if(t.repeat==='monthly'){
+        const source=t.repeatSourceId || t.id;
+        const inferred=monthlyTaskAnchorBySource[source] || Number(String(t.dueDate||'').slice(-2)) || null;
+        if(!Number.isFinite(Number(t.repeatAnchorDay)) || Number(t.repeatAnchorDay)<1 || Number(t.repeatAnchorDay)>31){
+          t.repeatAnchorDay=inferred;
+        }
+      }else{
+        t.repeatAnchorDay=null;
+      }
+    });
+
+    if(!Array.isArray(raw.events)) raw.events = [];
+    raw.events.forEach(ev=>{
+      if(typeof ev.description!=='string') ev.description='';
+      if(ev.createdAt===undefined) ev.createdAt=null;
+      if(!Number.isFinite(Number(ev.updatedAt))){
+        const parsedCreated=Date.parse(ev.createdAt||'');
+        ev.updatedAt=Number.isFinite(parsedCreated)?parsedCreated:0;
+      }
+      ev.description=ev.description.slice(0,600);
+      if(ev.repeat === undefined) ev.repeat = 'none';
+      if(!Array.isArray(ev.repeatDays)) ev.repeatDays = [];
+      if(ev.repeatSourceId === undefined) ev.repeatSourceId = null;
+      if(ev.endTime === undefined) ev.endTime = null;
+      if(ev.repeatAnchorDay === undefined) ev.repeatAnchorDay = null;
+      if(ev.repeatUntil === undefined) ev.repeatUntil = null;
+    });
+    const monthlyEventAnchorBySource = {};
+    raw.events.forEach(ev=>{
+      if(ev.repeat!=='monthly' || !ev.date) return;
+      const source=ev.repeatSourceId || ev.id;
+      const day=Number(String(ev.date).slice(-2));
+      if(Number.isFinite(day)){
+        monthlyEventAnchorBySource[source]=Math.max(monthlyEventAnchorBySource[source]||0,day);
+      }
+    });
+    raw.events.forEach(ev=>{
+      if(ev.repeat==='monthly'){
+        const source=ev.repeatSourceId || ev.id;
+        const inferred=monthlyEventAnchorBySource[source] || Number(String(ev.date||'').slice(-2)) || null;
+        if(!Number.isFinite(Number(ev.repeatAnchorDay)) || Number(ev.repeatAnchorDay)<1 || Number(ev.repeatAnchorDay)>31){
+          ev.repeatAnchorDay=inferred;
+        }
+      }else{
+        ev.repeatAnchorDay=null;
+      }
+    });
+
+    // v4: oturum zaman damgaları ve tekil timer state uyumluluk katmanı.
+    // Eski oturumlarda kesin saat bilgisi yoksa veri uydurmak yerine null bırakılır.
+    Object.values(raw.sessionLog || {}).forEach(sessions=>{
+      if(!Array.isArray(sessions)) return;
+      sessions.forEach(session=>{
+        if(session.startedAt === undefined) session.startedAt = null;
+        if(session.endedAt === undefined) session.endedAt = null;
+        if(!Array.isArray(session.workIntervals)){
+          session.workIntervals = [];
+          const started = Number(session.startedAt);
+          const durationMs = Math.max(0, Number(session.duration||0))*1000;
+          if(Number.isFinite(started) && durationMs>0){
+            session.workIntervals.push({start:started,end:started+durationMs,legacyApprox:true});
+          }
+          if(session.id===raw.activeSessionId && raw.isWorking && Number(raw.workStart)){
+            session.workIntervals.push({start:Number(raw.workStart),end:null});
+          }
+        }else{
+          session.workIntervals = session.workIntervals.map(interval=>({
+            start:Number(interval?.start)||null,
+            end:interval?.end==null?null:(Number(interval.end)||null),
+            legacyApprox:!!interval?.legacyApprox
+          })).filter(interval=>interval.start);
+        }
+        if(session.hidden === undefined) session.hidden = false;
+        if(session.createdAt===undefined) session.createdAt=Number(session.startedAt)||null;
+        if(!Number.isFinite(Number(session.updatedAt))){
+          session.updatedAt=Number(session.endedAt)||Number(session.startedAt)||Number(session.createdAt)||0;
+        }
+        const closedDuration=closedIntervalSeconds(session,{fallbackToDuration:true});
+        if(Number.isFinite(closedDuration)) session.duration=closedDuration;
+        if(!session.distractionCategories || typeof session.distractionCategories !== 'object' || Array.isArray(session.distractionCategories)){
+          session.distractionCategories = {};
+        }
+      });
+    });
+    if(raw.activeSessionId){
+      const activeSessions = Object.values(raw.sessionLog || {}).flatMap(v=>Array.isArray(v)?v:[]);
+      const active = activeSessions.find(session=>session.id===raw.activeSessionId);
+      if(active && !active.startedAt && raw.workStart){
+        active.startedAt = Math.max(0, Number(raw.workStart) - Number(active.duration || 0)*1000);
+      }
+    }
+    if(!raw.timerState || typeof raw.timerState !== 'object'){
+      const mode = raw.breakState ? 'break' : (raw.activeSessionId ? (raw.isWorking ? 'working' : 'paused') : 'idle');
+      raw.timerState = {
+        mode,
+        sessionId: raw.activeSessionId || null,
+        runningSince: raw.isWorking ? (raw.workStart || null) : null,
+        ownerId: raw.activeTimerOwnerId || null
+      };
+    }else if(raw.timerState.ownerId === undefined){
+      raw.timerState.ownerId = raw.activeTimerOwnerId || null;
+    }
+
+    raw.schemaVersion = schemaVersion;
+    return raw;
+  
+    }
+
+    function tryMigrate(raw,sourceLabel='stored state'){
+      if(!raw || !validate(raw)) return null;
+      try{
+        return migrate(raw);
+      }catch(error){
+        logger.error?.(sourceLabel+' verisi migrate edilemedi:',error);
+        return null;
+      }
+    }
+
+    return Object.freeze({validate,migrate,tryMigrate});
+  }
+
+  window.ProductivityStateMigration={create};
+})();
+
+/* ===== assets/js/modules/recovery-store.js ===== */
+(() => {
+  'use strict';
+
+  function create(options={}){
+    const indexedDBProvider=options.indexedDBProvider || (()=>globalThis.indexedDB);
+    const dbName=String(options.dbName||'productivity_app_storage');
+    const dbVersion=Math.max(1,Number(options.dbVersion)||1);
+    const storeName=String(options.storeName||'snapshots');
+    const primaryKey=String(options.primaryKey||'app-data');
+    const schemaVersion=Math.max(1,Number(options.schemaVersion)||1);
+    const now=options.now || (()=>Date.now());
+    const logger=options.logger || console;
+
+    let openPromise=null;
+    let mirrorQueue=Promise.resolve();
+
+    function open(){
+      const indexedDB=indexedDBProvider();
+      if(!indexedDB || typeof indexedDB.open!=='function') return Promise.resolve(null);
+      if(openPromise) return openPromise;
+
+      openPromise=new Promise(resolve=>{
+        let request;
+        try{
+          request=indexedDB.open(dbName,dbVersion);
+        }catch(error){
+          logger.warn?.('IndexedDB açılamadı:',error);
+          resolve(null);
+          return;
+        }
+
+        request.onupgradeneeded=()=>{
+          const db=request.result;
+          if(!db.objectStoreNames.contains(storeName)){
+            db.createObjectStore(storeName,{keyPath:'key'});
+          }
+        };
+        request.onsuccess=()=>resolve(request.result);
+        request.onerror=()=>{
+          logger.warn?.('IndexedDB açılamadı:',request.error);
+          resolve(null);
+        };
+        request.onblocked=()=>logger.warn?.(
+          'IndexedDB yükseltmesi başka bir sekme tarafından engelleniyor.'
+        );
+      });
+
+      return openPromise;
+    }
+
+    async function write(serializedData){
+      const db=await open();
+      if(!db) return false;
+
+      return new Promise(resolve=>{
+        let tx;
+        try{
+          tx=db.transaction(storeName,'readwrite');
+          tx.objectStore(storeName).put({
+            key:primaryKey,
+            schemaVersion,
+            savedAt:now(),
+            payload:serializedData
+          });
+        }catch(error){
+          logger.warn?.('IndexedDB kaydı başlatılamadı:',error);
+          resolve(false);
+          return;
+        }
+
+        tx.oncomplete=()=>resolve(true);
+        tx.onerror=()=>{
+          logger.warn?.('IndexedDB kaydı başarısız:',tx.error);
+          resolve(false);
+        };
+        tx.onabort=()=>resolve(false);
+      });
+    }
+
+    function mirror(serializedData){
+      mirrorQueue=mirrorQueue
+        .catch(()=>false)
+        .then(()=>write(serializedData));
+      return mirrorQueue;
+    }
+
+    async function readRaw(){
+      const db=await open();
+      if(!db) return null;
+
+      return new Promise(resolve=>{
+        try{
+          const tx=db.transaction(storeName,'readonly');
+          const request=tx.objectStore(storeName).get(primaryKey);
+          request.onsuccess=()=>resolve(request.result || null);
+          request.onerror=()=>resolve(null);
+        }catch(error){
+          resolve(null);
+        }
+      });
+    }
+
+    async function clear(){
+      const db=await open();
+      if(!db) return false;
+
+      return new Promise(resolve=>{
+        let tx;
+        try{
+          tx=db.transaction(storeName,'readwrite');
+          tx.objectStore(storeName).delete(primaryKey);
+        }catch(error){
+          resolve(false);
+          return;
+        }
+        tx.oncomplete=()=>resolve(true);
+        tx.onerror=()=>resolve(false);
+        tx.onabort=()=>resolve(false);
+      });
+    }
+
+    function parse(snapshot,validate){
+      try{
+        const parsed=snapshot && typeof snapshot.payload==='string'
+          ? JSON.parse(snapshot.payload)
+          : null;
+        return parsed && (!validate || validate(parsed)) ? parsed : null;
+      }catch(error){
+        return null;
+      }
+    }
+
+    async function readParsed(validate){
+      return parse(await readRaw(),validate);
+    }
+
+    return Object.freeze({open,write,mirror,readRaw,clear,parse,readParsed});
+  }
+
+  window.ProductivityRecoveryStore={create};
+})();
+
+/* ===== assets/js/modules/state-recovery-service.js ===== */
+(() => {
+  'use strict';
+
+  function create(options={}){
+    const getNeedsRecovery=options.getNeedsRecovery || (()=>false);
+    const setNeedsRecovery=options.setNeedsRecovery || (()=>{});
+    const readRecoverySnapshot=options.readRecoverySnapshot;
+    const migrate=options.migrate;
+    const setState=options.setState || (()=>{});
+    const normalizeRecoveredState=options.normalizeRecoveredState || (()=>{});
+    const prepareRecoveredState=options.prepareRecoveredState || (()=>{});
+    const saveCurrent=options.saveCurrent || (()=>{});
+    const scheduleReview=options.scheduleReview || (()=>{});
+    const renderRecovered=options.renderRecovered || (()=>{});
+    const notifyRecovered=options.notifyRecovered || (()=>{});
+    const logger=options.logger || console;
+
+    if(typeof readRecoverySnapshot!=='function'){
+      throw new Error('StateRecoveryService readRecoverySnapshot gerekli');
+    }
+    if(typeof migrate!=='function'){
+      throw new Error('StateRecoveryService migrate gerekli');
+    }
+
+    async function recoverIfNeeded(){
+      if(!getNeedsRecovery()) return false;
+
+      let restored=null;
+      try{
+        const parsed=await readRecoverySnapshot();
+        restored=migrate(parsed,'IndexedDB recovery');
+      }catch(error){
+        logger.warn?.('IndexedDB kurtarma snapshotı okunamadı:',error);
+      }
+
+      setNeedsRecovery(false);
+
+      if(!restored){
+        saveCurrent();
+        return false;
+      }
+
+      setState(restored);
+      normalizeRecoveredState(restored);
+      prepareRecoveredState(restored);
+      saveCurrent({force:true});
+      scheduleReview();
+      renderRecovered(restored);
+      notifyRecovered(restored);
+      return true;
+    }
+
+    return Object.freeze({recoverIfNeeded});
+  }
+
+  window.ProductivityStateRecoveryService={create};
+})();
+
+/* ===== assets/js/modules/destructive-sync-guard.js ===== */
+(() => {
+  'use strict';
+
+  function counts(state){
+    return {
+      sessions:Object.values(state?.sessionLog||{})
+        .reduce((sum,list)=>sum+(Array.isArray(list)?list.length:0),0),
+      tasks:Array.isArray(state?.tasks)?state.tasks.length:0,
+      events:Array.isArray(state?.events)?state.events.length:0,
+      days:Object.keys(state?.days||{}).length
+    };
+  }
+
+  function risk(localState,remoteState){
+    const local=counts(localState);
+    const remote=counts(remoteState);
+    const ratio=(remoteValue,localValue)=>localValue>0?remoteValue/localValue:1;
+    const ratios={
+      sessions:ratio(remote.sessions,local.sessions),
+      tasks:ratio(remote.tasks,local.tasks),
+      events:ratio(remote.events,local.events),
+      days:ratio(remote.days,local.days)
+    };
+
+    const risky=
+      (local.sessions>=10 && ratios.sessions<0.55) ||
+      (local.tasks>=10 && ratios.tasks<0.50) ||
+      (local.days>=14 && ratios.days<0.55) ||
+      (local.sessions>=20 && ratios.sessions<0.30) ||
+      (local.tasks>=20 && ratios.tasks<0.30);
+
+    return {risky:Boolean(risky),local,remote,ratios};
+  }
+
+  window.ProductivityDestructiveSyncGuard={counts,risk};
+})();
+
+/* ===== assets/js/modules/external-state-service.js ===== */
+(() => {
+  'use strict';
+
+  function clone(value){
+    return value==null ? value : JSON.parse(JSON.stringify(value));
+  }
+
+  function captureDeviceLocalTimerState(state,options={}){
+    const tabId=options.tabId;
+    const findSession=options.findSession || (()=>null);
+    const isBreakActive=options.isBreakActive || (()=>false);
+
+    const ownsTimer=!state?.activeTimerOwnerId || state.activeTimerOwnerId===tabId;
+    const active=state?.activeSessionId ? findSession(state.activeSessionId) : null;
+
+    if(!ownsTimer || (!state?.isWorking && !active && !isBreakActive())){
+      return null;
+    }
+
+    return {
+      activeSessionId:state.activeSessionId || null,
+      activeSessionDate:state.activeSessionDate || null,
+      isWorking:Boolean(state.isWorking),
+      workStart:state.workStart || null,
+      activeTimerOwnerId:state.activeTimerOwnerId || (state.isWorking?tabId:null),
+      timerState:clone(state.timerState),
+      breakState:clone(state.breakState),
+      activeSession:clone(active)
+    };
+  }
+
+  function restoreDeviceLocalTimerState(incoming,snapshot,options={}){
+    if(!snapshot) return incoming;
+
+    const findSessionDateKey=options.findSessionDateKey || (()=>null);
+    const todayKey=options.todayKey || (()=>null);
+
+    if(snapshot.activeSession && snapshot.activeSessionId){
+      const key=snapshot.activeSessionDate
+        || findSessionDateKey(snapshot.activeSessionId)
+        || todayKey();
+
+      if(!incoming.sessionLog || typeof incoming.sessionLog!=='object'){
+        incoming.sessionLog={};
+      }
+      if(!Array.isArray(incoming.sessionLog[key])) incoming.sessionLog[key]=[];
+
+      const sessions=incoming.sessionLog[key];
+      const index=sessions.findIndex(s=>s?.id===snapshot.activeSessionId);
+      if(index>=0) sessions[index]=clone(snapshot.activeSession);
+      else sessions.push(clone(snapshot.activeSession));
+    }
+
+    incoming.activeSessionId=snapshot.activeSessionId;
+    incoming.activeSessionDate=snapshot.activeSessionDate;
+    incoming.isWorking=snapshot.isWorking;
+    incoming.workStart=snapshot.workStart;
+    incoming.activeTimerOwnerId=snapshot.activeTimerOwnerId;
+    incoming.breakState=clone(snapshot.breakState);
+    incoming.timerState=clone(snapshot.timerState) || {
+      mode:snapshot.isWorking
+        ? 'working'
+        : (snapshot.breakState
+          ? 'break'
+          : (snapshot.activeSessionId?'paused':'idle')),
+      sessionId:snapshot.activeSessionId,
+      runningSince:snapshot.workStart,
+      ownerId:snapshot.activeTimerOwnerId
+    };
+
+    return incoming;
+  }
+
+  window.ProductivityExternalStateService={
+    captureDeviceLocalTimerState,
+    restoreDeviceLocalTimerState
+  };
+})();
+
 /* ===== assets/js/modules/timer-core.js ===== */
 (() => {
   'use strict';
@@ -5867,8 +6476,13 @@
   const FocusView=window.ProductivityFocusView;
   const WorkControlsView=window.ProductivityWorkControlsView;
   const ModalService=window.ProductivityModalService;
+  const StateMigrationFactory=window.ProductivityStateMigration;
+  const RecoveryStoreFactory=window.ProductivityRecoveryStore;
+  const StateRecoveryServiceFactory=window.ProductivityStateRecoveryService;
+  const DestructiveSyncGuard=window.ProductivityDestructiveSyncGuard;
+  const ExternalStateService=window.ProductivityExternalStateService;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !EventDomainServiceFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -5895,7 +6509,12 @@
       !RecurrenceServiceFactory ? 'RecurrenceService' : null,
       !SessionDomainServiceFactory ? 'SessionService' : null,
       !TaskDomainServiceFactory ? 'TaskService' : null,
-      !EventDomainServiceFactory ? 'EventService' : null
+      !EventDomainServiceFactory ? 'EventService' : null,
+      !StateMigrationFactory ? 'StateMigration' : null,
+      !RecoveryStoreFactory ? 'RecoveryStore' : null,
+      !StateRecoveryServiceFactory ? 'StateRecoveryService' : null,
+      !DestructiveSyncGuard ? 'DestructiveSyncGuard' : null,
+      !ExternalStateService ? 'ExternalStateService' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -5958,6 +6577,23 @@
   const IDB_VERSION = 1;
   const IDB_STORE = 'snapshots';
   const IDB_PRIMARY_KEY = 'app-data';
+
+  const StateMigration=StateMigrationFactory.create({
+    schemaVersion:SCHEMA_VERSION,
+    closedIntervalSeconds:(session,options)=>sessionClosedIntervalSeconds(session,options),
+    logger:console
+  });
+
+  const RecoveryStore=RecoveryStoreFactory.create({
+    indexedDBProvider:()=>window.indexedDB,
+    dbName:IDB_NAME,
+    dbVersion:IDB_VERSION,
+    storeName:IDB_STORE,
+    primaryKey:IDB_PRIMARY_KEY,
+    schemaVersion:SCHEMA_VERSION,
+    now:()=>Date.now(),
+    logger:console
+  });
 
   const RANKS = [
     "Acemi Nöbetçi","Dikkatli Çırak","Kararlı Gözcü","Odak Bekçisi",
@@ -6434,277 +7070,19 @@
 
   // Eski/eksik alanları güvenli varsayılanlarla tamamlar; şema ilerledikçe buraya yeni kurallar eklenir.
   function migrateData(raw){
-    if(raw.schemaVersion === undefined){
-      // v1/v2 (sürüm alanı yoktu) -> eksik alanları doldur
-      if(raw.muted === undefined) raw.muted = false;
-      if(!raw.sessionLog) raw.sessionLog = {};
-      if(raw.activeSessionId === undefined) raw.activeSessionId = null;
-      if(raw.breakState === undefined) raw.breakState = null;
-      if(raw.totalTodosCompleted === undefined) raw.totalTodosCompleted = 0;
-      if(raw.notificationsEnabled === undefined) raw.notificationsEnabled = false;
-      if(!raw.badgeUnlockLog) raw.badgeUnlockLog = [];
-      if(!raw.dailyGoalMinutes) raw.dailyGoalMinutes = 60;
-      if(!raw.subjects) raw.subjects = [];
-    }
-    if(raw.bestGoalStreak === undefined) raw.bestGoalStreak = 0;
-    if(raw.streakFreezes === undefined) raw.streakFreezes = 0;
-    raw.streakFreezes = Math.max(0,Math.min(2,Number(raw.streakFreezes)||0));
-    if(raw.streakFreezeAwardedAt === undefined) raw.streakFreezeAwardedAt = 0;
-    if(!Array.isArray(raw.streakRewardKeys)) raw.streakRewardKeys = [];
-    if(!Array.isArray(raw.frozenDays)) raw.frozenDays = [];
-    if(raw.streakGoalDaysTowardFreeze === undefined) raw.streakGoalDaysTowardFreeze = 0;
-    raw.streakGoalDaysTowardFreeze = Math.max(0,Math.min(6,Number(raw.streakGoalDaysTowardFreeze)||0));
-    if(raw.activeSessionDate === undefined) raw.activeSessionDate = null;
-    if(raw.activeTimerOwnerId === undefined) raw.activeTimerOwnerId = null;
-    if(!raw.storageMeta || typeof raw.storageMeta!=='object' || Array.isArray(raw.storageMeta)){
-      raw.storageMeta = {revision:0, updatedAt:0, writerId:null};
-    }else{
-      raw.storageMeta.revision = Math.max(0, Number(raw.storageMeta.revision)||0);
-      raw.storageMeta.updatedAt = Math.max(0, Number(raw.storageMeta.updatedAt)||0);
-      raw.storageMeta.writerId = raw.storageMeta.writerId ? String(raw.storageMeta.writerId) : null;
-    }
-    if(!raw.tombstones || typeof raw.tombstones!=='object' || Array.isArray(raw.tombstones)){
-      raw.tombstones={sessions:{},tasks:{},events:{}};
-    }
-    ['sessions','tasks','events'].forEach(kind=>{
-      if(!raw.tombstones[kind] || typeof raw.tombstones[kind]!=='object' || Array.isArray(raw.tombstones[kind])) raw.tombstones[kind]={};
-      Object.keys(raw.tombstones[kind]).forEach(id=>{
-        const ts=Number(raw.tombstones[kind][id]);
-        if(!Number.isFinite(ts) || ts<=0) delete raw.tombstones[kind][id];
-        else raw.tombstones[kind][id]=ts;
-      });
-    });
-    if(raw.onboarded === undefined) raw.onboarded = true; // önceden veri varsa zaten tanışmış demektir
-    if(raw.calendarActivityColors === undefined) raw.calendarActivityColors = true;
-    if(raw.calendarWorkIntervals === undefined) raw.calendarWorkIntervals = true;
-    if(!Number.isFinite(Number(raw.soundVolume))) raw.soundVolume = 70;
-    raw.soundVolume = Math.max(0, Math.min(100, Number(raw.soundVolume)));
-    if(!raw.soundCategories || typeof raw.soundCategories!=='object'){
-      raw.soundCategories = {interface:true, achievement:true, alarm:true};
-    }else{
-      if(raw.soundCategories.interface === undefined) raw.soundCategories.interface = true;
-      if(raw.soundCategories.achievement === undefined) raw.soundCategories.achievement = true;
-      if(raw.soundCategories.alarm === undefined) raw.soundCategories.alarm = true;
-    }
-    if(!Array.isArray(raw.subjects)) raw.subjects = [];
-    if(!raw.notificationCategories || typeof raw.notificationCategories!=='object'){
-      raw.notificationCategories = {sessionTarget:true, breakReminder:true, dailyGoal:true};
-    }else{
-      if(raw.notificationCategories.sessionTarget === undefined) raw.notificationCategories.sessionTarget = true;
-      if(raw.notificationCategories.breakReminder === undefined) raw.notificationCategories.breakReminder = true;
-      if(raw.notificationCategories.dailyGoal === undefined) raw.notificationCategories.dailyGoal = true;
-    }
-    if(raw.totalResists === undefined) raw.totalResists = 0;
-    if(raw.treeProgress === undefined) raw.treeProgress = 0;
-    if(raw.treeNumber === undefined) raw.treeNumber = 1;
-    if(!Array.isArray(raw.speciesDeck)) raw.speciesDeck = [];
-    if(!Array.isArray(raw.collection)) raw.collection = [];
-    if(!Array.isArray(raw.badgeUnlockLog)) raw.badgeUnlockLog = [];
-    if(!raw.days || typeof raw.days!=='object' || Array.isArray(raw.days)) raw.days = {};
-    if(!raw.sessionLog || typeof raw.sessionLog!=='object' || Array.isArray(raw.sessionLog)) raw.sessionLog = {};
-    Object.keys(raw.sessionLog).forEach(key=>{
-      if(!Array.isArray(raw.sessionLog[key])) raw.sessionLog[key]=[];
-    });
-    const legacyGoalMinutes = Number(raw.dailyGoalMinutes) || 60;
-    Object.keys(raw.days).forEach(k=>{
-      const d = raw.days[k];
-      if(!d || typeof d !== 'object') return;
-      if(!Number.isFinite(Number(d.goalMinutes)) || Number(d.goalMinutes) <= 0){
-        d.goalMinutes = legacyGoalMinutes;
-      }
-      if(!d.distractionCategories || typeof d.distractionCategories !== 'object' || Array.isArray(d.distractionCategories)){
-        d.distractionCategories = {};
-      }
-    });
-    if(!raw.recurrenceExceptions || typeof raw.recurrenceExceptions!=='object' || Array.isArray(raw.recurrenceExceptions)){
-      raw.recurrenceExceptions = {tasks:{}, events:{}};
-    }
-    if(!raw.recurrenceExceptions.tasks || typeof raw.recurrenceExceptions.tasks!=='object' || Array.isArray(raw.recurrenceExceptions.tasks)){
-      raw.recurrenceExceptions.tasks = {};
-    }
-    if(!raw.recurrenceExceptions.events || typeof raw.recurrenceExceptions.events!=='object' || Array.isArray(raw.recurrenceExceptions.events)){
-      raw.recurrenceExceptions.events = {};
-    }
-    ['tasks','events'].forEach(kind=>{
-      Object.keys(raw.recurrenceExceptions[kind]).forEach(sourceId=>{
-        const list=raw.recurrenceExceptions[kind][sourceId];
-        if(!Array.isArray(list)){
-          delete raw.recurrenceExceptions[kind][sourceId];
-          return;
-        }
-        raw.recurrenceExceptions[kind][sourceId]=[...new Set(list.filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x))))].sort();
-        if(raw.recurrenceExceptions[kind][sourceId].length===0) delete raw.recurrenceExceptions[kind][sourceId];
-      });
-    });
-
-    if(!Array.isArray(raw.tasks)) raw.tasks = [];
-    if(!Array.isArray(raw.taskTags)){
-      raw.taskTags = [
-        {id:'tag_is', name:'İş', color:'#7aa2f7'},
-        {id:'tag_kisisel', name:'Kişisel', color:'#74d99f'}
-      ];
-      const legacyMap = {'İş':'tag_is','Kişisel':'tag_kisisel'};
-      raw.tasks.forEach(t=>{ t.tagId = legacyMap[t.tag] || null; });
-    } else {
-      raw.tasks.forEach(t=>{ if(t.tagId === undefined) t.tagId = null; });
-    }
-    raw.taskTags.forEach(tag=>{ if('labels' in tag) delete tag.labels; });
-    raw.tasks.forEach((t,index)=>{
-      if(!Number.isFinite(Number(t.sortOrder))) t.sortOrder=index;
-      if(t.createdAt===undefined) t.createdAt=null;
-      if(!Number.isFinite(Number(t.updatedAt))){
-        const parsedCreated=Date.parse(t.createdAt||'');
-        const parsedDone=Date.parse(t.doneAt||'');
-        t.updatedAt=Number.isFinite(parsedDone)?parsedDone:(Number.isFinite(parsedCreated)?parsedCreated:0);
-      }
-      if('subtag' in t) delete t.subtag;
-      if(t.repeat === undefined) t.repeat = 'none';
-      if(t.repeatSourceId === undefined) t.repeatSourceId = null;
-      if(!Array.isArray(t.repeatDays)) t.repeatDays = [];
-      if(t.repeatAnchorDay === undefined) t.repeatAnchorDay = null;
-      if(t.repeatUntil === undefined) t.repeatUntil = null;
-    });
-    const monthlyTaskAnchorBySource = {};
-    raw.tasks.forEach(t=>{
-      if(t.repeat!=='monthly' || !t.dueDate) return;
-      const source=t.repeatSourceId || t.id;
-      const day=Number(String(t.dueDate).slice(-2));
-      if(Number.isFinite(day)){
-        monthlyTaskAnchorBySource[source]=Math.max(monthlyTaskAnchorBySource[source]||0,day);
-      }
-    });
-    raw.tasks.forEach(t=>{
-      if(t.repeat==='monthly'){
-        const source=t.repeatSourceId || t.id;
-        const inferred=monthlyTaskAnchorBySource[source] || Number(String(t.dueDate||'').slice(-2)) || null;
-        if(!Number.isFinite(Number(t.repeatAnchorDay)) || Number(t.repeatAnchorDay)<1 || Number(t.repeatAnchorDay)>31){
-          t.repeatAnchorDay=inferred;
-        }
-      }else{
-        t.repeatAnchorDay=null;
-      }
-    });
-
-    if(!Array.isArray(raw.events)) raw.events = [];
-    raw.events.forEach(ev=>{
-      if(typeof ev.description!=='string') ev.description='';
-      if(ev.createdAt===undefined) ev.createdAt=null;
-      if(!Number.isFinite(Number(ev.updatedAt))){
-        const parsedCreated=Date.parse(ev.createdAt||'');
-        ev.updatedAt=Number.isFinite(parsedCreated)?parsedCreated:0;
-      }
-      ev.description=ev.description.slice(0,600);
-      if(ev.repeat === undefined) ev.repeat = 'none';
-      if(!Array.isArray(ev.repeatDays)) ev.repeatDays = [];
-      if(ev.repeatSourceId === undefined) ev.repeatSourceId = null;
-      if(ev.endTime === undefined) ev.endTime = null;
-      if(ev.repeatAnchorDay === undefined) ev.repeatAnchorDay = null;
-      if(ev.repeatUntil === undefined) ev.repeatUntil = null;
-    });
-    const monthlyEventAnchorBySource = {};
-    raw.events.forEach(ev=>{
-      if(ev.repeat!=='monthly' || !ev.date) return;
-      const source=ev.repeatSourceId || ev.id;
-      const day=Number(String(ev.date).slice(-2));
-      if(Number.isFinite(day)){
-        monthlyEventAnchorBySource[source]=Math.max(monthlyEventAnchorBySource[source]||0,day);
-      }
-    });
-    raw.events.forEach(ev=>{
-      if(ev.repeat==='monthly'){
-        const source=ev.repeatSourceId || ev.id;
-        const inferred=monthlyEventAnchorBySource[source] || Number(String(ev.date||'').slice(-2)) || null;
-        if(!Number.isFinite(Number(ev.repeatAnchorDay)) || Number(ev.repeatAnchorDay)<1 || Number(ev.repeatAnchorDay)>31){
-          ev.repeatAnchorDay=inferred;
-        }
-      }else{
-        ev.repeatAnchorDay=null;
-      }
-    });
-
-    // v4: oturum zaman damgaları ve tekil timer state uyumluluk katmanı.
-    // Eski oturumlarda kesin saat bilgisi yoksa veri uydurmak yerine null bırakılır.
-    Object.values(raw.sessionLog || {}).forEach(sessions=>{
-      if(!Array.isArray(sessions)) return;
-      sessions.forEach(session=>{
-        if(session.startedAt === undefined) session.startedAt = null;
-        if(session.endedAt === undefined) session.endedAt = null;
-        if(!Array.isArray(session.workIntervals)){
-          session.workIntervals = [];
-          const started = Number(session.startedAt);
-          const durationMs = Math.max(0, Number(session.duration||0))*1000;
-          if(Number.isFinite(started) && durationMs>0){
-            session.workIntervals.push({start:started,end:started+durationMs,legacyApprox:true});
-          }
-          if(session.id===raw.activeSessionId && raw.isWorking && Number(raw.workStart)){
-            session.workIntervals.push({start:Number(raw.workStart),end:null});
-          }
-        }else{
-          session.workIntervals = session.workIntervals.map(interval=>({
-            start:Number(interval?.start)||null,
-            end:interval?.end==null?null:(Number(interval.end)||null),
-            legacyApprox:!!interval?.legacyApprox
-          })).filter(interval=>interval.start);
-        }
-        if(session.hidden === undefined) session.hidden = false;
-        if(session.createdAt===undefined) session.createdAt=Number(session.startedAt)||null;
-        if(!Number.isFinite(Number(session.updatedAt))){
-          session.updatedAt=Number(session.endedAt)||Number(session.startedAt)||Number(session.createdAt)||0;
-        }
-        const closedDuration=sessionClosedIntervalSeconds(session,{fallbackToDuration:true});
-        if(Number.isFinite(closedDuration)) session.duration=closedDuration;
-        if(!session.distractionCategories || typeof session.distractionCategories !== 'object' || Array.isArray(session.distractionCategories)){
-          session.distractionCategories = {};
-        }
-      });
-    });
-    if(raw.activeSessionId){
-      const activeSessions = Object.values(raw.sessionLog || {}).flatMap(v=>Array.isArray(v)?v:[]);
-      const active = activeSessions.find(session=>session.id===raw.activeSessionId);
-      if(active && !active.startedAt && raw.workStart){
-        active.startedAt = Math.max(0, Number(raw.workStart) - Number(active.duration || 0)*1000);
-      }
-    }
-    if(!raw.timerState || typeof raw.timerState !== 'object'){
-      const mode = raw.breakState ? 'break' : (raw.activeSessionId ? (raw.isWorking ? 'working' : 'paused') : 'idle');
-      raw.timerState = {
-        mode,
-        sessionId: raw.activeSessionId || null,
-        runningSince: raw.isWorking ? (raw.workStart || null) : null,
-        ownerId: raw.activeTimerOwnerId || null
-      };
-    }else if(raw.timerState.ownerId === undefined){
-      raw.timerState.ownerId = raw.activeTimerOwnerId || null;
-    }
-
-    raw.schemaVersion = SCHEMA_VERSION;
-    return raw;
+    return StateMigration.migrate(raw);
   }
 
   // Kayıtlı veri bozuksa/geçersizse çökmek yerine güvenle sıfırdan başlar
   function looksValid(raw){
-    if(!raw || typeof raw!=='object' || Array.isArray(raw)) return false;
-    if(typeof raw.totalResists!=='number' || typeof raw.treeProgress!=='number') return false;
-    if(!raw.days || typeof raw.days!=='object' || Array.isArray(raw.days)) return false;
-    if(raw.tasks !== undefined && !Array.isArray(raw.tasks)) return false;
-    if(raw.events !== undefined && !Array.isArray(raw.events)) return false;
-    if(raw.taskTags !== undefined && !Array.isArray(raw.taskTags)) return false;
-    if(raw.collection !== undefined && !Array.isArray(raw.collection)) return false;
-    if(raw.sessionLog !== undefined && (!raw.sessionLog || typeof raw.sessionLog!=='object' || Array.isArray(raw.sessionLog))) return false;
-    return true;
+    return StateMigration.validate(raw);
   }
 
   let dataWasReset = false;
   let startupNeedsIDBRecovery = false;
 
-  function tryMigrateStoredData(raw, sourceLabel){
-    if(!raw || !looksValid(raw)) return null;
-    try{
-      return migrateData(raw);
-    }catch(error){
-      console.error(sourceLabel+' verisi migrate edilemedi:', error);
-      return null;
-    }
+  function tryMigrateStoredData(raw,sourceLabel){
+    return StateMigration.tryMigrate(raw,sourceLabel);
   }
 
   const AppStorageRepository = StatePersistence.createRepository({
@@ -6713,12 +7091,9 @@
     backupKey:BACKUP_KEY,
     legacyKey:OLD_KEY,
     preImportKey:STORAGE_KEY+'_pre_import',
-    mirrorSnapshot:serialized=>mirrorSnapshotToIndexedDB(serialized),
-    clearRecoverySnapshot:()=>clearIndexedDBSnapshot(),
-    readRecoverySnapshot:async()=>{
-      const snapshot=await readIndexedDBSnapshot();
-      return parseIndexedDBSnapshot(snapshot);
-    }
+    mirrorSnapshot:serialized=>RecoveryStore.mirror(serialized),
+    clearRecoverySnapshot:()=>RecoveryStore.clear(),
+    readRecoverySnapshot:()=>RecoveryStore.readParsed(looksValid)
   });
 
   function loadData(){
@@ -6753,185 +7128,24 @@
   }
 
   // ---------- IndexedDB ikincil depolama katmanı ----------
-  let idbOpenPromise = null;
-  let idbMirrorQueue = Promise.resolve();
-
-  function openAppDatabase(){
-    if(!('indexedDB' in window)) return Promise.resolve(null);
-    if(idbOpenPromise) return idbOpenPromise;
-
-    idbOpenPromise = new Promise(resolve=>{
-      let request;
-      try{
-        request = indexedDB.open(IDB_NAME, IDB_VERSION);
-      }catch(error){
-        console.warn('IndexedDB açılamadı:', error);
-        resolve(null);
-        return;
-      }
-
-      request.onupgradeneeded = ()=>{
-        const db=request.result;
-        if(!db.objectStoreNames.contains(IDB_STORE)){
-          db.createObjectStore(IDB_STORE,{keyPath:'key'});
-        }
-      };
-      request.onsuccess = ()=> resolve(request.result);
-      request.onerror = ()=>{
-        console.warn('IndexedDB açılamadı:', request.error);
-        resolve(null);
-      };
-      request.onblocked = ()=>{
-        console.warn('IndexedDB yükseltmesi başka bir sekme tarafından engelleniyor.');
-      };
-    });
-
-    return idbOpenPromise;
-  }
-
-  async function writeIndexedDBSnapshot(serializedData){
-    const db=await openAppDatabase();
-    if(!db) return false;
-
-    return new Promise(resolve=>{
-      let tx;
-      try{
-        tx=db.transaction(IDB_STORE,'readwrite');
-        tx.objectStore(IDB_STORE).put({
-          key:IDB_PRIMARY_KEY,
-          schemaVersion:SCHEMA_VERSION,
-          savedAt:Date.now(),
-          payload:serializedData
-        });
-      }catch(error){
-        console.warn('IndexedDB kaydı başlatılamadı:', error);
-        resolve(false);
-        return;
-      }
-
-      tx.oncomplete=()=>resolve(true);
-      tx.onerror=()=>{
-        console.warn('IndexedDB kaydı başarısız:', tx.error);
-        resolve(false);
-      };
-      tx.onabort=()=>resolve(false);
-    });
-  }
-
   function mirrorSnapshotToIndexedDB(serializedData){
-    // Yazımları sıraya alarak eski bir snapshot'ın yenisinin üstüne yazmasını engeller.
-    idbMirrorQueue=idbMirrorQueue
-      .catch(()=>false)
-      .then(()=>writeIndexedDBSnapshot(serializedData));
-    return idbMirrorQueue;
+    return RecoveryStore.mirror(serializedData);
   }
 
-  async function readIndexedDBSnapshot(){
-    const db=await openAppDatabase();
-    if(!db) return null;
-
-    return new Promise(resolve=>{
-      let tx;
-      try{
-        tx=db.transaction(IDB_STORE,'readonly');
-        const request=tx.objectStore(IDB_STORE).get(IDB_PRIMARY_KEY);
-        request.onsuccess=()=>resolve(request.result || null);
-        request.onerror=()=>resolve(null);
-      }catch(error){
-        resolve(null);
-      }
-    });
+  function readIndexedDBSnapshot(){
+    return RecoveryStore.readRaw();
   }
 
-  async function clearIndexedDBSnapshot(){
-    const db=await openAppDatabase();
-    if(!db) return false;
-
-    return new Promise(resolve=>{
-      let tx;
-      try{
-        tx=db.transaction(IDB_STORE,'readwrite');
-        tx.objectStore(IDB_STORE).delete(IDB_PRIMARY_KEY);
-      }catch(error){
-        resolve(false);
-        return;
-      }
-      tx.oncomplete=()=>resolve(true);
-      tx.onerror=()=>resolve(false);
-      tx.onabort=()=>resolve(false);
-    });
+  function clearIndexedDBSnapshot(){
+    return RecoveryStore.clear();
   }
 
   function parseIndexedDBSnapshot(snapshot){
-    try{
-      const parsed=snapshot && typeof snapshot.payload==='string'
-        ? JSON.parse(snapshot.payload)
-        : null;
-      return parsed && looksValid(parsed) ? parsed : null;
-    }catch(error){
-      return null;
-    }
+    return RecoveryStore.parse(snapshot,looksValid);
   }
 
   async function recoverFromIndexedDBIfNeeded(){
-    if(!startupNeedsIDBRecovery) return false;
-
-    let restored=null;
-    try{
-      const parsed=await AppStorageRepository.readRecoverySnapshot();
-      restored=tryMigrateStoredData(parsed,'IndexedDB recovery');
-    }catch(error){
-      console.warn('IndexedDB kurtarma snapshotı okunamadı:', error);
-    }
-
-    // Bundan sonra normal ayna yazımları yeniden etkin.
-    startupNeedsIDBRecovery=false;
-
-    if(!restored){
-      // Geçerli bir kurtarma yoksa mevcut güvenli başlangıcı aynala.
-      saveData();
-      return false;
-    }
-
-    data=restored;
-    if(data.breakState === undefined) data.breakState=null;
-    if(data.activeSessionId && !data.activeSessionDate){
-      for(const [key,sessions] of Object.entries(data.sessionLog || {})){
-        if(Array.isArray(sessions) && sessions.some(session=>session.id===data.activeSessionId)){
-          data.activeSessionDate=key;
-          break;
-        }
-      }
-    }
-
-    refillDeckIfNeeded();
-    rebuildDerivedWorkData();
-    reconcileStreakFreeze();
-
-    // Recovered state follows the same v60 timer-integrity rules.
-    reconcileStaleRunningTimerOnStartup();
-    if(!longSessionReviewPending) repairTodayWorkAggregateFromSessions();
-
-    syncTimerState();
-    saveData({force:true});
-    scheduleLongSessionReview(350);
-
-    const active=data.activeSessionId ? findSession(data.activeSessionId) : null;
-    el.workTimer.textContent=active ? formatRingTime(Number(active.duration||0)) : '00:00';
-    renderWorkButtonRow();
-    initializeTooltips();
-
-  renderToday(false);
-    renderDistractionCategorySummary();
-    renderSessionList();
-    updateIntentDisplay();
-    renderCalendar();
-    renderStats();
-    if(el.collectionContent && !el.collectionContent.classList.contains('collapsed')) renderCollection();
-    if(el.summaryContent && !el.summaryContent.classList.contains('collapsed')) renderSummary();
-
-    showToast('Veriler IndexedDB yedeğinden kurtarıldı.','success');
-    return true;
+    return StateRecoveryCoordinator.recoverIfNeeded();
   }
 
   // Bir sonraki depolama geçişi için geliştirici erişimi.
@@ -6951,6 +7165,7 @@
 
 
   let stateWriter = null;
+  let StateRecoveryCoordinator = null;
   let reassertStorageTimer = null;
 
 
@@ -7047,57 +7262,18 @@
   }
 
   function captureDeviceLocalTimerState(){
-    const ownsTimer = !data?.activeTimerOwnerId || data.activeTimerOwnerId === TAB_ID;
-    const active = data?.activeSessionId ? findSession(data.activeSessionId) : null;
-
-    if(!ownsTimer || (!data?.isWorking && !active && !isBreakActive())){
-      return null;
-    }
-
-    return {
-      activeSessionId: data.activeSessionId || null,
-      activeSessionDate: data.activeSessionDate || null,
-      isWorking: !!data.isWorking,
-      workStart: data.workStart || null,
-      activeTimerOwnerId: data.activeTimerOwnerId || (data.isWorking ? TAB_ID : null),
-      timerState: data.timerState ? JSON.parse(JSON.stringify(data.timerState)) : null,
-      breakState: data.breakState ? JSON.parse(JSON.stringify(data.breakState)) : null,
-      activeSession: active ? JSON.parse(JSON.stringify(active)) : null
-    };
+    return ExternalStateService.captureDeviceLocalTimerState(data,{
+      tabId:TAB_ID,
+      findSession:id=>findSession(id),
+      isBreakActive:()=>isBreakActive()
+    });
   }
 
-  function restoreDeviceLocalTimerState(incoming, snapshot){
-    if(!snapshot) return incoming;
-
-    // Preserve the local running/paused session object itself. Remote/cloud state
-    // may be slightly older and must not erase an in-progress interval or duration.
-    if(snapshot.activeSession && snapshot.activeSessionId){
-      const key = snapshot.activeSessionDate || findSessionDateKey(snapshot.activeSessionId) || todayKey();
-      if(!Array.isArray(incoming.sessionLog?.[key])){
-        if(!incoming.sessionLog || typeof incoming.sessionLog!=='object') incoming.sessionLog={};
-        incoming.sessionLog[key]=[];
-      }
-
-      const sessions=incoming.sessionLog[key];
-      const index=sessions.findIndex(s=>s?.id===snapshot.activeSessionId);
-      if(index>=0) sessions[index]=snapshot.activeSession;
-      else sessions.push(snapshot.activeSession);
-    }
-
-    incoming.activeSessionId=snapshot.activeSessionId;
-    incoming.activeSessionDate=snapshot.activeSessionDate;
-    incoming.isWorking=snapshot.isWorking;
-    incoming.workStart=snapshot.workStart;
-    incoming.activeTimerOwnerId=snapshot.activeTimerOwnerId;
-    incoming.breakState=snapshot.breakState;
-    incoming.timerState=snapshot.timerState || {
-      mode:snapshot.isWorking ? 'working' : (snapshot.breakState ? 'break' : (snapshot.activeSessionId ? 'paused' : 'idle')),
-      sessionId:snapshot.activeSessionId,
-      runningSince:snapshot.workStart,
-      ownerId:snapshot.activeTimerOwnerId
-    };
-
-    return incoming;
+  function restoreDeviceLocalTimerState(incoming,snapshot){
+    return ExternalStateService.restoreDeviceLocalTimerState(incoming,snapshot,{
+      findSessionDateKey:id=>findSessionDateKey(id),
+      todayKey:()=>todayKey()
+    });
   }
 
   function renderAfterExternalSync(){
@@ -7133,34 +7309,11 @@
 
 
   function cloudStateCounts(state){
-    return {
-      sessions:Object.values(state?.sessionLog||{}).reduce((sum,list)=>sum+(Array.isArray(list)?list.length:0),0),
-      tasks:Array.isArray(state?.tasks)?state.tasks.length:0,
-      events:Array.isArray(state?.events)?state.events.length:0,
-      days:Object.keys(state?.days||{}).length
-    };
+    return DestructiveSyncGuard.counts(state);
   }
 
   function cloudStateRisk(localState,remoteState){
-    const local=cloudStateCounts(localState);
-    const remote=cloudStateCounts(remoteState);
-
-    const ratio=(remoteValue,localValue)=>localValue>0 ? remoteValue/localValue : 1;
-    const ratios={
-      sessions:ratio(remote.sessions,local.sessions),
-      tasks:ratio(remote.tasks,local.tasks),
-      events:ratio(remote.events,local.events),
-      days:ratio(remote.days,local.days)
-    };
-
-    const risky=
-      (local.sessions>=10 && ratios.sessions<0.55) ||
-      (local.tasks>=10 && ratios.tasks<0.50) ||
-      (local.days>=14 && ratios.days<0.55) ||
-      (local.sessions>=20 && ratios.sessions<0.30) ||
-      (local.tasks>=20 && ratios.tasks<0.30);
-
-    return {risky:Boolean(risky),local,remote,ratios};
+    return DestructiveSyncGuard.risk(localState,remoteState);
   }
 
   function confirmDestructiveCloudReplace(risk){
@@ -7699,6 +7852,52 @@
       window.dispatchEvent(new CustomEvent('app:data-saved',{detail}));
     }
   });
+
+  StateRecoveryCoordinator=StateRecoveryServiceFactory.create({
+    getNeedsRecovery:()=>startupNeedsIDBRecovery,
+    setNeedsRecovery:value=>{ startupNeedsIDBRecovery=Boolean(value); },
+    readRecoverySnapshot:()=>AppStorageRepository.readRecoverySnapshot(),
+    migrate:(raw,label)=>tryMigrateStoredData(raw,label),
+    setState:value=>{ data=value; },
+    normalizeRecoveredState:()=>{
+      if(data.breakState===undefined) data.breakState=null;
+      if(data.activeSessionId && !data.activeSessionDate){
+        for(const [key,sessions] of Object.entries(data.sessionLog||{})){
+          if(Array.isArray(sessions) && sessions.some(session=>session.id===data.activeSessionId)){
+            data.activeSessionDate=key;
+            break;
+          }
+        }
+      }
+    },
+    prepareRecoveredState:()=>{
+      refillDeckIfNeeded();
+      rebuildDerivedWorkData();
+      reconcileStreakFreeze();
+      reconcileStaleRunningTimerOnStartup();
+      if(!longSessionReviewPending) repairTodayWorkAggregateFromSessions();
+      syncTimerState();
+    },
+    saveCurrent:options=>saveData(options),
+    scheduleReview:()=>scheduleLongSessionReview(350),
+    renderRecovered:()=>{
+      const active=data.activeSessionId ? findSession(data.activeSessionId) : null;
+      el.workTimer.textContent=active ? formatRingTime(Number(active.duration||0)) : '00:00';
+      renderWorkButtonRow();
+      initializeTooltips();
+      renderToday(false);
+      renderDistractionCategorySummary();
+      renderSessionList();
+      updateIntentDisplay();
+      renderCalendar();
+      renderStats();
+      if(el.collectionContent && !el.collectionContent.classList.contains('collapsed')) renderCollection();
+      if(el.summaryContent && !el.summaryContent.classList.contains('collapsed')) renderSummary();
+    },
+    notifyRecovered:()=>showToast('Veriler IndexedDB yedeğinden kurtarıldı.','success'),
+    logger:console
+  });
+
 
   if(data.breakState === undefined) data.breakState = null;
   if(data.activeSessionId && !data.activeSessionDate){
@@ -13902,6 +14101,15 @@
       const event=service.createOccurrence('Ders','2026-11-01',null,null,'#7aa2f7','daily');
       service.generateSeries(event,'2026-11-04');
       equal(state.events.filter(item=>item.date<='2026-11-04').length,4);
+    });
+
+
+    test('Reliability modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityStateMigration),true);
+      equal(Boolean(window.ProductivityRecoveryStore),true);
+      equal(Boolean(window.ProductivityStateRecoveryService),true);
+      equal(Boolean(window.ProductivityDestructiveSyncGuard),true);
+      equal(Boolean(window.ProductivityExternalStateService),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
