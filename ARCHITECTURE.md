@@ -25,22 +25,26 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 8. **Session repository** — session lookup and date-bucket access.
 9. **Task repository** — task lookup, collection mutation and task-specific queries.
 10. **Event repository** — event lookup, collection mutation and event-specific queries.
-11. **Gamification core** — XP, levels, badges and streak/freeze calculations.
-12. **Tree service** — tree growth, completion and rollback mutations.
-13. **Analytics core** — focus, planning, productive-hour and weekly review calculations.
-14. **Calendar core** — calendar time-window and work-interval projection rules.
-15. **View formatters** — shared display formatting and trend markup.
-16. **Summary view** — pure weekly/monthly summary HTML builder.
-17. **Calendar view** — pure month/year/week/agenda HTML builders and overlap layout.
-18. **Stats view** — chart, heatmap, subject and session analytics markup.
-19. **Task view** — task filtering, grouping and task-card markup.
-20. **Collection view** — tree progress and collection-grid markup.
-21. **Session view** — session cards, todos, target progress and hidden/history markup.
-22. **Focus view** — Focus Mode presentation model derived from active-session state.
-23. **Work controls view** — timer/break control-button markup.
-24. **Modal service** — modal stack/focus management plus reusable confirm, prompt, time, subject and duration dialog flows.
-25. **App main** — composition root, DOM binding and remaining feature orchestration.
-26. **Cloud sync** — optional cloud transport and account synchronization.
+11. **Recurrence service** — shared daily/weekly/monthly scheduling, exceptions and series scopes.
+12. **Session service** — session subject/todo/group/timing mutations.
+13. **Task service** — task creation, completion, recurrence spawning, edit/delete and undo mutations.
+14. **Event service** — event creation, recurrence generation, edit/delete and undo mutations.
+15. **Gamification core** — XP, levels, badges and streak/freeze calculations.
+16. **Tree service** — tree growth, completion and rollback mutations.
+17. **Analytics core** — focus, planning, productive-hour and weekly review calculations.
+18. **Calendar core** — calendar time-window and work-interval projection rules.
+19. **View formatters** — shared display formatting and trend markup.
+20. **Summary view** — pure weekly/monthly summary HTML builder.
+21. **Calendar view** — pure month/year/week/agenda HTML builders and overlap layout.
+22. **Stats view** — chart, heatmap, subject and session analytics markup.
+23. **Task view** — task filtering, grouping and task-card markup.
+24. **Collection view** — tree progress and collection-grid markup.
+25. **Session view** — session cards, todos, target progress and hidden/history markup.
+26. **Focus view** — Focus Mode presentation model derived from active-session state.
+27. **Work controls view** — timer/break control-button markup.
+28. **Modal service** — modal stack/focus management plus reusable confirm, prompt, time, subject and duration dialog flows.
+29. **App main** — composition root, DOM binding and remaining feature orchestration.
+30. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -58,7 +62,7 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Extract session mutation/service logic and recurrence services from the main composition file.
+- Extract state migration/recovery and cloud sync orchestration from the main composition file.
 
 ## Change log organization
 
@@ -78,3 +82,12 @@ Runtime module aliases must be initialized before repositories or application st
 ## Modal infrastructure rule
 
 Modal focus trapping, Escape/backdrop cancellation, listener cleanup, button-state restoration and reusable dialog lifecycles live in `modal-service.js`. Feature code should call the service through thin wrappers instead of implementing its own Promise/listener cleanup loop.
+
+
+## Domain mutation rule
+
+Session, task, event and recurrence mutation rules live in dedicated services. `app-main.js` may coordinate dialogs, toasts, undo presentation, gamification side effects and renders, but should not duplicate series/date mutation algorithms.
+
+## Domain regression gate
+
+`npm run domain:check` validates recurrence, session, task and event mutation behavior independently from the DOM. It is part of the standard `npm run check` release gate.
