@@ -14,6 +14,10 @@
   const SessionRepositoryFactory=window.ProductivitySessionRepository;
   const TaskRepositoryFactory=window.ProductivityTaskRepository;
   const EventRepositoryFactory=window.ProductivityEventRepository;
+  const RecurrenceServiceFactory=window.ProductivityRecurrenceService;
+  const SessionDomainServiceFactory=window.ProductivitySessionService;
+  const TaskDomainServiceFactory=window.ProductivityTaskService;
+  const EventDomainServiceFactory=window.ProductivityEventService;
   const GamificationCore=window.ProductivityGamificationCore;
   const TreeService=window.ProductivityTreeService;
   const AnalyticsCore=window.ProductivityAnalyticsCore;
@@ -29,7 +33,7 @@
   const WorkControlsView=window.ProductivityWorkControlsView;
   const ModalService=window.ProductivityModalService;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !EventDomainServiceFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -52,7 +56,11 @@
       !SessionView ? 'SessionView' : null,
       !FocusView ? 'FocusView' : null,
       !WorkControlsView ? 'WorkControlsView' : null,
-      !ModalService ? 'ModalService' : null
+      !ModalService ? 'ModalService' : null,
+      !RecurrenceServiceFactory ? 'RecurrenceService' : null,
+      !SessionDomainServiceFactory ? 'SessionService' : null,
+      !TaskDomainServiceFactory ? 'TaskService' : null,
+      !EventDomainServiceFactory ? 'EventService' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -379,8 +387,8 @@
     if(!session || !key) return;
 
     const existing=sessionIntervals(session)
-      .filter(x=>Number.isFinite(Number(x?.start)) && Number.isFinite(Number(x?.end)))
-      .map(x=>({start:Number(x.start),end:Number(x.end)}))
+      .filter(interval=>Number.isFinite(Number(interval?.start)) && Number.isFinite(Number(interval?.end)))
+      .map(interval=>({start:Number(interval.start),end:Number(interval.end)}))
       .sort((a,b)=>a.start-b.start);
 
     const currentStart=displayClockTime(session.startedAt || existing[0]?.start);
@@ -394,72 +402,25 @@
     const chosen=await askSessionTimeRange(key,currentStart,currentEnd);
     if(!chosen) return;
 
-    const newStart=chosen.start;
-    const newEnd=chosen.end;
-
-    // Mevcut gerçek çalışma bloklarını yeni dış sınırlara göre kırp.
-    // Örn. 04:00–09:00 açık unutulmuşsa ve kullanıcı 06:30 yazarsa,
-    // 06:30 sonrasındaki autosave/work interval parçaları tamamen atılır.
-    let intervals = existing
-      .map(x=>({
-        start:Math.max(x.start,newStart),
-        end:Math.min(x.end,newEnd)
-      }))
-      .filter(x=>x.end>x.start);
-
-    // Eski sürümden interval detayı olmayan tek parça oturumlarda,
-    // kullanıcının verdiği saat aralığı doğrudan güvenilir kaynak kabul edilir.
-    if(!intervals.length){
-      intervals=[{start:newStart,end:newEnd}];
-    }else{
-      // Kullanıcı başlangıcı eski ilk intervalden daha erkene aldıysa
-      // ilk çalışma bloğunu yeni başlangıca uzat.
-      if(existing.length && newStart < existing[0].start){
-        intervals[0].start=newStart;
-      }
-
-      // Kullanıcı bitişi eski son intervalden daha ileri aldıysa
-      // son çalışma bloğunu yeni bitişe uzat.
-      if(existing.length && newEnd > existing[existing.length-1].end){
-        intervals[intervals.length-1].end=newEnd;
-      }
-    }
-
-    intervals.sort((a,b)=>a.start-b.start);
-
-    // Komşu / üst üste binen autosave parçalarını tek blokta birleştir.
-    const merged=[];
-    intervals.forEach(interval=>{
-      const prev=merged[merged.length-1];
-      if(prev && interval.start<=prev.end+1000){
-        prev.end=Math.max(prev.end,interval.end);
-      }else{
-        merged.push({...interval});
-      }
+    const result=SessionDomainService.editHistoricalTiming(session,{
+      newStart:chosen.start,
+      newEnd:chosen.end,
+      existingIntervals:existing,
+      mergeGapMs:1000
     });
-    intervals=merged;
 
-    const total=Math.round(intervals.reduce((sum,x)=>sum+(x.end-x.start)/1000,0));
-    if(total<=0){
+    if(!result.ok){
       showToast('Bu saat aralığında kaydedilebilir çalışma süresi kalmıyor.',true);
       return;
     }
 
-    session.workIntervals=intervals;
-    session.startedAt=newStart;
-    session.endedAt=newEnd;
-    session.duration=total;
-    session.updatedAt=Date.now();
-
     recomputeSessionDay(key);
     saveData({force:true});
-
     renderToday(false);
     renderSessionList();
     updateWorkDisplay();
     renderStats();
     renderCalendar();
-
     showToast('Oturum saatleri ve çalışma süresi güncellendi.',true);
   }
 
@@ -1443,6 +1404,43 @@
 
   const EventRepository=EventRepositoryFactory.create({
     getState:()=>data
+  });
+
+
+  const RecurrenceService=RecurrenceServiceFactory.create({
+    getState:()=>data,
+    dateKey:date=>dateKey(date)
+  });
+
+  const SessionDomainService=SessionDomainServiceFactory.create({
+    getState:()=>data,
+    normalizeGroupName,
+    now:()=>Date.now()
+  });
+
+  const TaskDomainService=TaskDomainServiceFactory.create({
+    getState:()=>data,
+    recurrence:RecurrenceService,
+    normalizeTime:value=>normalize24HourTime(value),
+    tagExists:id=>Boolean(tagById(id)),
+    normalizedTagId:task=>normalizedTaskTagId(task),
+    nextSortOrder:()=>TaskRepository.nextSortOrder(),
+    touchRecord:(record,at)=>touchRecord(record,at),
+    recordTombstone:(kind,id,at)=>recordTombstone(kind,id,at),
+    clearTombstone:(kind,id)=>clearTombstone(kind,id),
+    now:()=>Date.now()
+  });
+
+  const EventDomainService=EventDomainServiceFactory.create({
+    getState:()=>data,
+    recurrence:RecurrenceService,
+    normalizeTime:value=>normalize24HourTime(value),
+    defaultColor:'#7aa2f7',
+    dateKey:date=>dateKey(date),
+    touchRecord:(record,at)=>touchRecord(record,at),
+    recordTombstone:(kind,id,at)=>recordTombstone(kind,id,at),
+    clearTombstone:(kind,id)=>clearTombstone(kind,id),
+    now:()=>Date.now()
   });
 
   function ensureTombstones(){
@@ -4058,9 +4056,7 @@
       const subject = await askSubject(current);
       if(subject !== null){
         const clean = subject.trim().slice(0,30);
-        session.subject = clean || 'Genel';
-        session.updatedAt = Date.now();
-        if(clean) rememberSubject(clean);
+        SessionDomainService.setSubject(session,clean);
         saveData({force:true});
         renderSessionList();
         updateIntentDisplay();
@@ -4073,7 +4069,7 @@
     } else if(action === 'restore-session'){
       const session = findSession(sid);
       if(!session) return;
-      session.hidden = false;
+      SessionDomainService.setHidden(session,false);
       saveData();
       renderSessionList();
       showToast('Oturum tekrar geçmişte gösteriliyor.', true);
@@ -4095,7 +4091,7 @@
       const choice = await askSessionDeleteChoice();
       if(choice === 'cancel') return;
       if(choice === 'hide'){
-        session.hidden = true;
+        SessionDomainService.setHidden(session,true);
         expandedSessions.delete(sid);
         saveData();
         renderSessionList();
@@ -4130,41 +4126,35 @@
       renderCollection();
       showToast('Oturum ve ona bağlı ilerleme kayıtları silindi.', true);
     } else if(action === 'toggle-todo'){
-      const session = findSession(sid);
-      const t = session && session.todos.find(x=>x.id===target.dataset.todo);
-      if(t){
-        const beforeBadges = getUnlockedBadgeMap();
-        const beforeLevel = getLevelInfo().level;
-        const wasDone = t.done;
-        t.done = !t.done;
-        let completedList = [];
-        if(!wasDone && t.done && !t.xpCounted){
-          t.xpCounted = true;
-          data.totalTodosCompleted = (data.totalTodosCompleted||0) + 1;
-          completedList = addTreeGrowth(GROWTH_PER_TODO);
-        }
+      const session=findSession(sid);
+      const beforeBadges=getUnlockedBadgeMap();
+      const beforeLevel=getLevelInfo().level;
+      const result=session && SessionDomainService.toggleTodo(session,target.dataset.todo);
+      if(result){
+        const completedList=result.newlyRewarded ? addTreeGrowth(GROWTH_PER_TODO) : [];
         saveData();
         renderSessionList();
         updateIntentDisplay();
-        if(!wasDone && t.done){
+        if(!result.wasDone && result.todo.done){
           playTodoCheckSound();
-          renderToday(completedList.length > 0);
+          renderToday(completedList.length>0);
           celebrateTreeCompletions(completedList);
-          reportProgress(beforeLevel, beforeBadges);
-          if(session.todos.length && session.todos.every(x=>x.done)){
-            showToast('Bu oturumun tüm görevleri tamamlandı! 🎉');
-          }
+          reportProgress(beforeLevel,beforeBadges);
+          if(result.allDone) showToast('Bu oturumun tüm görevleri tamamlandı! 🎉');
         }
       }
     } else if(action === 'delete-todo'){
-      const session = findSession(sid);
-      if(session){ session.todos = session.todos.filter(x=>x.id!==target.dataset.todo); saveData(); renderSessionList(); updateIntentDisplay(); }
+      const session=findSession(sid);
+      if(session && SessionDomainService.deleteTodo(session,target.dataset.todo)){
+        saveData();
+        renderSessionList();
+        updateIntentDisplay();
+      }
     } else if(action === 'add-todo'){
       const session = findSession(sid);
       const body = target.closest('.session-body');
       const input = body && body.querySelector('.todo-input');
-      if(session && input && input.value.trim()){
-        session.todos.push({ id:'t'+Date.now()+Math.random().toString(36).slice(2,6), text: input.value.trim().slice(0,80), done:false });
+      if(session && input && SessionDomainService.addTodo(session,input.value)){
         saveData();
         renderSessionList();
         updateIntentDisplay();
@@ -4178,8 +4168,7 @@
       if(!card) return;
       const sid = card.dataset.id;
       const session = findSession(sid);
-      if(session && e.target.value.trim()){
-        session.todos.push({ id:'t'+Date.now()+Math.random().toString(36).slice(2,6), text: e.target.value.trim().slice(0,80), done:false });
+      if(session && SessionDomainService.addTodo(session,e.target.value)){
         saveData();
         renderSessionList();
         updateIntentDisplay();
@@ -4259,13 +4248,7 @@
   }
 
   function recurringSeriesItems(items,item,dateField,scope){
-    if(!item) return [];
-    if(scope==='single') return [item];
-    const sourceId=item.repeatSourceId || item.id;
-    if(scope==='all'){
-      return (items||[]).filter(candidate=>(candidate.repeatSourceId||candidate.id)===sourceId);
-    }
-    return recurringItemsFrom(items,item,dateField);
+    return RecurrenceService.seriesItems(items,item,dateField,scope);
   }
 
   function askRecurringDeleteChoice(kind='öğe'){
@@ -4403,57 +4386,11 @@
   }
 
   function renameSessionGroupEverywhere(oldValue,newValue){
-    const oldKey=normalizeGroupName(oldValue);
-    const cleanNew=String(newValue||'').trim();
-    if(!oldKey || !cleanNew) return 0;
-
-    const now=Date.now();
-    let changed=0;
-
-    Object.values(data.sessionLog || {}).forEach(sessions=>{
-      if(!Array.isArray(sessions)) return;
-      sessions.forEach(session=>{
-        let touched=false;
-
-        if(normalizeGroupName(session.name)===oldKey){
-          session.name=cleanNew;
-          touched=true;
-        }
-        if(normalizeGroupName(session.subject)===oldKey){
-          session.subject=cleanNew;
-          touched=true;
-        }
-
-        if(touched){
-          session.updatedAt=now;
-          changed++;
-        }
-      });
-    });
-
-    if(Array.isArray(data.subjects)){
-      data.subjects=data.subjects.map(subject=>
-        normalizeGroupName(subject)===oldKey ? cleanNew : subject
-      );
-      // Aynı isimde iki öneri oluştuysa tekilleştir.
-      const seen=new Set();
-      data.subjects=data.subjects.filter(subject=>{
-        const key=normalizeGroupName(subject);
-        if(seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    }
-
-    return changed;
+    return SessionDomainService.renameGroupEverywhere(oldValue,newValue);
   }
 
   function rememberSubject(subject){
-    if(!subject) return;
-    if(!data.subjects) data.subjects = [];
-    data.subjects = data.subjects.filter(s=> s.toLowerCase() !== subject.toLowerCase());
-    data.subjects.unshift(subject);
-    data.subjects = data.subjects.slice(0, 12);
+    return SessionDomainService.rememberSubject(subject);
   }
 
   function askMinutes(promptText,defaultMinutes,allowNone,showSubject,mode='session',initialSubject=''){
@@ -5366,61 +5303,16 @@
     refreshUI(['tasks','calendar']);
   }
 
-  function addTask(text, dueDate, time, tagId, repeat='none', repeatSourceId=null, repeatDays=[], repeatAnchorDay=null, repeatUntil=null){
-    const task = {
-      id: 'tk'+Date.now()+Math.random().toString(36).slice(2,6),
-      text: text.trim().slice(0,120),
-      done: false,
-      dueDate: dueDate || null,
-      time: normalize24HourTime(time) || null,
-      tagId: tagById(tagId) ? tagId : null,
-      repeat: ['daily','weekly','monthly'].includes(repeat) && dueDate ? repeat : 'none',
-      repeatSourceId: repeatSourceId || null,
-      repeatDays: Array.isArray(repeatDays) ? [...new Set(repeatDays.map(Number).filter(d=>d>=0 && d<=6))].sort((a,b)=>a-b) : [],
-      repeatAnchorDay: repeat==='monthly'
-        ? (Number.isFinite(Number(repeatAnchorDay)) && Number(repeatAnchorDay)>=1 && Number(repeatAnchorDay)<=31
-          ? Number(repeatAnchorDay)
-          : Number(String(dueDate||'').slice(-2)) || null)
-        : null,
-      repeatUntil: repeatUntil || null,
-      createdAt: new Date().toISOString(),
-      updatedAt: Date.now(),
-      doneAt: null,
-      xpCounted: false,
-      sortOrder: TaskRepository.nextSortOrder()
-    };
-    TaskRepository.add(task);
-    saveData();
+  function addTask(text,dueDate,time,tagId,repeat='none',repeatSourceId=null,repeatDays=[],repeatAnchorDay=null,repeatUntil=null){
+    const task=TaskDomainService.createTask(
+      text,dueDate,time,tagId,repeat,repeatSourceId,repeatDays,repeatAnchorDay,repeatUntil
+    );
+    if(task) saveData();
     return task;
   }
 
-  function nextRepeatDate(dateStr, repeat, repeatDays=[], repeatAnchorDay=null){
-    if(!dateStr || repeat==='none') return null;
-    const d=new Date(dateStr+'T12:00:00');
-    if(Number.isNaN(d.getTime())) return null;
-    if(repeat==='daily'){
-      d.setDate(d.getDate()+1);
-    } else if(repeat==='weekly'){
-      const days=[...new Set((repeatDays||[]).map(Number).filter(x=>x>=0&&x<=6))];
-      if(days.length){
-        for(let step=1; step<=7; step++){
-          const cand=new Date(d);
-          cand.setDate(d.getDate()+step);
-          if(days.includes(cand.getDay())) return dateKey(cand);
-        }
-        return null;
-      }
-      d.setDate(d.getDate()+7);
-    } else if(repeat==='monthly'){
-      const anchorDay=Number.isFinite(Number(repeatAnchorDay)) && Number(repeatAnchorDay)>=1 && Number(repeatAnchorDay)<=31
-        ? Number(repeatAnchorDay)
-        : d.getDate();
-      d.setDate(1);
-      d.setMonth(d.getMonth()+1);
-      const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
-      d.setDate(Math.min(anchorDay,last));
-    } else return null;
-    return dateKey(d);
+  function nextRepeatDate(dateStr,repeat,repeatDays=[],repeatAnchorDay=null){
+    return RecurrenceService.nextDate(dateStr,repeat,repeatDays,repeatAnchorDay);
   }
   function repeatTaskLabel(r, days=[]){
     if(r==='daily') return 'Her gün';
@@ -5432,98 +5324,44 @@
     }
     return '';
   }
-  function hasRecurringTaskOccurrence(tasks, sourceId, dueDate){
-    return (tasks||[]).some(t=>(t.repeatSourceId||t.id)===sourceId && t.dueDate===dueDate);
+  function hasRecurringTaskOccurrence(tasks,sourceId,dueDate){
+    return RecurrenceService.hasOccurrence(tasks,sourceId,'dueDate',dueDate);
   }
 
-  function repeatAllowsDate(repeatUntil, nextDate){
-    return !repeatUntil || !nextDate || nextDate<=repeatUntil;
+  function repeatAllowsDate(repeatUntil,nextDate){
+    return RecurrenceService.allowsDate(repeatUntil,nextDate);
   }
 
   function recurrenceExceptionBucket(kind){
-    if(!data.recurrenceExceptions || typeof data.recurrenceExceptions!=='object'){
-      data.recurrenceExceptions={tasks:{},events:{}};
-    }
-    if(!data.recurrenceExceptions[kind] || typeof data.recurrenceExceptions[kind]!=='object'){
-      data.recurrenceExceptions[kind]={};
-    }
-    return data.recurrenceExceptions[kind];
+    return RecurrenceService.bucket(kind);
   }
 
-  function isRecurrenceException(kind, sourceId, dateKeyValue){
-    if(!sourceId || !dateKeyValue) return false;
-    const bucket=recurrenceExceptionBucket(kind);
-    return Array.isArray(bucket[sourceId]) && bucket[sourceId].includes(dateKeyValue);
+  function isRecurrenceException(kind,sourceId,dateKeyValue){
+    return RecurrenceService.isException(kind,sourceId,dateKeyValue);
   }
 
-  function addRecurrenceException(kind, sourceId, dateKeyValue){
-    if(!sourceId || !dateKeyValue) return false;
-    const bucket=recurrenceExceptionBucket(kind);
-    const list=Array.isArray(bucket[sourceId]) ? bucket[sourceId] : [];
-    if(list.includes(dateKeyValue)) return false;
-    bucket[sourceId]=[...list,dateKeyValue].sort();
-    return true;
+  function addRecurrenceException(kind,sourceId,dateKeyValue){
+    return RecurrenceService.addException(kind,sourceId,dateKeyValue);
   }
 
-  function removeRecurrenceException(kind, sourceId, dateKeyValue){
-    if(!sourceId || !dateKeyValue) return false;
-    const bucket=recurrenceExceptionBucket(kind);
-    if(!Array.isArray(bucket[sourceId])) return false;
-    const next=bucket[sourceId].filter(x=>x!==dateKeyValue);
-    if(next.length===bucket[sourceId].length) return false;
-    if(next.length) bucket[sourceId]=next;
-    else delete bucket[sourceId];
-    return true;
+  function removeRecurrenceException(kind,sourceId,dateKeyValue){
+    return RecurrenceService.removeException(kind,sourceId,dateKeyValue);
   }
 
-  function trimRecurrenceExceptionsFrom(kind, sourceId, startDate){
-    if(!sourceId || !startDate) return [];
-    const bucket=recurrenceExceptionBucket(kind);
-    const current=Array.isArray(bucket[sourceId]) ? [...bucket[sourceId]] : [];
-    const removed=current.filter(x=>x>=startDate);
-    const kept=current.filter(x=>x<startDate);
-    if(kept.length) bucket[sourceId]=kept;
-    else delete bucket[sourceId];
-    return removed;
+  function trimRecurrenceExceptionsFrom(kind,sourceId,startDate){
+    return RecurrenceService.trimExceptionsFrom(kind,sourceId,startDate);
   }
 
-  function restoreRecurrenceExceptions(kind, sourceId, dates){
-    if(!sourceId || !Array.isArray(dates) || !dates.length) return;
-    const bucket=recurrenceExceptionBucket(kind);
-    bucket[sourceId]=[...new Set([...(bucket[sourceId]||[]),...dates])].sort();
+  function restoreRecurrenceExceptions(kind,sourceId,dates){
+    return RecurrenceService.restoreExceptions(kind,sourceId,dates);
   }
 
-  function recurringItemsFrom(items, item, dateField){
-    if(!item) return [];
-    const sourceId=item.repeatSourceId || item.id;
-    const startDate=item[dateField];
-    if(!sourceId || !startDate) return [];
-    return (items||[]).filter(candidate=>
-      (candidate.repeatSourceId||candidate.id)===sourceId
-      && candidate[dateField]
-      && candidate[dateField]>=startDate
-    );
+  function recurringItemsFrom(items,item,dateField){
+    return RecurrenceService.itemsFrom(items,item,dateField);
   }
 
   function spawnNextRecurringTask(task){
-    if(!task || !['daily','weekly','monthly'].includes(task.repeat) || !task.dueDate) return;
-    const anchorDay=task.repeat==='monthly'
-      ? (Number(task.repeatAnchorDay) || Number(String(task.dueDate).slice(-2)))
-      : null;
-    const sourceId=task.repeatSourceId || task.id;
-    let cursor=task.dueDate;
-    let nextDate=null;
-    let guard=0;
-
-    while(guard++<1200){
-      nextDate=nextRepeatDate(cursor,task.repeat,task.repeatDays,anchorDay);
-      if(!nextDate || !repeatAllowsDate(task.repeatUntil || null,nextDate)) return;
-      if(!isRecurrenceException('tasks',sourceId,nextDate)) break;
-      cursor=nextDate;
-    }
-    if(!nextDate || guard>=1200) return;
-    if(hasRecurringTaskOccurrence(data.tasks,sourceId,nextDate)) return;
-    addTask(task.text,nextDate,task.time,normalizedTaskTagId(task),task.repeat,sourceId,task.repeatDays || [],anchorDay,task.repeatUntil || null);
+    return TaskDomainService.spawnNext(task);
   }
 
   function taskDueBadge(dueDate, time, done){
@@ -5621,134 +5459,80 @@
   }
 
   function toggleTaskDone(id){
-    const t = data.tasks.find(x=>x.id===id);
-    if(!t) return;
-    const beforeBadges = getUnlockedBadgeMap();
-    const beforeLevel = getLevelInfo().level;
-    const wasDone = t.done;
-    t.done = !t.done;
-    t.doneAt = t.done ? new Date().toISOString() : null;
-    touchRecord(t);
-    let completedList = [];
-    if(!wasDone && t.done && !t.xpCounted){
-      t.xpCounted = true;
-      data.totalTodosCompleted = (data.totalTodosCompleted||0) + 1;
-      completedList = addTreeGrowth(GROWTH_PER_TODO);
+    const beforeBadges=getUnlockedBadgeMap();
+    const beforeLevel=getLevelInfo().level;
+    const result=TaskDomainService.toggleDone(id);
+    if(!result) return;
+
+    let completedList=[];
+    if(!result.wasDone && result.task.done && result.newlyRewarded){
+      completedList=addTreeGrowth(GROWTH_PER_TODO);
     }
-    if(!wasDone && t.done) spawnNextRecurringTask(t);
+    if(!result.wasDone && result.task.done) spawnNextRecurringTask(result.task);
+
     saveData();
     refreshUI(['tasks','calendar']);
-    if(!wasDone && t.done){
+    if(!result.wasDone && result.task.done){
       playTodoCheckSound();
-      refreshUI('today',{celebrateTree:completedList.length > 0});
+      refreshUI('today',{celebrateTree:completedList.length>0});
       celebrateTreeCompletions(completedList);
-      reportProgress(beforeLevel, beforeBadges);
-    } else {
+      reportProgress(beforeLevel,beforeBadges);
+    }else{
       refreshUI('today');
     }
   }
 
   async function editTask(id){
-    const target=data.tasks.find(t=>t.id===id);
+    const target=TaskDomainService.byId(id);
     if(!target) return;
     const value=await askPrompt('Görev adını düzenle',target.text || '');
     if(value===null) return;
     const text=value.trim().slice(0,120);
-    if(!text){ showToast('Görev adı boş olamaz.', 'error'); return; }
+    if(!text){ showToast('Görev adı boş olamaz.','error'); return; }
 
     let scope='single';
     if(['daily','weekly','monthly'].includes(target.repeat)){
       scope=await askRecurringEditChoice('görev');
     }
-    const affected=recurringSeriesItems(data.tasks,target,'dueDate',scope);
-    affected.forEach(task=>{ task.text=text; touchRecord(task); });
+    const affected=TaskDomainService.rename(id,text,scope);
     saveData();
     refreshUI(['tasks','calendar']);
     showToast(scope==='single' ? 'Görev güncellendi.' : affected.length+' görev güncellendi.','success');
   }
 
   async function deleteTask(id){
-    const index=data.tasks.findIndex(t=>t.id===id);
-    if(index<0) return;
+    const target=TaskDomainService.byId(id);
+    if(!target) return;
 
-    const target=data.tasks[index];
-    const isRecurring=['daily','weekly','monthly'].includes(target.repeat);
     let choice='single';
-    if(isRecurring){
+    if(['daily','weekly','monthly'].includes(target.repeat)){
       choice=await askRecurringDeleteChoice('görev');
       if(choice==='cancel') return;
     }
 
-    if(choice==='future'){
-      const sourceId=target.repeatSourceId || target.id;
-      const removeIds=new Set(recurringItemsFrom(data.tasks,target,'dueDate').map(task=>task.id));
-      const removed=data.tasks
-        .map((task,taskIndex)=>({task:JSON.parse(JSON.stringify(task)),index:taskIndex}))
-        .filter(entry=>removeIds.has(entry.task.id));
-      const priorSnapshots=data.tasks
-        .filter(task=>(task.repeatSourceId||task.id)===sourceId && !removeIds.has(task.id))
-        .map(task=>({id:task.id,repeatUntil:task.repeatUntil || null}));
-
-      const stopKey=dateBeforeKey(target.dueDate);
-      const removedExceptions=trimRecurrenceExceptionsFrom('tasks',sourceId,target.dueDate);
-      removeIds.forEach(id=>recordTombstone('tasks',id));
-      data.tasks=data.tasks.filter(task=>!removeIds.has(task.id));
-      data.tasks.forEach(task=>{
-        if((task.repeatSourceId||task.id)===sourceId) task.repeatUntil=stopKey;
-      });
-      saveData();
-      refreshUI(['tasks','calendar']);
-      offerUndo(removed.length+' tekrarlanan görev silindi.', ()=>{
-        priorSnapshots.forEach(snapshot=>{
-          const task=data.tasks.find(item=>item.id===snapshot.id);
-          if(task) task.repeatUntil=snapshot.repeatUntil;
-        });
-        restoreRecurrenceExceptions('tasks',sourceId,removedExceptions);
-        removed.sort((a,b)=>a.index-b.index).forEach(({task,index:taskIndex})=>{
-          clearTombstone('tasks',task.id);
-          touchRecord(task);
-          data.tasks.splice(Math.min(taskIndex,data.tasks.length),0,task);
-        });
-        saveData();
-        refreshUI(['tasks','calendar']);
-      });
-      return;
-    }
-
-    const removed=JSON.parse(JSON.stringify(target));
-    const singleSourceId=isRecurring ? (target.repeatSourceId || target.id) : null;
-    const exceptionAdded=isRecurring && target.dueDate
-      ? addRecurrenceException('tasks',singleSourceId,target.dueDate)
-      : false;
-    recordTombstone('tasks',target.id);
-    data.tasks.splice(index,1);
+    const result=TaskDomainService.deleteTask(id,choice);
+    if(!result) return;
     saveData();
     refreshUI(['tasks','calendar']);
-    offerUndo('Görev silindi.', ()=>{
-      if(exceptionAdded) removeRecurrenceException('tasks',singleSourceId,target.dueDate);
-      clearTombstone('tasks',removed.id);
-      touchRecord(removed);
-      data.tasks.splice(Math.min(index,data.tasks.length),0,removed);
+
+    const message=result.mode==='future'
+      ? result.removedCount+' tekrarlanan görev silindi.'
+      : 'Görev silindi.';
+
+    offerUndo(message,()=>{
+      result.undo();
       saveData();
       refreshUI(['tasks','calendar']);
     });
   }
 
   function clearCompletedTasks(){
-    const removed=data.tasks
-      .map((task,index)=>({task:JSON.parse(JSON.stringify(task)),index}))
-      .filter(x=>x.task.done);
-    if(!removed.length) return;
-    removed.forEach(({task})=>recordTombstone('tasks',task.id));
-    data.tasks=data.tasks.filter(t=>!t.done);
+    const result=TaskDomainService.clearCompleted();
+    if(!result) return;
     saveData();
     refreshUI(['tasks','calendar']);
-    offerUndo(removed.length+' tamamlanmış görev silindi.', ()=>{
-      removed.sort((a,b)=>a.index-b.index).forEach(({task,index})=>{
-        clearTombstone('tasks',task.id);
-        touchRecord(task);
-        data.tasks.splice(Math.min(index,data.tasks.length),0,task);
-      });
+    offerUndo(result.removedCount+' tamamlanmış görev silindi.',()=>{
+      result.undo();
       saveData();
       refreshUI(['tasks','calendar']);
     });
@@ -6005,144 +5789,36 @@
     return '';
   }
 
-  function nextEventRepeatDate(dateStr, repeat, repeatDays=[], repeatAnchorDay=null){
-    if(!dateStr || repeat==='none') return null;
-    const d=new Date(dateStr+'T12:00:00');
-    if(Number.isNaN(d.getTime())) return null;
-    if(repeat==='daily'){
-      d.setDate(d.getDate()+1);
-    } else if(repeat==='weekly'){
-      const days=[...new Set((repeatDays||[]).map(Number).filter(x=>x>=0&&x<=6))];
-      if(days.length){
-        for(let step=1; step<=7; step++){
-          const cand=new Date(d); cand.setDate(d.getDate()+step);
-          if(days.includes(cand.getDay())) return dateKey(cand);
-        }
-        return null;
-      }
-      d.setDate(d.getDate()+7);
-    } else if(repeat==='monthly'){
-      const anchorDay=Number.isFinite(Number(repeatAnchorDay)) && Number(repeatAnchorDay)>=1 && Number(repeatAnchorDay)<=31
-        ? Number(repeatAnchorDay)
-        : d.getDate();
-      d.setDate(1); d.setMonth(d.getMonth()+1);
-      const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
-      d.setDate(Math.min(anchorDay,last));
-    } else return null;
-    return dateKey(d);
+  function nextEventRepeatDate(dateStr,repeat,repeatDays=[],repeatAnchorDay=null){
+    return RecurrenceService.nextDate(dateStr,repeat,repeatDays,repeatAnchorDay);
   }
 
   function addEventOccurrence(title,date,time,endTime,color,repeat='none',repeatSourceId=null,repeatDays=[],repeatAnchorDay=null,description=''){
-    const ev={
-      id:'ev'+Date.now()+Math.random().toString(36).slice(2,6),
-      title:title.trim().slice(0,80),
-      description:String(description||'').trim().slice(0,600),
-      date,endDate:null,time:normalize24HourTime(time)||null,endTime:normalize24HourTime(endTime)||null,
-      color:/^#[0-9a-fA-F]{6}$/.test(color||'')?color:EVENT_COLORS[0],
-      repeat,repeatSourceId,
-      repeatDays:Array.isArray(repeatDays)?[...new Set(repeatDays.map(Number).filter(d=>d>=0&&d<=6))]:[],
-      repeatAnchorDay:repeat==='monthly'
-        ? (Number.isFinite(Number(repeatAnchorDay)) && Number(repeatAnchorDay)>=1 && Number(repeatAnchorDay)<=31
-          ? Number(repeatAnchorDay)
-          : Number(String(date||'').slice(-2)) || null)
-        : null,
-      repeatUntil:null,
-      createdAt:new Date().toISOString(),
-      updatedAt:Date.now()
-    };
-    EventRepository.add(ev);
-    return ev;
+    return EventDomainService.createOccurrence(
+      title,date,time,endTime,color,repeat,repeatSourceId,repeatDays,repeatAnchorDay,description
+    );
   }
 
   function dateBeforeKey(key){
-    const d=new Date(key+'T12:00:00');
-    if(Number.isNaN(d.getTime())) return null;
-    d.setDate(d.getDate()-1);
-    return dateKey(d);
+    return RecurrenceService.dateBefore(key);
   }
 
   function generateRecurringEventSeries(baseEvent,targetKey=null){
-    if(!baseEvent || !['daily','weekly','monthly'].includes(baseEvent.repeat) || baseEvent.endDate) return 0;
-    const sourceId=baseEvent.repeatSourceId || baseEvent.id;
-    baseEvent.repeatSourceId=sourceId;
-    const anchorDay=baseEvent.repeat==='monthly'
-      ? (Number(baseEvent.repeatAnchorDay) || Number(String(baseEvent.date).slice(-2)))
-      : null;
-    if(baseEvent.repeat==='monthly') baseEvent.repeatAnchorDay=anchorDay;
-
-    const fallback=new Date(baseEvent.date+'T12:00:00');
-    fallback.setMonth(fallback.getMonth()+3);
-    const horizonKey=targetKey || dateKey(fallback);
-    const repeatUntil=baseEvent.repeatUntil || null;
-    let cursor=baseEvent.date, guard=0, created=0;
-
-    while(guard++<1200){
-      const next=nextEventRepeatDate(cursor,baseEvent.repeat,baseEvent.repeatDays,anchorDay);
-      if(!next || next>horizonKey || (repeatUntil && next>repeatUntil)) break;
-      if(
-        !isRecurrenceException('events',sourceId,next)
-        && !data.events.some(ev=>(ev.repeatSourceId||ev.id)===sourceId && ev.date===next)
-      ){
-        const occurrence=addEventOccurrence(
-          baseEvent.title,next,baseEvent.time,baseEvent.endTime,baseEvent.color,
-          baseEvent.repeat,sourceId,baseEvent.repeatDays,anchorDay,baseEvent.description||''
-        );
-        occurrence.repeatUntil=repeatUntil;
-        created++;
-      }
-      cursor=next;
-    }
-    return created;
+    return EventDomainService.generateSeries(baseEvent,targetKey);
   }
 
   function ensureRecurringEventsThrough(targetKey){
-    if(!targetKey) return 0;
-    const groups=new Map();
-    data.events.forEach(ev=>{
-      if(!['daily','weekly','monthly'].includes(ev.repeat) || !ev.date || ev.endDate) return;
-      const sourceId=ev.repeatSourceId || ev.id;
-      if(!groups.has(sourceId)) groups.set(sourceId,[]);
-      groups.get(sourceId).push(ev);
-    });
-
-    let created=0;
-    groups.forEach(items=>{
-      items.sort((a,b)=>a.date.localeCompare(b.date));
-      const latest=items[items.length-1];
-      if(!latest) return;
-      const repeatUntil=items.map(x=>x.repeatUntil).filter(Boolean).sort().at(-1) || null;
-      if(repeatUntil && latest.date>=repeatUntil) return;
-      latest.repeatUntil=repeatUntil;
-      created += generateRecurringEventSeries(latest,targetKey);
-    });
+    const created=EventDomainService.ensureThrough(targetKey);
     if(created) saveData();
     return created;
   }
 
-  function addEvent(title, date, time, endDate, color, repeat='none', repeatDays=[], endTime=null, description=''){
-    const isMulti=!!(endDate && endDate>date);
-    const safeRepeat=!isMulti && ['daily','weekly','monthly'].includes(repeat)?repeat:'none';
-    const ev={
-      id:'ev'+Date.now()+Math.random().toString(36).slice(2,6),
-      title:title.trim().slice(0,80),
-      description:String(description||'').trim().slice(0,600),
-      date,
-      endDate:isMulti?endDate:null,
-      time:isMulti?null:(normalize24HourTime(time)||null),
-      endTime:isMulti?null:(normalize24HourTime(endTime)||null),
-      color:/^#[0-9a-fA-F]{6}$/.test(color||'')?color:EVENT_COLORS[0],
-      repeat:safeRepeat,
-      repeatSourceId:null,
-      repeatDays:safeRepeat==='weekly'&&Array.isArray(repeatDays)?[...new Set(repeatDays.map(Number).filter(d=>d>=0&&d<=6))]:[],
-      repeatAnchorDay:safeRepeat==='monthly' ? (Number(String(date||'').slice(-2)) || null) : null,
-      repeatUntil:null,
-      createdAt:new Date().toISOString(),
-      updatedAt:Date.now()
-    };
-    EventRepository.add(ev);
-    if(safeRepeat!=='none') generateRecurringEventSeries(ev);
-    saveData();
-    return ev;
+  function addEvent(title,date,time,endDate,color,repeat='none',repeatDays=[],endTime=null,description=''){
+    const event=EventDomainService.createEvent(
+      title,date,time,endDate,color,repeat,repeatDays,endTime,description
+    );
+    if(event) saveData();
+    return event;
   }
 
   let openEventDetailId=null;
@@ -6203,86 +5879,44 @@
   });
 
   async function editEvent(id){
-    const target=data.events.find(ev=>ev.id===id);
+    const target=EventRepository.byId(id);
     if(!target) return;
     const value=await askPrompt('Etkinlik adını düzenle',target.title || '');
     if(value===null) return;
     const title=value.trim().slice(0,80);
-    if(!title){ showToast('Etkinlik adı boş olamaz.', 'error'); return; }
+    if(!title){ showToast('Etkinlik adı boş olamaz.','error'); return; }
 
     let scope='single';
     if(['daily','weekly','monthly'].includes(target.repeat)){
       scope=await askRecurringEditChoice('etkinlik');
     }
-    const affected=recurringSeriesItems(data.events,target,'date',scope);
-    affected.forEach(event=>{ event.title=title; touchRecord(event); });
+    const affected=EventDomainService.rename(id,title,scope);
     saveData();
     refreshUI('calendar');
     showToast(scope==='single' ? 'Etkinlik güncellendi.' : affected.length+' etkinlik güncellendi.','success');
   }
 
   async function deleteEvent(id){
-    const index=data.events.findIndex(e=>e.id===id);
-    if(index<0) return;
+    const target=EventRepository.byId(id);
+    if(!target) return;
 
-    const target=data.events[index];
-    const isRecurring=['daily','weekly','monthly'].includes(target.repeat);
     let choice='single';
-    if(isRecurring){
+    if(['daily','weekly','monthly'].includes(target.repeat)){
       choice=await askRecurringDeleteChoice('etkinlik');
       if(choice==='cancel') return;
     }
 
-    if(choice==='future'){
-      const sourceId=target.repeatSourceId || target.id;
-      const removeIds=new Set(recurringItemsFrom(data.events,target,'date').map(event=>event.id));
-      const removed=data.events
-        .map((event,eventIndex)=>({event:JSON.parse(JSON.stringify(event)),index:eventIndex}))
-        .filter(entry=>removeIds.has(entry.event.id));
-      const priorSnapshots=data.events
-        .filter(event=>(event.repeatSourceId||event.id)===sourceId && !removeIds.has(event.id))
-        .map(event=>({id:event.id,repeatUntil:event.repeatUntil || null}));
-
-      const stopKey=dateBeforeKey(target.date);
-      const removedExceptions=trimRecurrenceExceptionsFrom('events',sourceId,target.date);
-      removeIds.forEach(id=>recordTombstone('events',id));
-      data.events=data.events.filter(event=>!removeIds.has(event.id));
-      data.events.forEach(event=>{
-        if((event.repeatSourceId||event.id)===sourceId) event.repeatUntil=stopKey;
-      });
-      saveData();
-      refreshUI('calendar');
-      offerUndo(removed.length+' tekrarlanan etkinlik silindi.', ()=>{
-        priorSnapshots.forEach(snapshot=>{
-          const event=data.events.find(item=>item.id===snapshot.id);
-          if(event) event.repeatUntil=snapshot.repeatUntil;
-        });
-        restoreRecurrenceExceptions('events',sourceId,removedExceptions);
-        removed.sort((a,b)=>a.index-b.index).forEach(({event,index:eventIndex})=>{
-          clearTombstone('events',event.id);
-          touchRecord(event);
-          data.events.splice(Math.min(eventIndex,data.events.length),0,event);
-        });
-        saveData();
-        refreshUI('calendar');
-      });
-      return;
-    }
-
-    const removed=JSON.parse(JSON.stringify(target));
-    const singleSourceId=isRecurring ? (target.repeatSourceId || target.id) : null;
-    const exceptionAdded=isRecurring && target.date
-      ? addRecurrenceException('events',singleSourceId,target.date)
-      : false;
-    recordTombstone('events',target.id);
-    data.events.splice(index,1);
+    const result=EventDomainService.deleteEvent(id,choice);
+    if(!result) return;
     saveData();
     refreshUI('calendar');
-    offerUndo('Etkinlik silindi.', ()=>{
-      if(exceptionAdded) removeRecurrenceException('events',singleSourceId,target.date);
-      clearTombstone('events',removed.id);
-      touchRecord(removed);
-      data.events.splice(Math.min(index,data.events.length),0,removed);
+
+    const message=result.mode==='future'
+      ? result.removedCount+' tekrarlanan etkinlik silindi.'
+      : 'Etkinlik silindi.';
+
+    offerUndo(message,()=>{
+      result.undo();
       saveData();
       refreshUI('calendar');
     });
@@ -6837,7 +6471,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView || !window.ProductivitySessionView || !window.ProductivityFocusView || !window.ProductivityWorkControlsView || !window.ProductivityModalService){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView || !window.ProductivitySessionView || !window.ProductivityFocusView || !window.ProductivityWorkControlsView || !window.ProductivityModalService || !window.ProductivityRecurrenceService || !window.ProductivitySessionService || !window.ProductivityTaskService || !window.ProductivityEventService){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -6862,6 +6496,10 @@
         focusView: !!window.ProductivityFocusView,
         workControlsView: !!window.ProductivityWorkControlsView,
         modalService: !!window.ProductivityModalService,
+        recurrenceService: !!window.ProductivityRecurrenceService,
+        sessionService: !!window.ProductivitySessionService,
+        taskService: !!window.ProductivityTaskService,
+        eventService: !!window.ProductivityEventService,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -8341,6 +7979,94 @@
       equal(typeof window.ProductivityModalService.createController,'function');
       equal(typeof window.ProductivityModalService.choice,'function');
       equal(typeof window.ProductivityModalService.minutes,'function');
+    });
+
+
+    test('Domain service modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityRecurrenceService),true);
+      equal(Boolean(window.ProductivitySessionService),true);
+      equal(Boolean(window.ProductivityTaskService),true);
+      equal(Boolean(window.ProductivityEventService),true);
+    });
+
+    test('RecurrenceService aylık 31 gün kuralını ay sonuna kırpar', ()=>{
+      const state={recurrenceExceptions:{tasks:{},events:{}}};
+      const service=window.ProductivityRecurrenceService.create({
+        getState:()=>state,
+        dateKey:date=>dateKey(date)
+      });
+      equal(service.nextDate('2026-01-31','monthly',[],31),'2026-02-28');
+    });
+
+    test('SessionService todo ödülünü yalnızca bir kez sayar', ()=>{
+      const state={totalTodosCompleted:0,subjects:[],sessionLog:{}};
+      const service=window.ProductivitySessionService.create({
+        getState:()=>state,
+        now:()=>100
+      });
+      const session={todos:[{id:'x',text:'Test',done:false}]};
+      const first=service.toggleTodo(session,'x');
+      service.toggleTodo(session,'x');
+      const third=service.toggleTodo(session,'x');
+      equal(first.newlyRewarded,true);
+      equal(third.newlyRewarded,false);
+      equal(state.totalTodosCompleted,1);
+    });
+
+    test('TaskService recurring future delete undo ile geri döner', ()=>{
+      const state={tasks:[],totalTodosCompleted:0,recurrenceExceptions:{tasks:{},events:{}}};
+      const recurrence=window.ProductivityRecurrenceService.create({
+        getState:()=>state,
+        dateKey:date=>dateKey(date)
+      });
+      let idCounter=0;
+      const service=window.ProductivityTaskService.create({
+        getState:()=>state,
+        recurrence,
+        normalizeTime:value=>value,
+        tagExists:()=>false,
+        normalizedTagId:()=>null,
+        nextSortOrder:()=>state.tasks.length,
+        now:()=>1000+(idCounter++),
+        random:()=>0.123,
+        touchRecord:record=>record,
+        recordTombstone:()=>0,
+        clearTombstone:()=>{}
+      });
+      const root=service.createTask('Tekrar','2026-11-01',null,null,'daily');
+      root.repeatSourceId=root.id;
+      service.spawnNext(root);
+      const second=state.tasks.find(task=>task.dueDate==='2026-11-02');
+      service.spawnNext(second);
+      const before=state.tasks.length;
+      const result=service.deleteTask(second.id,'future');
+      equal(state.tasks.length,1);
+      result.undo();
+      equal(state.tasks.length,before);
+    });
+
+    test('EventService tekrar serisini hedef güne kadar üretir', ()=>{
+      const state={events:[],recurrenceExceptions:{tasks:{},events:{}}};
+      const recurrence=window.ProductivityRecurrenceService.create({
+        getState:()=>state,
+        dateKey:date=>dateKey(date)
+      });
+      let tick=0;
+      const service=window.ProductivityEventService.create({
+        getState:()=>state,
+        recurrence,
+        normalizeTime:value=>value,
+        defaultColor:'#7aa2f7',
+        dateKey:date=>dateKey(date),
+        now:()=>2000+(tick++),
+        random:()=>0.234,
+        touchRecord:record=>record,
+        recordTombstone:()=>0,
+        clearTombstone:()=>{}
+      });
+      const event=service.createOccurrence('Ders','2026-11-01',null,null,'#7aa2f7','daily');
+      service.generateSeries(event,'2026-11-04');
+      equal(state.events.filter(item=>item.date<='2026-11-04').length,4);
     });
 
     const passed=results.filter(r=>r.ok).length;
