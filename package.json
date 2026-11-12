@@ -1,0 +1,10 @@
+{
+  "name": "productivity-app",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-app.js",
+    "build:check": "node scripts/build-app.js --check",
+    "syntax:check": "node scripts/check-syntax.js",
+    "check": "npm run build:check && npm run syntax:check"
+  }
+}
