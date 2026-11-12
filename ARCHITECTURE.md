@@ -91,3 +91,9 @@ Session, task, event and recurrence mutation rules live in dedicated services. `
 ## Domain regression gate
 
 `npm run domain:check` validates recurrence, session, task and event mutation behavior independently from the DOM. It is part of the standard `npm run check` release gate.
+
+## Reliability boundary
+
+State migration, IndexedDB recovery storage, startup recovery sequencing, destructive-sync risk calculation and device-local timer preservation are independent reliability modules.
+
+The composition layer supplies UI callbacks; reliability modules own deterministic data rules. `npm run reliability:check` independently verifies migration, recovery sequencing, destructive-sync thresholds and active-timer preservation.
