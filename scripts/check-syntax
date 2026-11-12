@@ -13,6 +13,8 @@ const files = [
   'assets/js/modules/timer-service.js',
   'assets/js/modules/timer-controller.js',
   'assets/js/modules/session-repository.js',
+  'assets/js/modules/task-repository.js',
+  'assets/js/modules/event-repository.js',
   'assets/js/cloud-config.js',
   'assets/js/cloud-sync.js',
   'assets/js/pwa-register.js',
