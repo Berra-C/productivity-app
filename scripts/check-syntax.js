@@ -28,6 +28,7 @@ const files = [
   'assets/js/modules/session-view.js',
   'assets/js/modules/focus-view.js',
   'assets/js/modules/work-controls-view.js',
+  'assets/js/modules/modal-service.js',
   'assets/js/cloud-config.js',
   'assets/js/cloud-sync.js',
   'assets/js/pwa-register.js',
