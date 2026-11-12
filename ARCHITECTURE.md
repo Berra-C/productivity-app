@@ -38,8 +38,9 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 21. **Session view** — session cards, todos, target progress and hidden/history markup.
 22. **Focus view** — Focus Mode presentation model derived from active-session state.
 23. **Work controls view** — timer/break control-button markup.
-24. **App main** — composition root, DOM binding and remaining feature orchestration.
-25. **Cloud sync** — optional cloud transport and account synchronization.
+24. **Modal service** — modal stack/focus management plus reusable confirm, prompt, time, subject and duration dialog flows.
+25. **App main** — composition root, DOM binding and remaining feature orchestration.
+26. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -57,7 +58,7 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Extract reusable modal/browser interaction infrastructure from the main composition file.
+- Extract session mutation/service logic and recurrence services from the main composition file.
 
 ## Change log organization
 
@@ -73,3 +74,7 @@ View modules build deterministic HTML or layout data and do not attach event lis
 Runtime module aliases must be initialized before repositories or application state consume them.
 
 `npm run check` validates generated-bundle freshness, JavaScript syntax, declaration order, and production startup execution through `AppStorageRepository` initialization. This prevents lexical TDZ regressions such as accessing `StatePersistence` before its `const` initialization.
+
+## Modal infrastructure rule
+
+Modal focus trapping, Escape/backdrop cancellation, listener cleanup, button-state restoration and reusable dialog lifecycles live in `modal-service.js`. Feature code should call the service through thin wrappers instead of implementing its own Promise/listener cleanup loop.
