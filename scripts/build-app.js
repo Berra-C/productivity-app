@@ -28,6 +28,7 @@ const sources = [
   'assets/js/modules/session-view.js',
   'assets/js/modules/focus-view.js',
   'assets/js/modules/work-controls-view.js',
+  'assets/js/modules/modal-service.js',
   'assets/js/app-main.js'
 ];
 
