@@ -25,6 +25,9 @@ const sources = [
   'assets/js/modules/stats-view.js',
   'assets/js/modules/task-view.js',
   'assets/js/modules/collection-view.js',
+  'assets/js/modules/session-view.js',
+  'assets/js/modules/focus-view.js',
+  'assets/js/modules/work-controls-view.js',
   'assets/js/app-main.js'
 ];
 
