@@ -17,6 +17,8 @@ const files = [
   'assets/js/modules/event-repository.js',
   'assets/js/modules/gamification-core.js',
   'assets/js/modules/tree-service.js',
+  'assets/js/modules/analytics-core.js',
+  'assets/js/modules/calendar-core.js',
   'assets/js/cloud-config.js',
   'assets/js/cloud-sync.js',
   'assets/js/pwa-register.js',
