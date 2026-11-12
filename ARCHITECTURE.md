@@ -27,8 +27,10 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 10. **Event repository** — event lookup, collection mutation and event-specific queries.
 11. **Gamification core** — XP, levels, badges and streak/freeze calculations.
 12. **Tree service** — tree growth, completion and rollback mutations.
-13. **App main** — composition root, UI rendering and remaining feature orchestration.
-14. **Cloud sync** — optional cloud transport and account synchronization.
+13. **Analytics core** — focus, planning, productive-hour and weekly review calculations.
+14. **Calendar core** — calendar time-window and work-interval projection rules.
+15. **App main** — composition root, UI rendering and remaining feature orchestration.
+16. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -46,4 +48,8 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Split calendar and analytics rendering from the main composition file.
+- Split calendar and analytics rendering from the main composition file; core calculations are now extracted.
+
+## Change log organization
+
+Version change notes are stored under `changes/` to keep the project root clean.
