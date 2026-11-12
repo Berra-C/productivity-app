@@ -19,6 +19,9 @@ const sources = [
   'assets/js/modules/tree-service.js',
   'assets/js/modules/analytics-core.js',
   'assets/js/modules/calendar-core.js',
+  'assets/js/modules/view-formatters.js',
+  'assets/js/modules/summary-view.js',
+  'assets/js/modules/calendar-view.js',
   'assets/js/app-main.js'
 ];
 
