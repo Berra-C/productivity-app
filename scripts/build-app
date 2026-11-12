@@ -15,13 +15,15 @@ const sources = [
   'assets/js/modules/session-repository.js',
   'assets/js/modules/task-repository.js',
   'assets/js/modules/event-repository.js',
+  'assets/js/modules/gamification-core.js',
+  'assets/js/modules/tree-service.js',
   'assets/js/app-main.js'
 ];
 
 function buildText() {
   const header = [
     '/*',
-    ' * GENERATED FILE â€” DO NOT EDIT assets/js/app.js DIRECTLY.',
+    ' * GENERATED FILE — DO NOT EDIT assets/js/app.js DIRECTLY.',
     ' * Edit modules/*.js or assets/js/app-main.js, then run: npm run build',
     ' */',
     ''
