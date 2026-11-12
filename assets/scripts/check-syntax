@@ -1,0 +1,44 @@
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const root = path.resolve(__dirname, '..');
+const files = [
+  'assets/js/app-main.js',
+  'assets/js/modules/ui-helpers.js',
+  'assets/js/modules/state-merge.js',
+  'assets/js/modules/state-persistence.js',
+  'assets/js/modules/timer-core.js',
+  'assets/js/modules/timer-service.js',
+  'assets/js/modules/timer-controller.js',
+  'assets/js/modules/session-repository.js',
+  'assets/js/cloud-config.js',
+  'assets/js/cloud-sync.js',
+  'assets/js/pwa-register.js',
+  'sw.js',
+  'scripts/build-app.js'
+];
+
+let failed = false;
+
+for (const relativePath of files) {
+  const fullPath = path.join(root, relativePath);
+  if (!fs.existsSync(fullPath)) {
+    console.error(`missing: ${relativePath}`);
+    failed = true;
+    continue;
+  }
+
+  const result = spawnSync(process.execPath, ['--check', fullPath], {
+    encoding: 'utf8'
+  });
+
+  if (result.status !== 0) {
+    failed = true;
+    console.error(`syntax failed: ${relativePath}`);
+    process.stderr.write(result.stderr || '');
+  }
+}
+
+if (failed) process.exit(1);
+console.log('syntax checks passed');
