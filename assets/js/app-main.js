@@ -213,21 +213,10 @@
   function dateKey(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
   // Veri anahtarları içeride ISO (YYYY-MM-DD) kalır; kullanıcıya gösterilen tüm tarihler DD-MM-YY biçimindedir.
   function displayDate(value){
-    if(!value) return '';
-    let d;
-    if(value instanceof Date) d = value;
-    else if(/^\d{4}-\d{2}-\d{2}$/.test(String(value))){
-      const parts=String(value).split('-');
-      return parts[2]+'-'+parts[1]+'-'+parts[0].slice(-2);
-    } else d = new Date(value);
-    if(Number.isNaN(d.getTime())) return String(value);
-    return pad(d.getDate())+'-'+pad(d.getMonth()+1)+'-'+String(d.getFullYear()).slice(-2);
+    return ViewFormatters.displayDate(value);
   }
   function displayClockTime(value){
-    if(!value) return '';
-    const d = new Date(value);
-    if(Number.isNaN(d.getTime())) return '';
-    return pad(d.getHours())+':'+pad(d.getMinutes());
+    return ViewFormatters.displayClockTime(value);
   }
 
   function displaySessionTimeRange(session){
@@ -579,10 +568,7 @@
   });
   accessibilityObserver.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class']});
   function formatDurationLabel(seconds){
-    const mins = Math.floor(seconds/60);
-    if(mins < 60) return mins+' dk';
-    const h = Math.floor(mins/60), m = mins%60;
-    return m===0 ? h+' sa' : h+'sa '+m+'dk';
+    return ViewFormatters.formatDurationLabel(seconds);
   }
 
   function freshData(){
@@ -1167,8 +1153,11 @@
   const TreeService=window.ProductivityTreeService;
   const AnalyticsCore=window.ProductivityAnalyticsCore;
   const CalendarCore=window.ProductivityCalendarCore;
+  const ViewFormatters=window.ProductivityViewFormatters;
+  const SummaryView=window.ProductivitySummaryView;
+  const CalendarView=window.ProductivityCalendarView;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -1181,7 +1170,10 @@
       !GamificationCore ? 'GamificationCore' : null,
       !TreeService ? 'TreeService' : null,
       !AnalyticsCore ? 'AnalyticsCore' : null,
-      !CalendarCore ? 'CalendarCore' : null
+      !CalendarCore ? 'CalendarCore' : null,
+      !ViewFormatters ? 'ViewFormatters' : null,
+      !SummaryView ? 'SummaryView' : null,
+      !CalendarView ? 'CalendarView' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -5453,10 +5445,7 @@
   }
 
   function formatMinutes(seconds){
-    const mins = Math.round(seconds/60);
-    if(mins < 60) return mins + ' dk';
-    const h = Math.floor(mins/60), m = mins%60;
-    return h + 's ' + m + 'dk';
+    return ViewFormatters.formatMinutes(seconds);
   }
 
   function sessionAnalyticsForKeys(keys){
@@ -5575,24 +5564,13 @@
   }
 
   // ================= ÖZET (haftalık rapor) =================
-  function trendArrowHtml(cur, prev){
-    if(prev === 0 && cur === 0) return '<span class="trend-flat">—</span>';
-    if(prev === 0) return '<span class="trend-up">▲ yeni</span>';
-    const diff = Math.round((cur-prev)/prev*100);
-    if(diff > 4) return '<span class="trend-up">▲ %'+diff+'</span>';
-    if(diff < -4) return '<span class="trend-down">▼ %'+Math.abs(diff)+'</span>';
-    return '<span class="trend-flat">— aynı</span>';
+  function trendArrowHtml(current,previous){
+    return ViewFormatters.trendArrowHtml(current,previous);
   }
 
   // Dikkat dağınıklığında azalış olumlu, artış olumsuzdur.
-  function distractionTrendHtml(cur, prev){
-    if(prev === 0 && cur === 0) return '<span class="trend-flat">—</span>';
-    if(prev === 0 && cur > 0) return '<span class="trend-down">▲ yeni</span>';
-    if(prev > 0 && cur === 0) return '<span class="trend-up">▼ %100</span>';
-    const diff = Math.round((cur-prev)/prev*100);
-    if(diff > 4) return '<span class="trend-down">▲ %'+diff+'</span>';
-    if(diff < -4) return '<span class="trend-up">▼ %'+Math.abs(diff)+'</span>';
-    return '<span class="trend-flat">— aynı</span>';
+  function distractionTrendHtml(current,previous){
+    return ViewFormatters.distractionTrendHtml(current,previous);
   }
 
   function buildShareText(thisTotals, treesThisWeek, badgesThisWeek){
@@ -5894,149 +5872,34 @@
   }
 
   function renderSummary(){
-    const now = new Date();
-    const thisWeekStart = startOfWeek(now);
-    const thisWeekKeys = keysInRange(thisWeekStart, now);
-    const lastWeekStart = addDays(thisWeekStart, -7);
-    const lastWeekEnd = addDays(thisWeekStart, -1);
-    const lastWeekKeys = keysInRange(lastWeekStart, lastWeekEnd);
-
-    const thisTotals = sumEntries(thisWeekKeys);
-    const lastTotals = sumEntries(lastWeekKeys);
-    const review = weeklyReviewStats(thisWeekKeys);
-    const planning = planningStatsForKeys(thisWeekKeys);
-
-    const treesThisWeek = data.collection.filter(c=> thisWeekKeys.includes(dateKey(new Date(c.completedAt)))).length;
-    const badgesThisWeek = (data.badgeUnlockLog||[]).filter(b=> thisWeekKeys.includes(dateKey(new Date(b.at)))).length;
-
-    let bestDay=null, bestDayVal=-1, worstDay=null, worstDayVal=-1;
-    thisWeekKeys.forEach(k=>{
-      const d = data.days[k];
-      if(!d) return;
-      if(d.workSeconds > bestDayVal){ bestDayVal = d.workSeconds; bestDay = k; }
-      if(d.distraction > worstDayVal){ worstDayVal = d.distraction; worstDay = k; }
+    el.summaryContent.innerHTML=SummaryView.build({
+      now:new Date(),
+      data,
+      startOfWeek,
+      addDays,
+      dateKey,
+      keysInRange,
+      sumEntries,
+      weeklyReviewStats,
+      planningStatsForKeys,
+      focusScoreStats,
+      formatMinutes,
+      formatDurationLabel,
+      trendArrowHtml,
+      distractionTrendHtml,
+      escapeHtml,
+      pad,
+      weekdayShort:WEEKDAY_SHORT,
+      monthShort:MONTH_SHORT
     });
 
-    function dayLabel(key){
-      if(!key) return null;
-      const d = new Date(key);
-      return WEEKDAY_SHORT[d.getDay()] + ' (' + d.getDate() + ' ' + MONTH_SHORT[d.getMonth()] + ')';
+    const shareBtn=document.getElementById('shareBtn');
+    if(shareBtn) shareBtn.addEventListener('click',shareCurrentSummary);
+
+    const summaryPrintBtn=document.getElementById('summaryPrintBtn');
+    if(summaryPrintBtn){
+      summaryPrintBtn.addEventListener('click',printWeeklySummary);
     }
-
-    let html = '<div class="summary-card">'
-      + '<div class="summary-title-row"><div class="summary-title">Bu Hafta vs Geçen Hafta</div><div class="summary-actions"><button class="share-btn" id="shareBtn">📤 Paylaş</button><button class="summary-print-btn" id="summaryPrintBtn">🖨 PDF / Yazdır</button></div></div>'
-      + '<div class="summary-row"><span class="summary-label">Çalışma Süresi</span><span class="summary-value">'+formatMinutes(thisTotals.workSeconds)+' '+trendArrowHtml(thisTotals.workSeconds, lastTotals.workSeconds)+'</span></div>'
-      + '<div class="summary-row"><span class="summary-label">Dikkat Dağınıklığı</span><span class="summary-value">'+thisTotals.distraction+' '+distractionTrendHtml(thisTotals.distraction, lastTotals.distraction)+'</span></div>'
-      + '<div class="summary-row"><span class="summary-label">Oturum Sayısı</span><span class="summary-value">'+thisTotals.sessions+' '+trendArrowHtml(thisTotals.sessions, lastTotals.sessions)+'</span></div>'
-      + '</div>';
-
-    html += '<div class="collection-stats">'
-      + '<div class="collection-stat"><div class="cs-num">'+treesThisWeek+'</div><div class="cs-lbl">Bu Hafta Ağaç</div></div>'
-      + '<div class="collection-stat"><div class="cs-num">'+badgesThisWeek+'</div><div class="cs-lbl">Bu Hafta Rozet</div></div>'
-      + '</div>';
-
-    const bestDayLabel = review.bestDay ? (dayLabel(review.bestDay.key)+' · '+formatDurationLabel(review.bestDay.seconds)) : '—';
-    const topSubjectLabel = review.topSubject ? (review.topSubject[0]+' · '+formatDurationLabel(review.topSubject[1])) : '—';
-    const longestLabel = review.longestSession ? (formatDurationLabel(review.longestSession.seconds)+' · '+review.longestSession.subject) : '—';
-
-    html += '<div class="insight-card">'
-      + '<div class="summary-title">Haftalık Değerlendirme</div>'
-      + '<div class="weekly-review-grid">'
-      + '<div class="weekly-review-card"><div class="wr-label">En güçlü gün</div><div class="wr-value">'+escapeHtml(bestDayLabel)+'</div><div class="wr-sub">Haftanın en yüksek çalışma süresi</div></div>'
-      + '<div class="weekly-review-card"><div class="wr-label">En çok çalışılan konu</div><div class="wr-value">'+escapeHtml(topSubjectLabel)+'</div><div class="wr-sub">Oturum konu kayıtlarına göre</div></div>'
-      + '<div class="weekly-review-card"><div class="wr-label">En uzun oturum</div><div class="wr-value">'+escapeHtml(longestLabel)+'</div><div class="wr-sub">'+review.sessionCount+' oturum · ort. '+formatDurationLabel(review.avgSession)+'</div></div>'
-      + '<div class="weekly-review-card"><div class="wr-label">En verimli saat</div><div class="wr-value">'+(review.productiveHour ? (pad(review.productiveHour.hour)+':00–'+pad((review.productiveHour.hour+1)%24)+':00') : '—')+'</div><div class="wr-sub">'+(review.productiveHour ? formatDurationLabel(review.productiveHour.seconds)+' çalışma' : 'Yeni oturumlarda saat verisi birikecek')+'</div></div>'
-      + '<div class="weekly-review-card"><div class="wr-label">Odak kalite skoru</div><div class="wr-value">'+(review.focus.average!==null?review.focus.average+'/100':'—')+'</div><div class="wr-sub">'+(review.focus.count?review.focus.count+' oturumun ağırlıklı ortalaması':'Henüz oturum verisi yok')+'</div></div>'
-      + '<div class="weekly-review-card"><div class="wr-label">Hedef günleri</div><div class="wr-value">'+review.goalsMet+' / '+thisWeekKeys.length+'</div><div class="wr-sub">'+review.tasksCompleted+' görev bu hafta tamamlandı</div></div>'
-      + '</div>'
-      + '<div class="planning-analysis">'
-      + '<div class="planning-analysis-title">🎯 Planlanan / Gerçek Süre</div>'
-      + (planning.count
-        ? '<div class="planning-row"><span>Hedefli oturum</span><b>'+planning.count+'</b></div>'
-          + '<div class="planning-row"><span>Hedefe ulaşan</span><b>'+planning.reached+' · %'+planning.completionRate+'</b></div>'
-          + '<div class="planning-row"><span>Planlanan toplam</span><b>'+formatDurationLabel(planning.planned)+'</b></div>'
-          + '<div class="planning-row"><span>Gerçek toplam</span><b>'+formatDurationLabel(planning.actual)+'</b></div>'
-          + '<div class="planning-row"><span>Ortalama sapma</span><b>'+(planning.avgDelta>=0?'+':'−')+formatDurationLabel(Math.abs(planning.avgDelta))+'</b></div>'
-          + '<div class="planning-row"><span>Ortalama overtime</span><b>'+(planning.overtimeCount?('+'+formatDurationLabel(planning.avgOvertime)):'—')+'</b></div>'
-        : '<div class="todo-empty">Bu hafta hedef süre belirlenmiş oturum yok.</div>')
-      + '</div>'
-      + (review.scheduledStudy.matchedEvents
-        ? '<div class="planning-analysis"><div class="planning-analysis-title">🗓 Takvim Planı / Gerçekleşen Çalışma</div>'
-          + '<div class="planning-row"><span>Eşleşen plan</span><b>'+review.scheduledStudy.matchedEvents+'</b></div>'
-          + '<div class="planning-row"><span>Takvimde planlanan</span><b>'+formatDurationLabel(review.scheduledStudy.planned)+'</b></div>'
-          + '<div class="planning-row"><span>Gerçekte çalışılan</span><b>'+formatDurationLabel(review.scheduledStudy.actual)+'</b></div>'
-          + '<div class="planning-row"><span>Plan uyumu</span><b>%'+review.scheduledStudy.adherence+'</b></div>'
-          + '<div class="planning-row"><span>Süre farkı</span><b>'+(review.scheduledStudy.delta>=0?'+':'−')+formatDurationLabel(Math.abs(review.scheduledStudy.delta))+'</b></div></div>'
-        : '')
-      + '</div>';
-
-    // Bu ay vs geçen ay
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const thisMonthKeys = keysInRange(thisMonthStart, now);
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth()-1, 1);
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-    const lastMonthKeys = keysInRange(lastMonthStart, lastMonthEnd);
-    const thisMonthTotals = sumEntries(thisMonthKeys);
-    const lastMonthTotals = sumEntries(lastMonthKeys);
-
-    if(thisMonthTotals.workSeconds > 0 || lastMonthTotals.workSeconds > 0){
-      html += '<div class="summary-card">'
-        + '<div class="summary-title">Bu Ay vs Geçen Ay</div>'
-        + '<div class="summary-row"><span class="summary-label">Çalışma Süresi</span><span class="summary-value">'+formatMinutes(thisMonthTotals.workSeconds)+' '+trendArrowHtml(thisMonthTotals.workSeconds, lastMonthTotals.workSeconds)+'</span></div>'
-        + '<div class="summary-row"><span class="summary-label">Dikkat Dağınıklığı</span><span class="summary-value">'+thisMonthTotals.distraction+' '+distractionTrendHtml(thisMonthTotals.distraction, lastMonthTotals.distraction)+'</span></div>'
-        + '</div>';
-    }
-
-    let insights = '';
-    if(bestDay && bestDayVal > 0) insights += '<div class="insight-line">🏆 En verimli günün: <b>'+dayLabel(bestDay)+'</b> — '+formatDurationLabel(bestDayVal)+' çalıştın.</div>';
-    if(worstDay && worstDayVal > 0) insights += '<div class="insight-line">😕 En çok dikkatin dağıldığı gün: <b>'+dayLabel(worstDay)+'</b> — '+worstDayVal+' kez.</div>';
-    if(thisTotals.distraction > 0 || thisTotals.workSeconds > 0){
-      insights += '<div class="insight-line">😕 Bu hafta toplam dikkat dağınıklığın: <b>'+thisTotals.distraction+' kez</b></div>';
-    }
-    if(review.productiveHour){
-      insights += '<div class="insight-line">🕒 Gerçek timer aralıklarına göre en yoğun çalışma saatin <b>'+pad(review.productiveHour.hour)+':00–'+pad((review.productiveHour.hour+1)%24)+':00</b>.</div>';
-    }
-    if(review.focus.average!==null){
-      const focusText=review.focus.average>=85?'çok güçlü':review.focus.average>=70?'iyi':review.focus.average>=55?'orta':'geliştirilebilir';
-      insights += '<div class="insight-line">🎯 Haftalık odak kalite skorun <b>'+review.focus.average+'/100</b> — '+focusText+'.</div>';
-    }
-    const lastWeekFocus=focusScoreStats(lastWeekKeys);
-    if(review.focus.average!==null && lastWeekFocus.average!==null){
-      const fd=review.focus.average-lastWeekFocus.average;
-      if(Math.abs(fd)>=3) insights += '<div class="insight-line">'+(fd>0?'📈':'📉')+' Odak kaliten geçen haftaya göre <b>'+(fd>0?'+':'')+fd+' puan</b> '+(fd>0?'arttı':'değişti')+'.</div>';
-    }
-    if(review.scheduledStudy.matchedEvents){
-      insights += '<div class="insight-line">🗓 Takvimdeki eşleşen çalışma planlarının <b>%'+review.scheduledStudy.adherence+'</b> kadarını süre olarak gerçekleştirdin.</div>';
-    }
-    if(!insights) insights = '<div class="insight-line">Bu hafta henüz yeterli veri yok. Birkaç gün daha kullan, buraya içgörüler eklenecek.</div>';
-
-    html += '<div class="insight-card"><div class="summary-title">İçgörüler</div>'+insights+'</div>';
-
-    // Uzun vadeli gelişim anlatısı
-    const activeDays = Object.keys(data.days).filter(k=> data.days[k].workSeconds > 0).sort();
-    if(activeDays.length >= 10){
-      const span = Math.min(14, Math.floor(activeDays.length/2));
-      const firstSlice = activeDays.slice(0, span);
-      const recentSlice = activeDays.slice(-span);
-      const avgFirst = Math.round(firstSlice.reduce((s,k)=> s+data.days[k].workSeconds, 0) / firstSlice.length / 60);
-      const avgRecent = Math.round(recentSlice.reduce((s,k)=> s+data.days[k].workSeconds, 0) / recentSlice.length / 60);
-      let narrative;
-      if(avgFirst > 0){
-        const growth = Math.round((avgRecent-avgFirst)/avgFirst*100);
-        if(growth > 5) narrative = '📈 Başladığından beri günlük ortalama çalışma süren <b>%'+growth+' arttı</b> — eskiden günde ~'+avgFirst+' dk, son zamanlarda ~'+avgRecent+' dk.';
-        else if(growth < -5) narrative = '📉 İlk günlere göre biraz yavaşlamışsın (%'+Math.abs(growth)+' azalma) — eskiden ~'+avgFirst+' dk, şimdi ~'+avgRecent+' dk. Tekrar hız kazanabilirsin.';
-        else narrative = '➡️ Günlük ortalama çalışma süren ilk günlerinden bu yana oldukça istikrarlı: ~'+avgRecent+' dk.';
-      } else {
-        narrative = '📈 Son dönemde günde ortalama ~'+avgRecent+' dk çalışıyorsun.';
-      }
-      html += '<div class="insight-card"><div class="summary-title">Uzun Vadeli Gelişim</div><div class="insight-line">'+narrative+'</div></div>';
-    }
-
-    el.summaryContent.innerHTML = '<div id="summaryPrintArea">'+html+'</div>';
-    const shareBtn = document.getElementById('shareBtn');
-    if(shareBtn) shareBtn.addEventListener('click', shareCurrentSummary);
-    const summaryPrintBtn = document.getElementById('summaryPrintBtn');
-    if(summaryPrintBtn) summaryPrintBtn.addEventListener('click', printWeeklySummary);
   }
 
 
@@ -7152,12 +7015,8 @@
     renderCalAgenda();
   }
 
-  function weekTitle(start, end){
-    const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
-    const sameYear = start.getFullYear() === end.getFullYear();
-    if(sameMonth) return start.getDate()+'–'+end.getDate()+' '+MONTH_FULL[start.getMonth()]+' '+start.getFullYear();
-    if(sameYear) return start.getDate()+' '+MONTH_FULL[start.getMonth()]+' – '+end.getDate()+' '+MONTH_FULL[end.getMonth()]+' '+start.getFullYear();
-    return start.getDate()+' '+MONTH_FULL[start.getMonth()]+' '+start.getFullYear()+' – '+end.getDate()+' '+MONTH_FULL[end.getMonth()]+' '+end.getFullYear();
+  function weekTitle(start,end){
+    return ViewFormatters.weekTitle(start,end,MONTH_FULL);
   }
 
   function weeklyItemColor(item, type){
@@ -7174,255 +7033,90 @@
   }
 
   function layoutTimedItems(items){
-    const sorted=[...items].sort((a,b)=>a.startMin-b.startMin || a.endMin-b.endMin);
-    const result=[];
-    let cluster=[];
-    let clusterEnd=-1;
-
-    function flushCluster(){
-      if(!cluster.length) return;
-
-      const colEnds=[];
-      cluster.forEach(item=>{
-        let col=colEnds.findIndex(end=>end<=item.startMin);
-        if(col<0){
-          col=colEnds.length;
-          colEnds.push(item.endMin);
-        }else{
-          colEnds[col]=item.endMin;
-        }
-        item.col=col;
-      });
-
-      const cols=Math.max(1,colEnds.length);
-      cluster.forEach(item=>{
-        item.cols=cols;
-        result.push(item);
-      });
-
-      cluster=[];
-      clusterEnd=-1;
-    }
-
-    sorted.forEach(item=>{
-      if(cluster.length && item.startMin>=clusterEnd) flushCluster();
-      cluster.push(item);
-      clusterEnd=Math.max(clusterEnd,item.endMin);
-    });
-
-    flushCluster();
-    return result;
+    return CalendarView.layoutTimedItems(items);
   }
 
   const WEEK_HOUR_PX = 48;
 
   function renderWeekView(){
-    const start = startOfWeek(calViewDate);
-    const end = addDays(start, 6);
-    const today = todayKey();
-    el.calTitle.textContent = weekTitle(start, end);
-
-    const days = Array.from({length:7}, (_,i)=>addDays(start,i));
-    const dayKeys = days.map(dateKey);
-    const dayNames = ['Pzt','Sal','Çar','Per','Cum','Cmt','Paz'];
-
-    let head = '<div class="cal-week-head-spacer"></div>';
-    days.forEach((d,i)=>{
-      const k=dayKeys[i];
-      head += '<button class="cal-week-day-head'+(k===today?' today':'')+(k===calSelectedDate?' selected':'')+'" data-date="'+k+'"><span>'+dayNames[i]+'</span><b>'+d.getDate()+'</b></button>';
+    const view=CalendarView.buildWeek({
+      viewDate:calViewDate,
+      selectedDate:calSelectedDate,
+      today:todayKey(),
+      now:new Date(),
+      events:EventRepository.all(),
+      tasks:TaskRepository.all(),
+      calendarWorkIntervals:data.calendarWorkIntervals,
+      weekHourPx:WEEK_HOUR_PX,
+      startOfWeek,
+      addDays,
+      dateKey,
+      weekTitle,
+      pad,
+      isMultiDayEvent,
+      weeklyItemColor,
+      escapeHtml,
+      clockToMinutes,
+      workIntervalsForDate,
+      displayClockTime
     });
 
-    let allDay = '<div class="cal-week-all-label">Tüm gün</div>';
-    days.forEach((d,i)=>{
-      const k=dayKeys[i];
-      const items=[];
-      data.events.filter(ev=> isMultiDayEvent(ev) ? (k>=ev.date && k<=ev.endDate) : (ev.date===k && !ev.time)).forEach(ev=>items.push({type:'event',item:ev}));
-      data.tasks.filter(t=>t.dueDate===k && !t.time).forEach(t=>items.push({type:'task',item:t}));
-      const chips=items.slice(0,3).map(x=>{
-        const c=weeklyItemColor(x.item,x.type);
-        const label=x.type==='event'?'📌 ':'✓ ';
-        return '<button class="cal-week-all-chip '+x.type+'" data-date="'+k+'" data-action="'+(x.type==='task'?'focus-task':'view-event')+'" data-id="'+x.item.id+'" style="--week-color:'+c+'" title="'+escapeHtml(x.item.title||x.item.text)+'">'+label+escapeHtml(x.item.title||x.item.text)+'</button>';
-      }).join('');
-      allDay += '<div class="cal-week-all-cell'+(k===calSelectedDate?' selected':'')+'" data-date="'+k+'">'+chips+(items.length>3?'<span class="cal-week-more">+'+(items.length-3)+'</span>':'')+'</div>';
-    });
-
-    let timeLabels='';
-    for(let h=0;h<24;h++) timeLabels += '<div class="cal-week-hour-label">'+pad(h)+':00</div>';
-
-    let dayColumns='';
-    days.forEach((d,i)=>{
-      const k=dayKeys[i];
-      let slots='';
-      for(let h=0;h<24;h++) slots += '<div class="cal-week-hour-slot" data-date="'+k+'" data-hour="'+h+'"></div>';
-      const timed=[];
-      data.events.filter(ev=>!isMultiDayEvent(ev) && ev.date===k && ev.time).forEach(ev=>{
-        const startMin=clockToMinutes(ev.time);
-        if(startMin===null) return;
-        const endCandidate=clockToMinutes(ev.endTime);
-        const endMin=endCandidate!==null && endCandidate>startMin ? endCandidate : Math.min(1440,startMin+45);
-        timed.push({type:'event',item:ev,time:ev.time,startMin,endMin,cols:1});
-      });
-      data.tasks.filter(t=>t.dueDate===k && t.time).forEach(t=>{
-        const startMin=clockToMinutes(t.time);
-        if(startMin===null) return;
-        timed.push({type:'task',item:t,time:t.time,startMin,endMin:Math.min(1440,startMin+30),cols:1});
-      });
-      if(data.calendarWorkIntervals !== false){
-        workIntervalsForDate(k).forEach(block=>{
-          timed.push({type:'work',item:block,time:displayClockTime(block.start),startMin:block.startMin,endMin:block.endMin,cols:1});
-        });
-      }
-      const laidOut=layoutTimedItems(timed);
-      const blocks=laidOut.map((x,index)=>{
-        const top=(x.startMin/60)*WEEK_HOUR_PX;
-        const height=Math.max(20,((x.endMin-x.startMin)/60)*WEEK_HOUR_PX-2);
-        const c=x.type==='work' ? x.item.color : weeklyItemColor(x.item,x.type);
-        const label=x.type==='work' ? ('Çalışma · '+x.item.subject) : (x.item.title||x.item.text);
-        const widthPct=100/Math.max(1,x.cols);
-        const leftPct=x.col*widthPct;
-        const timeLabel=x.type==='work'
-          ? displayClockTime(x.item.start)+'–'+displayClockTime(x.item.end)
-          : (x.type==='event' && x.item.endTime ? x.time+'–'+x.item.endTime : x.time);
-        if(x.type==='work'){
-          return '<div class="cal-week-timed-item work-session" style="top:'+top+'px;height:'+height+'px;left:calc('+leftPct+'% + 2px);right:auto;width:calc('+widthPct+'% - 4px);--week-color:'+c+';z-index:'+(3+index)+'" title="'+escapeHtml(timeLabel+' · '+label+(x.item.legacyApprox?' · eski kayıt, yaklaşık saat':'') )+'"><span>'+escapeHtml(timeLabel)+'</span>'+escapeHtml(label)+'</div>';
-        }
-        return '<button class="cal-week-timed-item '+x.type+'" data-date="'+k+'" data-action="'+(x.type==='task'?'focus-task':'view-event')+'" data-id="'+x.item.id+'" style="top:'+top+'px;height:'+height+'px;left:calc('+leftPct+'% + 2px);right:auto;width:calc('+widthPct+'% - 4px);--week-color:'+c+';z-index:'+(3+index)+'" title="'+escapeHtml(timeLabel+' · '+label)+'"><span>'+escapeHtml(timeLabel)+'</span>'+escapeHtml(label)+'</button>';
-      }).join('');
-      let nowLine = '';
-      if(k===today){
-        const now = new Date();
-        const nowMinutes = now.getHours()*60 + now.getMinutes();
-        nowLine = '<div class="cal-week-now-line" style="top:'+((nowMinutes/60)*WEEK_HOUR_PX)+'px"></div>';
-      }
-      dayColumns += '<div class="cal-week-day-column'+(k===today?' today':'')+(k===calSelectedDate?' selected':'')+'" data-date="'+k+'">'+slots+blocks+nowLine+'</div>';
-    });
-
-    el.calWeekView.innerHTML = '<div class="cal-week-scroll"><div class="cal-week-surface">'
-      + '<div class="cal-week-head">'+head+'</div>'
-      + '<div class="cal-week-all-day">'+allDay+'</div>'
-      + '<div class="cal-week-body"><div class="cal-week-time-col">'+timeLabels+'</div><div class="cal-week-days">'+dayColumns+'</div></div>'
-      + '</div></div>';
+    el.calTitle.textContent=view.title;
+    el.calWeekView.innerHTML=view.html;
 
     requestAnimationFrame(()=>{
       const scroll=el.calWeekView.querySelector('.cal-week-scroll');
       if(scroll && !scroll.dataset.initialized){
-        const currentHour=new Date().getHours();
-        scroll.scrollTop=Math.max(0, currentHour*WEEK_HOUR_PX-120);
+        scroll.scrollTop=view.initialScrollTop;
         scroll.dataset.initialized='1';
       }
     });
   }
 
   function renderMonthView(){
-    const year = calViewDate.getFullYear();
-    const month = calViewDate.getMonth();
-    el.calTitle.textContent = MONTH_FULL[month] + ' ' + year;
+    const view=CalendarView.buildMonth({
+      viewDate:calViewDate,
+      selectedDate:calSelectedDate,
+      today:todayKey(),
+      events:EventRepository.all(),
+      tasks:TaskRepository.all(),
+      monthNames:MONTH_FULL,
+      addDays,
+      dateKey,
+      isMultiDayEvent,
+      dayLevelForKey,
+      eventColor,
+      escapeHtml
+    });
 
-    const firstOfMonth = new Date(year, month, 1);
-    const startOffset = (firstOfMonth.getDay() + 6) % 7; // Pazartesi=0
-    const gridStart = addDays(firstOfMonth, -startOffset);
-    const today = todayKey();
-    const multiDayEvents = data.events.filter(isMultiDayEvent);
-
-    let html = '';
-    for(let i=0;i<42;i++){
-      const date = addDays(gridStart, i);
-      const k = dateKey(date);
-      const outside = date.getMonth() !== month;
-      const level = outside ? 0 : dayLevelForKey(k);
-      const hasTask = data.tasks.some(t=> !t.done && t.dueDate === k);
-      const singleDayEvents = data.events.filter(e=> !isMultiDayEvent(e) && e.date === k);
-      const spanEvents = outside ? [] : multiDayEvents.filter(e=> k >= e.date && k <= e.endDate);
-
-      const cls = ['cal-cell'];
-      if(outside) cls.push('outside');
-      if(k === today) cls.push('today');
-      if(k === calSelectedDate) cls.push('selected');
-      if(level>0) cls.push('level-'+level);
-
-      let spanBars = '';
-      if(!outside){
-        spanEvents.slice(0,2).forEach(ev=>{
-          const isStart = k === ev.date;
-          const isEnd = k === ev.endDate;
-          const isWeekStart = i % 7 === 0;
-          const showLabel = isStart || isWeekStart;
-          const barCls = ['cal-span-bar'];
-          if(isStart) barCls.push('start');
-          if(isEnd) barCls.push('end');
-          spanBars += '<div class="'+barCls.join(' ')+'" style="background:'+eventColor(ev)+'">'+(showLabel?escapeHtml(ev.title):'')+'</div>';
-        });
-      }
-
-      let eventLabel = '';
-      if(!outside && singleDayEvents.length){
-        const extra = singleDayEvents.length > 1 ? ' +' + (singleDayEvents.length-1) : '';
-        eventLabel = '<span class="cal-event-label">'+escapeHtml(singleDayEvents[0].title)+extra+'</span>';
-      }
-      let dots = '';
-      if(!outside && (hasTask || (singleDayEvents.length && !spanEvents.length))){
-        dots = '<div class="cal-dot-row">' + (hasTask?'<span class="cal-dot task"></span>':'') + (singleDayEvents.length && !spanEvents.length?'<span class="cal-dot event"></span>':'') + '</div>';
-      }
-      html += '<div class="'+cls.join(' ')+'" data-date="'+k+'"><span>'+date.getDate()+'</span>'+eventLabel+spanBars+dots+'</div>';
-    }
-    el.calGrid.innerHTML = html;
+    el.calTitle.textContent=view.title;
+    el.calGrid.innerHTML=view.html;
   }
 
   function renderYearView(){
-    const year = calViewDate.getFullYear();
-    el.calTitle.textContent = String(year);
-    const today = todayKey();
-    const multiDayEvents = data.events.filter(isMultiDayEvent);
-    let html = '';
-    for(let m=0; m<12; m++){
-      const firstOfMonth = new Date(year, m, 1);
-      const startOffset = (firstOfMonth.getDay() + 6) % 7;
-      const gridStart = addDays(firstOfMonth, -startOffset);
-      let cellsHtml = '';
-      for(let i=0;i<42;i++){
-        const date = addDays(gridStart, i);
-        const k = dateKey(date);
-        const outside = date.getMonth() !== m;
-        if(outside){ cellsHtml += '<div class="cal-mini-cell outside"></div>'; continue; }
+    const view=CalendarView.buildYear({
+      viewDate:calViewDate,
+      selectedDate:calSelectedDate,
+      selectedMonth:calSelectedMonth,
+      today:todayKey(),
+      events:EventRepository.all(),
+      monthNames:MONTH_FULL,
+      addDays,
+      dateKey,
+      isMultiDayEvent,
+      dayLevelForKey,
+      eventColor,
+      escapeHtml
+    });
 
-        const level = dayLevelForKey(k);
-        const singleDayEvents = data.events.filter(e=> !isMultiDayEvent(e) && e.date === k);
-        const spanEvents = multiDayEvents.filter(e=> k >= e.date && k <= e.endDate);
-        const cls = ['cal-mini-cell'];
-        if(k === today) cls.push('today');
-        if(!calSelectedMonth && k === calSelectedDate) cls.push('selected');
-        if(level>0) cls.push('level-'+level);
-
-        let eventMarks = '';
-        const bars = [];
-        spanEvents.slice(0,2).forEach(ev=>{
-          const isStart = k === ev.date;
-          const isEnd = k === ev.endDate;
-          const barCls = ['cal-mini-bar'];
-          if(isStart) barCls.push('start');
-          if(isEnd) barCls.push('end');
-          bars.push('<div class="'+barCls.join(' ')+'" style="--event-color:'+eventColor(ev)+'" title="'+escapeHtml(ev.title)+'"></div>');
-        });
-        if(bars.length){
-          eventMarks = '<div class="cal-mini-event-stack">'+bars.join('')+'</div>';
-        } else if(singleDayEvents.length){
-          const ev = singleDayEvents[0];
-          eventMarks = '<div class="cal-mini-single-event" style="--event-color:'+eventColor(ev)+'" title="'+escapeHtml(ev.title)+'"></div>';
-        }
-
-        cellsHtml += '<div class="'+cls.join(' ')+'" data-date="'+k+'"><span>'+date.getDate()+'</span>'+eventMarks+'</div>';
-      }
-      const monthKey = year + '-' + String(m+1).padStart(2,'0');
-      const monthCls = 'cal-mini-month' + (calSelectedMonth === monthKey ? ' selected' : '');
-      html += '<div class="'+monthCls+'" data-month="'+monthKey+'"><div class="cal-mini-title">'+MONTH_FULL[m]+'</div><div class="cal-mini-grid">'+cellsHtml+'</div></div>';
-    }
-    el.calYearView.innerHTML = html;
+    el.calTitle.textContent=view.title;
+    el.calYearView.innerHTML=view.html;
 
     if(yearAutoScrollPending){
-      yearAutoScrollPending = false;
+      yearAutoScrollPending=false;
       window.ProductivityUIHelpers?.scrollCurrentMonthIntoView?.(
         el.calYearView,
-        year,
+        calViewDate.getFullYear(),
         {maxWidth:620}
       );
     }
@@ -7458,129 +7152,31 @@
   }
 
   function renderCalAgenda(){
-    if(calViewMode === 'year' && calSelectedMonth){
-      const parts = calSelectedMonth.split('-');
-      const year = Number(parts[0]);
-      const month = Number(parts[1]) - 1;
-      const monthStart = year + '-' + String(month+1).padStart(2,'0') + '-01';
-      const monthEndDate = new Date(year, month + 1, 0);
-      const monthEnd = dateKey(monthEndDate);
-      const eventsForMonth = data.events.filter(ev=>{
-        const evEnd = isMultiDayEvent(ev) ? ev.endDate : ev.date;
-        return ev.date <= monthEnd && evEnd >= monthStart;
-      }).sort((a,b)=> a.date.localeCompare(b.date) || (a.time||'99:99').localeCompare(b.time||'99:99'));
-
-      const itemsHtml = eventsForMonth.length
-        ? eventsForMonth.map(renderMonthEventCard).join('')
-        : '<div class="task-empty">Bu ay planlanmış etkinlik yok.</div>';
-
-      el.calAgenda.innerHTML = '<div class="cal-agenda-date">'+MONTH_FULL[month]+' '+year+'</div>'
-        + '<div class="cal-agenda-stats"><span>📌 <b>'+eventsForMonth.length+'</b> etkinlik</span></div>'
-        + itemsHtml;
-      return;
-    }
-    const k = calSelectedDate;
-    const d = new Date(k);
-    const label = displayDate(k);
-    const day = data.days[k];
-    const tasksForDay = data.tasks.filter(t=> t.dueDate === k);
-    const eventsForDay = data.events.filter(e=> isMultiDayEvent(e) ? (k>=e.date && k<=e.endDate) : e.date === k)
-      .sort((a,b)=> (a.time||'99:99').localeCompare(b.time||'99:99'));
-    const dailyFocus=focusScoreStats([k]);
-    const dailySchedule=scheduledStudyStats([k]);
-
-    let statsHtml = '<div class="cal-agenda-stats">'
-      + '<span>⏱ <b>'+(day ? formatDurationLabel(day.workSeconds) : '0 dk')+'</b> çalışma</span>'
-      + '<span>😕 <b>'+(day ? day.distraction : 0)+'</b> dikkat dağınıklığı</span>'
-      + (dailyFocus.average!==null?'<span>🧠 <b>'+dailyFocus.average+'/100</b> odak</span>':'')
-      + '</div>';
-
-    let workTimelineHtml = '';
-    if(data.calendarWorkIntervals !== false){
-      const intervals=workIntervalsForDate(k);
-      if(intervals.length){
-        const chips=intervals.map(block=>{
-          const label=displayClockTime(block.start)+'–'+displayClockTime(block.end);
-          return '<div class="cal-work-chip" style="--work-color:'+block.color+'"><span class="cal-work-dot"></span><b>'+escapeHtml(label)+'</b><span>'+escapeHtml(block.subject)+'</span>'+(block.legacyApprox?'<em>yaklaşık</em>':'')+'</div>';
-        }).join('');
-        const bars=intervals.map(block=>{
-          const left=(block.startMin/1440)*100;
-          const width=Math.max(.35,((block.endMin-block.startMin)/1440)*100);
-          return '<span class="cal-work-day-bar" style="left:'+left+'%;width:'+width+'%;--work-color:'+block.color+'" title="'+escapeHtml(displayClockTime(block.start)+'–'+displayClockTime(block.end)+' · '+block.subject)+'"></span>';
-        }).join('');
-        workTimelineHtml='<div class="cal-work-timeline"><div class="cal-work-timeline-head"><b>Çalışma zamanları</b><span>Timer’ın gerçekten çalıştığı aralıklar</span></div><div class="cal-work-day-track">'+bars+'<i style="left:25%">06</i><i style="left:50%">12</i><i style="left:75%">18</i></div><div class="cal-work-chip-list">'+chips+'</div></div>';
-      }
-    }
-
-    let scheduleCompareHtml='';
-    if(dailySchedule.matchedEvents){
-      scheduleCompareHtml='<div class="cal-plan-compare"><div class="cal-work-timeline-head"><b>Planlanan / gerçekleşen</b><span>Takvimdeki saatli çalışma planlarıyla timer eşleşmesi</span></div>'
-        +'<div class="planning-row"><span>Planlanan</span><b>'+formatDurationLabel(dailySchedule.planned)+'</b></div>'
-        +'<div class="planning-row"><span>Gerçekleşen</span><b>'+formatDurationLabel(dailySchedule.actual)+'</b></div>'
-        +'<div class="planning-row"><span>Uyum</span><b>%'+dailySchedule.adherence+'</b></div></div>';
-    }
-
-    let itemsHtml = '';
-    if(eventsForDay.length) itemsHtml += eventsForDay.map(renderEventCard).join('');
-    if(tasksForDay.length) itemsHtml += tasksForDay.map(renderTaskCard).join('');
-    if(!itemsHtml) itemsHtml = '<div class="task-empty">Bu güne planlanmış görev ya da etkinlik yok.</div>';
-
-    let optionsHtml = calAddType === 'event'
-      ? '<label class="cal-check-row"><input type="checkbox" id="calMultiDayToggle"'+(calMultiDay?' checked':'')+'> Birden fazla gün sürer</label>'
-        + (!calMultiDay
-          ? '<div class="cal-repeat-row"><select id="calEventRepeatInput" class="task-repeat-select" aria-label="Etkinlik tekrarı">'
-            + '<option value="none"'+(calEventRepeat==='none'?' selected':'')+'>Tekrar yok</option>'
-            + '<option value="daily"'+(calEventRepeat==='daily'?' selected':'')+'>Her gün</option>'
-            + '<option value="weekly"'+(calEventRepeat==='weekly'?' selected':'')+'>Her hafta</option>'
-            + '<option value="monthly"'+(calEventRepeat==='monthly'?' selected':'')+'>Her ay</option>'
-            + '</select></div>'
-            + (calEventRepeat==='weekly'
-              ? '<div class="task-repeat-days show cal-event-repeat-days" id="calEventRepeatDays">'
-                + [1,2,3,4,5,6,0].map((day,i)=>'<button type="button" data-event-repeat-day="'+day+'" class="'+(calEventRepeatDays.includes(day)?'active':'')+'">'+['Pzt','Sal','Çar','Per','Cum','Cmt','Paz'][i]+'</button>').join('')
-                + '</div>'
-              : '')
-          : '')
-      : '<label class="cal-check-row"><input type="checkbox" id="calTaskTimeToggle"'+(calTaskHasTime?' checked':'')+'> Belirli bir saati var</label>';
-
-    let datesRowHtml = '<div class="cal-add-dates-row"><input type="date" class="cal-date-input" id="calAddDateInput" value="'+k+'">';
-    if(calAddType === 'event' && calMultiDay){
-      datesRowHtml += '<input type="date" class="cal-date-input" id="calAddEndDateInput" value="'+k+'">';
-    } else if(calAddType === 'event' && !calMultiDay){
-      datesRowHtml += '<input type="text" class="cal-time-input time-24-input" id="calAddTimeInput" inputmode="numeric" maxlength="5" placeholder="HH:MM" aria-label="Başlangıç saati, 24 saat formatı">'
-        + '<input type="text" class="cal-time-input time-24-input" id="calAddEndTimeInput" inputmode="numeric" maxlength="5" placeholder="HH:MM" aria-label="Bitiş saati, 24 saat formatı">';
-    } else if(calAddType === 'task' && calTaskHasTime){
-      datesRowHtml += '<input type="text" class="cal-time-input time-24-input" id="calAddTimeInput" inputmode="numeric" maxlength="5" placeholder="HH:MM" aria-label="Görev saati, 24 saat formatı">';
-    }
-    datesRowHtml += '</div>';
-
-    el.calAgenda.innerHTML =
-      '<div class="cal-agenda-date">'+label+'</div>'
-      + statsHtml
-      + workTimelineHtml
-      + scheduleCompareHtml
-      + itemsHtml
-      + '<div class="cal-add-type-row">'
-      +   '<button class="add-type-btn'+(calAddType==='task'?' active':'')+'" data-add-type="task">✅ Görev</button>'
-      +   '<button class="add-type-btn'+(calAddType==='event'?' active':'')+'" data-add-type="event">📌 Etkinlik</button>'
-      + '</div>'
-      + optionsHtml
-      + datesRowHtml
-      + (calAddType==='event'
-          ? '<div class="cal-event-color-row"><span class="cal-event-color-label">Etkinlik rengi</span>'
-            + '<div class="event-color-palette">'
-            + EVENT_COLORS.map((c,i)=>'<button type="button" class="event-color-swatch'+(i===0?' active':'')+'" data-event-color="'+c+'" style="--swatch:'+c+'" aria-label="'+c+'"></button>').join('')
-            + '<label class="event-color-custom" title="Özel renk">＋<input type="color" id="calEventColorInput" value="'+EVENT_COLORS[0]+'"></label>'
-            + '</div></div>'
-          : '')
-      + '<div class="cal-add-row">'
-      +   '<input type="text" class="cal-add-input" id="calAddInput" placeholder="'+(calAddType==='event'?'Etkinlik adı...':'Görev adı...')+'">'
-      +   '<button class="cal-add-btn" id="calAddBtn">+</button>'
-      + '</div>'
-      + (calAddType==='event'
-          ? '<textarea class="event-detail-description cal-event-description-input" id="calEventDescriptionInput" maxlength="600" placeholder="Açıklama (isteğe bağlı)..."></textarea>'
-          : '');
-
-
+    el.calAgenda.innerHTML=CalendarView.buildAgenda({
+      viewMode:calViewMode,
+      selectedMonth:calSelectedMonth,
+      selectedDate:calSelectedDate,
+      data,
+      monthNames:MONTH_FULL,
+      eventColors:EVENT_COLORS,
+      addType:calAddType,
+      multiDay:calMultiDay,
+      eventRepeat:calEventRepeat,
+      eventRepeatDays:calEventRepeatDays,
+      taskHasTime:calTaskHasTime,
+      dateKey,
+      isMultiDayEvent,
+      renderMonthEventCard,
+      displayDate,
+      focusScoreStats,
+      scheduledStudyStats,
+      formatDurationLabel,
+      workIntervalsForDate,
+      displayClockTime,
+      escapeHtml,
+      renderEventCard,
+      renderTaskCard
+    });
   }
 
 
@@ -7944,7 +7540,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -7959,6 +7555,9 @@
         treeService: !!window.ProductivityTreeService,
         analyticsCore: !!window.ProductivityAnalyticsCore,
         calendarCore: !!window.ProductivityCalendarCore,
+        viewFormatters: !!window.ProductivityViewFormatters,
+        summaryView: !!window.ProductivitySummaryView,
+        calendarView: !!window.ProductivityCalendarView,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -9239,6 +8838,88 @@
       equal(blocks.length,2);
       equal(blocks[0].start,start);
       equal(blocks[1].end,end);
+    });
+
+
+    test('ViewFormatters, SummaryView ve CalendarView modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityViewFormatters),true);
+      equal(Boolean(window.ProductivitySummaryView),true);
+      equal(Boolean(window.ProductivityCalendarView),true);
+    });
+
+    test('ViewFormatters mevcut süre gösterimini korur', ()=>{
+      equal(window.ProductivityViewFormatters.formatDurationLabel(59*60),'59 dk');
+      equal(window.ProductivityViewFormatters.formatDurationLabel(60*60),'1 sa');
+      equal(window.ProductivityViewFormatters.formatDurationLabel(65*60),'1sa 5dk');
+      equal(window.ProductivityViewFormatters.formatMinutes(65*60),'1s 5dk');
+    });
+
+    test('CalendarView çakışan haftalık öğelere ayrı kolon verir', ()=>{
+      const laidOut=window.ProductivityCalendarView.layoutTimedItems([
+        {startMin:60,endMin:120},
+        {startMin:90,endMin:150},
+        {startMin:160,endMin:180}
+      ]);
+      equal(laidOut[0].cols,2);
+      equal(laidOut[1].cols,2);
+      equal(laidOut[2].cols,1);
+    });
+
+    test('CalendarView ay görünümünde seçili ve bugünkü günü işaretler', ()=>{
+      const view=window.ProductivityCalendarView.buildMonth({
+        viewDate:new Date('2026-11-12T12:00:00'),
+        selectedDate:'2026-11-12',
+        today:'2026-11-12',
+        events:[],
+        tasks:[],
+        monthNames:MONTH_FULL,
+        addDays,
+        dateKey,
+        isMultiDayEvent,
+        dayLevelForKey:()=>0,
+        eventColor:()=> '#000000',
+        escapeHtml
+      });
+      equal(view.title,'Kasım 2026');
+      equal(view.html.includes('today selected'),true);
+    });
+
+    test('SummaryView çıktı alanı ve paylaşım butonlarını üretir', ()=>{
+      const blankReview={
+        bestDay:null,
+        topSubject:null,
+        longestSession:null,
+        productiveHour:null,
+        focus:{average:null,count:0},
+        scheduledStudy:{matchedEvents:0},
+        goalsMet:0,
+        tasksCompleted:0,
+        sessionCount:0,
+        avgSession:0
+      };
+      const html=window.ProductivitySummaryView.build({
+        now:new Date('2026-11-12T12:00:00'),
+        data:{days:{},collection:[],badgeUnlockLog:[]},
+        startOfWeek,
+        addDays,
+        dateKey,
+        keysInRange,
+        sumEntries:()=>({workSeconds:0,distraction:0,sessions:0}),
+        weeklyReviewStats:()=>blankReview,
+        planningStatsForKeys:()=>({count:0}),
+        focusScoreStats:()=>({average:null}),
+        formatMinutes,
+        formatDurationLabel,
+        trendArrowHtml,
+        distractionTrendHtml,
+        escapeHtml,
+        pad,
+        weekdayShort:WEEKDAY_SHORT,
+        monthShort:MONTH_SHORT
+      });
+      equal(html.includes('id="summaryPrintArea"'),true);
+      equal(html.includes('id="shareBtn"'),true);
+      equal(html.includes('id="summaryPrintBtn"'),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
