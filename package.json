@@ -5,9 +5,10 @@
     "build": "node scripts/build-app.js",
     "build:check": "node scripts/build-app.js --check",
     "syntax:check": "node scripts/check-syntax.js",
-    "check": "npm run build:check && npm run syntax:check && npm run startup:order && npm run startup:smoke && npm run domain:check",
+    "check": "npm run build:check && npm run syntax:check && npm run startup:order && npm run startup:smoke && npm run domain:check && npm run reliability:check",
     "startup:order": "node scripts/check-startup-order.js",
     "startup:smoke": "node scripts/check-startup-smoke.js",
-    "domain:check": "node scripts/check-domain-services.js"
+    "domain:check": "node scripts/check-domain-services.js",
+    "reliability:check": "node scripts/check-reliability-services.js"
   }
 }
