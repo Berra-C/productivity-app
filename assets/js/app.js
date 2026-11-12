@@ -1835,6 +1835,168 @@
     };
   }
 
+
+  function sessionAnalytics(entries=[],sessionSeconds=()=>0){
+    const hourly=Array.from({length:24},()=>({seconds:0,sessions:0}));
+    let totalSeconds=0;
+    let longest=null;
+    let timedSessions=0;
+    const activeDays=new Set();
+
+    (Array.isArray(entries)?entries:[]).forEach(({key,session})=>{
+      if(!session) return;
+      const seconds=Math.max(0,Number(sessionSeconds(session,key))||0);
+      totalSeconds+=seconds;
+
+      if(seconds>0) activeDays.add(key);
+
+      const subject=session.subject && session.subject!=='Genel'
+        ? session.subject
+        : 'Genel';
+
+      if(!longest || seconds>longest.seconds){
+        longest={seconds,subject};
+      }
+
+      if(session.startedAt){
+        const started=new Date(session.startedAt);
+        if(!Number.isNaN(started.getTime())){
+          const hour=started.getHours();
+          hourly[hour].seconds+=seconds;
+          hourly[hour].sessions+=1;
+          timedSessions+=1;
+        }
+      }
+    });
+
+    let bestHour=-1;
+    let bestSeconds=0;
+
+    hourly.forEach((bucket,hour)=>{
+      if(bucket.seconds>bestSeconds){
+        bestSeconds=bucket.seconds;
+        bestHour=hour;
+      }
+    });
+
+    return {
+      sessionCount:Array.isArray(entries)?entries.length:0,
+      totalSeconds,
+      avgSeconds:entries.length?Math.round(totalSeconds/entries.length):0,
+      longest,
+      activeDays:activeDays.size,
+      hourly,
+      bestHour,
+      bestSeconds,
+      timedSessions
+    };
+  }
+
+  function subjectBreakdown(entries=[],sessionSeconds=()=>0){
+    const rows=new Map();
+
+    (Array.isArray(entries)?entries:[]).forEach(({key,session})=>{
+      if(!session) return;
+
+      const subject=session.subject && session.subject!=='Genel'
+        ? session.subject
+        : 'Genel';
+
+      const current=rows.get(subject) || {
+        seconds:0,
+        sessions:0,
+        distractions:0,
+        targetSessions:0,
+        reachedTargets:0
+      };
+
+      const seconds=Math.max(0,Number(sessionSeconds(session,key))||0);
+
+      current.seconds+=seconds;
+      current.sessions+=1;
+      current.distractions+=Number(session.distractions||0);
+
+      if(session.targetSeconds){
+        current.targetSessions+=1;
+        if(seconds>=Number(session.targetSeconds)){
+          current.reachedTargets+=1;
+        }
+      }
+
+      rows.set(subject,current);
+    });
+
+    return [...rows.entries()].sort(
+      (a,b)=>b[1].seconds-a[1].seconds
+    );
+  }
+
+  function subjectChartData(slots=[],options={}){
+    const sessionsForKey=typeof options.sessionsForKey==='function'
+      ? options.sessionsForKey
+      : ()=>[];
+    const sessionSeconds=typeof options.sessionSeconds==='function'
+      ? options.sessionSeconds
+      : session=>Number(session?.duration)||0;
+    const maxSubjects=Math.max(1,Number(options.maxSubjects)||6);
+
+    const perSlot=(Array.isArray(slots)?slots:[]).map(slot=>{
+      const totals={};
+
+      (slot.keys||[]).forEach(key=>{
+        (sessionsForKey(key)||[]).forEach(session=>{
+          const duration=Math.max(0,Number(sessionSeconds(session,key))||0);
+          if(duration<=0) return;
+
+          const subject=session.subject || 'Genel';
+          totals[subject]=(totals[subject]||0)+Math.round(duration/60);
+        });
+      });
+
+      return totals;
+    });
+
+    const grandTotals={};
+
+    perSlot.forEach(totals=>{
+      Object.entries(totals).forEach(([subject,value])=>{
+        grandTotals[subject]=(grandTotals[subject]||0)+value;
+      });
+    });
+
+    let subjects=Object.entries(grandTotals)
+      .sort((a,b)=>b[1]-a[1])
+      .map(entry=>entry[0]);
+
+    if(subjects.length>maxSubjects){
+      const others=subjects.slice(maxSubjects);
+      subjects=subjects.slice(0,maxSubjects);
+
+      perSlot.forEach(totals=>{
+        let sum=0;
+
+        others.forEach(subject=>{
+          if(totals[subject]){
+            sum+=totals[subject];
+            delete totals[subject];
+          }
+        });
+
+        if(sum>0){
+          totals['Diğer']=(totals['Diğer']||0)+sum;
+        }
+      });
+
+      subjects.push('Diğer');
+    }
+
+    return {
+      labels:slots.map(slot=>slot.label),
+      subjects,
+      perSlot
+    };
+  }
+
   window.ProductivityAnalyticsCore={
     planningStats,
     productiveHourStats,
@@ -1843,7 +2005,10 @@
     normalizePlanText,
     timedEventDurationSeconds,
     scheduledStudyStats,
-    weeklyReviewStats
+    weeklyReviewStats,
+    sessionAnalytics,
+    subjectBreakdown,
+    subjectChartData
   };
 })();
 
@@ -2994,6 +3159,609 @@
     buildWeek,
     buildAgenda
   };
+})();
+
+/* ===== assets/js/modules/stats-view.js ===== */
+(() => {
+  'use strict';
+
+  function buildMetricChart({
+    labels=[],
+    values=[],
+    chartType='bar',
+    goalMinutes=0
+  }={}){
+    const chartW=680;
+    const barAreaBottom=148;
+    const barAreaTop=16;
+    const labelY=168;
+    const gap=10;
+    const safeValues=Array.isArray(values)?values:[];
+    const safeLabels=Array.isArray(labels)?labels:[];
+    const max=Math.max(...safeValues,Number(goalMinutes)||0,1);
+    const count=safeValues.length;
+
+    if(chartType==='line'){
+      const stepX=count>1?(chartW-gap*2)/(count-1):0;
+      const points=safeValues.map((value,index)=>{
+        const x=gap+index*stepX;
+        const y=barAreaBottom-(value/max)*(barAreaBottom-barAreaTop);
+        return {x,y,v:value};
+      });
+
+      if(!points.length) return '';
+
+      const linePath=points.map(
+        (point,index)=>(index===0?'M':'L')
+          +point.x.toFixed(1)+','+point.y.toFixed(1)
+      ).join(' ');
+
+      const areaPath=linePath
+        +' L'+points[points.length-1].x.toFixed(1)+','+barAreaBottom
+        +' L'+points[0].x.toFixed(1)+','+barAreaBottom+' Z';
+
+      let svg='<defs><linearGradient id="lineAreaGrad" x1="0" y1="0" x2="0" y2="1">'
+        +'<stop offset="0%" stop-color="var(--moss-bright)" stop-opacity="0.35"/>'
+        +'<stop offset="100%" stop-color="var(--moss-bright)" stop-opacity="0"/>'
+        +'</linearGradient><pattern id="goalStripe" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="var(--gold)" stroke-width="2"/></pattern></defs>';
+
+      svg+='<path d="'+areaPath+'" fill="url(#lineAreaGrad)" stroke="none"></path>';
+      svg+='<path class="chart-line" d="'+linePath+'" fill="none" stroke="var(--moss-bright)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>';
+
+      points.forEach((point,index)=>{
+        const isLast=index===points.length-1;
+        svg+='<circle class="line-point" cx="'+point.x.toFixed(1)
+          +'" cy="'+point.y.toFixed(1)+'" r="3.5" fill="'
+          +(isLast?'var(--gold)':'var(--moss-bright)')
+          +'"><title>'+safeLabels[index]+': '+point.v+'</title></circle>';
+
+        svg+='<text x="'+point.x.toFixed(1)+'" y="'+labelY
+          +'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'
+          +safeLabels[index]+'</text>';
+
+        if(point.v>0){
+          svg+='<text x="'+point.x.toFixed(1)+'" y="'+(point.y-8)
+            +'" text-anchor="middle" font-size="8.5" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'
+            +point.v+'</text>';
+        }
+      });
+
+      if(goalMinutes>0){
+        const goalY=barAreaBottom-(goalMinutes/max)*(barAreaBottom-barAreaTop);
+        svg+='<line x1="0" y1="'+goalY+'" x2="'+chartW+'" y2="'+goalY
+          +'" stroke="url(#goalStripe)" stroke-width="4"><title>Günlük hedef: '
+          +goalMinutes+' dk</title></line>';
+      }
+
+      return svg;
+    }
+
+    if(!count) return '';
+
+    const barWidth=(chartW-gap*(count+1))/count;
+    let bars='<defs><pattern id="goalStripeBar" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="var(--gold)" stroke-width="2"/></pattern></defs>';
+
+    safeValues.forEach((value,index)=>{
+      const height=(value/max)*(barAreaBottom-barAreaTop);
+      const x=gap+index*(barWidth+gap);
+      const y=barAreaBottom-height;
+      const isLast=index===count-1;
+      const color=isLast?'var(--gold)':'var(--moss-bright)';
+
+      bars+='<rect class="chart-bar" x="'+x+'" y="'+y
+        +'" width="'+barWidth+'" height="'+Math.max(height,1.5)
+        +'" rx="3" fill="'+color+'"><title>'
+        +safeLabels[index]+': '+value+'</title></rect>';
+
+      bars+='<text x="'+(x+barWidth/2)+'" y="'+labelY
+        +'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'
+        +safeLabels[index]+'</text>';
+
+      if(value>0){
+        bars+='<text x="'+(x+barWidth/2)+'" y="'+(y-4)
+          +'" text-anchor="middle" font-size="8.5" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'
+          +value+'</text>';
+      }
+    });
+
+    if(goalMinutes>0){
+      const goalY=barAreaBottom-(goalMinutes/max)*(barAreaBottom-barAreaTop);
+      bars+='<line x1="0" y1="'+goalY+'" x2="'+chartW+'" y2="'+goalY
+        +'" stroke="url(#goalStripeBar)" stroke-width="4"><title>Günlük hedef: '
+        +goalMinutes+' dk</title></line>';
+    }
+
+    return bars;
+  }
+
+  function buildSubjectChart({
+    labels=[],
+    subjects=[],
+    perSlot=[],
+    chartType='bar',
+    subjectColor=()=> '#7d8f88',
+    escapeHtml=value=>String(value)
+  }={}){
+    const chartW=680;
+    const barAreaBottom=148;
+    const barAreaTop=16;
+    const labelY=168;
+    const gap=10;
+    const count=labels.length;
+
+    if(!subjects.length){
+      return {
+        svg:'<text x="340" y="88" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="IBM Plex Sans, sans-serif">Bu dönemde ders kaydı yok</text>',
+        legend:''
+      };
+    }
+
+    const totalsPerSlot=perSlot.map(
+      totals=>subjects.reduce(
+        (sum,subject)=>sum+(totals[subject]||0),
+        0
+      )
+    );
+
+    const max=Math.max(...totalsPerSlot,1);
+    let svg='';
+
+    if(chartType==='line'){
+      const stepX=count>1?(chartW-gap*2)/(count-1):0;
+
+      subjects.forEach(subject=>{
+        const color=subjectColor(subject);
+
+        const points=perSlot.map((totals,index)=>{
+          const value=totals[subject]||0;
+          const x=gap+index*stepX;
+          const y=barAreaBottom-(value/max)*(barAreaBottom-barAreaTop);
+          return {x,y,v:value};
+        });
+
+        const linePath=points.map(
+          (point,index)=>(index===0?'M':'L')
+            +point.x.toFixed(1)+','+point.y.toFixed(1)
+        ).join(' ');
+
+        svg+='<path class="chart-line" d="'+linePath
+          +'" fill="none" stroke="'+color
+          +'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>';
+
+        points.forEach(point=>{
+          if(point.v>0){
+            svg+='<circle class="line-point" cx="'+point.x.toFixed(1)
+              +'" cy="'+point.y.toFixed(1)+'" r="2.8" fill="'+color
+              +'"><title>'+escapeHtml(subject)+': '+point.v+' dk</title></circle>';
+          }
+        });
+      });
+
+      for(let index=0;index<count;index+=1){
+        const x=gap+index*stepX;
+        svg+='<text x="'+x.toFixed(1)+'" y="'+labelY
+          +'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'
+          +labels[index]+'</text>';
+      }
+    }else{
+      const barWidth=(chartW-gap*(count+1))/Math.max(1,count);
+
+      perSlot.forEach((totals,index)=>{
+        const x=gap+index*(barWidth+gap);
+        let yCursor=barAreaBottom;
+
+        subjects.forEach(subject=>{
+          const value=totals[subject]||0;
+          if(value<=0) return;
+
+          const height=(value/max)*(barAreaBottom-barAreaTop);
+          yCursor-=height;
+
+          svg+='<rect class="chart-bar" x="'+x+'" y="'+yCursor.toFixed(1)
+            +'" width="'+barWidth+'" height="'+height.toFixed(1)
+            +'" fill="'+subjectColor(subject)+'"><title>'
+            +escapeHtml(subject)+': '+value+' dk</title></rect>';
+        });
+
+        svg+='<text x="'+(x+barWidth/2)+'" y="'+labelY
+          +'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'
+          +labels[index]+'</text>';
+      });
+    }
+
+    const legend=subjects.map(subject=>
+      '<div class="chart-legend-item"><span class="chart-legend-dot" style="background:'
+      +subjectColor(subject)+'"></span>'+escapeHtml(subject)+'</div>'
+    ).join('');
+
+    return {svg,legend};
+  }
+
+  function buildSessionAnalytics(stats,{
+    pad=value=>String(value).padStart(2,'0'),
+    formatDurationLabel=value=>String(value)
+  }={}){
+    if(!stats?.sessionCount){
+      return '<div class="todo-empty">Bu dönemde henüz oturum kaydı yok.</div>';
+    }
+
+    const bestLabel=stats.bestHour>=0
+      ? pad(stats.bestHour)+':00–'+pad((stats.bestHour+1)%24)+':00'
+      : '—';
+
+    const longestLabel=stats.longest
+      ? formatDurationLabel(stats.longest.seconds)
+      : '—';
+
+    const shownHours=[0,2,4,6,8,10,12,14,16,18,20,22];
+    const pairTotals=shownHours.map(
+      hour=>stats.hourly[hour].seconds+stats.hourly[hour+1].seconds
+    );
+    const maxHour=Math.max(...pairTotals,1);
+
+    const bars=shownHours.map((hour,index)=>{
+      const bucketSeconds=pairTotals[index];
+      const height=Math.max(
+        bucketSeconds>0?5:2,
+        Math.round(bucketSeconds/maxHour*92)
+      );
+      const isBest=stats.bestHour===hour || stats.bestHour===hour+1;
+      const title=pad(hour)+':00–'+pad((hour+2)%24)+':00 · '
+        +formatDurationLabel(bucketSeconds);
+
+      return '<div class="hour-col'+(isBest?' best':'')+'" title="'+title+'">'
+        +'<div class="hour-bar-wrap"><div class="hour-bar" style="height:'+height+'%"></div></div>'
+        +'<span class="hour-label">'+pad(hour)+'</span>'
+        +'</div>';
+    }).join('');
+
+    return '<div class="session-analytics-grid">'
+      +'<div class="session-analytics-stat"><div class="k">Ortalama Oturum</div><div class="v">'+formatDurationLabel(stats.avgSeconds)+'</div></div>'
+      +'<div class="session-analytics-stat"><div class="k">En Uzun Oturum</div><div class="v">'+longestLabel+'</div></div>'
+      +'<div class="session-analytics-stat"><div class="k">En Verimli Başlangıç</div><div class="v">'+bestLabel+'</div></div>'
+      +'<div class="session-analytics-stat"><div class="k">Aktif Gün</div><div class="v">'+stats.activeDays+'</div></div>'
+      +'<div class="session-analytics-stat"><div class="k">Zaman Damgalı Oturum</div><div class="v">'+stats.timedSessions+' / '+stats.sessionCount+'</div></div>'
+      +'<div class="session-analytics-stat"><div class="k">Toplam Oturum</div><div class="v">'+stats.sessionCount+'</div></div>'
+      +'</div>'
+      +'<div class="hour-analytics">'+bars+'</div>'
+      +'<div class="hour-analytics-note">Saat grafiği oturumların <b>başlangıç saatine</b> göre gruplandırılır. Eski kayıtlarda başlangıç saati yoksa bu grafiğe dahil edilmez.</div>';
+  }
+
+  function buildSubjectBreakdown(breakdown=[],{
+    escapeHtml=value=>String(value),
+    formatDurationLabel=value=>String(value)
+  }={}){
+    if(!breakdown.length){
+      return '<div class="todo-empty">Bu dönemde henüz çalışma kaydı yok.</div>';
+    }
+
+    const max=Math.max(1,breakdown[0][1].seconds);
+
+    return breakdown.map(([subject,stats])=>{
+      const percent=Math.max(4,Math.round(stats.seconds/max*100));
+      const average=stats.sessions
+        ? Math.round(stats.seconds/stats.sessions)
+        : 0;
+      const avgDistraction=stats.sessions
+        ? (stats.distractions/stats.sessions).toFixed(1)
+        : '0.0';
+      const targetRate=stats.targetSessions
+        ? Math.round(stats.reachedTargets/stats.targetSessions*100)+'% hedef'
+        : 'hedef verisi yok';
+
+      return '<div class="subject-row">'
+        +'<div class="subject-row-top"><span>'+escapeHtml(subject)
+        +'</span><span>'+formatDurationLabel(stats.seconds)+'</span></div>'
+        +'<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+percent+'%"></div></div>'
+        +'<div class="subject-row-meta">'
+        +'<span>'+stats.sessions+' oturum</span>'
+        +'<span>ort. '+formatDurationLabel(average)+'</span>'
+        +'<span>😕 '+avgDistraction+'/oturum</span>'
+        +'<span>🎯 '+targetRate+'</span>'
+        +'</div></div>';
+    }).join('');
+  }
+
+  function buildHeatmap({
+    today=new Date(),
+    lookback=365,
+    startOfWeek,
+    addDays,
+    dateKey,
+    goalRatioFor,
+    displayDate,
+    monthShort=[]
+  }={}){
+    const startAligned=startOfWeek(addDays(today,-(lookback-1)));
+    const totalDays=Math.round((today-startAligned)/86400000)+1;
+    const weeks=Math.ceil(totalDays/7);
+    const cellSize=9;
+    const gap=2;
+    let rects='';
+    let lastMonth=-1;
+
+    for(let week=0;week<weeks;week+=1){
+      for(let day=0;day<7;day+=1){
+        const date=addDays(startAligned,week*7+day);
+        if(date>today) continue;
+
+        const key=dateKey(date);
+        const ratio=goalRatioFor(key);
+        let level=0;
+
+        if(ratio>0){
+          level=ratio>=1?4:ratio>=0.5?3:ratio>=0.25?2:1;
+        }
+
+        const x=week*(cellSize+gap);
+        const y=day*(cellSize+gap)+14;
+        const percentLabel=Math.round(ratio*100)+'% hedef';
+
+        rects+='<rect class="heat-cell level-'+level
+          +'" x="'+x+'" y="'+y+'" width="'+cellSize+'" height="'+cellSize
+          +'" rx="2.2"><title>'+displayDate(key)+': '+percentLabel+'</title></rect>';
+
+        if(day===0 && date.getMonth()!==lastMonth){
+          lastMonth=date.getMonth();
+          rects+='<text x="'+x+'" y="9" font-size="7.8" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'
+            +monthShort[lastMonth]+'</text>';
+        }
+      }
+    }
+
+    return {
+      viewBox:'0 0 '+(weeks*(cellSize+gap))+' '+(7*(cellSize+gap)+14),
+      svg:rects
+    };
+  }
+
+  window.ProductivityStatsView={
+    buildMetricChart,
+    buildSubjectChart,
+    buildSessionAnalytics,
+    buildSubjectBreakdown,
+    buildHeatmap
+  };
+})();
+
+/* ===== assets/js/modules/task-view.js ===== */
+(() => {
+  'use strict';
+
+  function filterAndGroup(tasks=[],options={}){
+    const {
+      today,
+      taskFilter='all',
+      statusFilter='all',
+      dateFilter='all',
+      searchQuery='',
+      normalizedTaskTagId=()=>null
+    }=options;
+
+    const query=String(searchQuery||'').trim().toLocaleLowerCase('tr-TR');
+
+    const filtered=(Array.isArray(tasks)?tasks:[]).filter(task=>{
+      if(taskFilter!=='all' && normalizedTaskTagId(task)!==taskFilter){
+        return false;
+      }
+
+      if(statusFilter==='active' && task.done) return false;
+      if(statusFilter==='done' && !task.done) return false;
+
+      if(dateFilter!=='all'){
+        if(dateFilter==='overdue' && !(task.dueDate && task.dueDate<today && !task.done)){
+          return false;
+        }
+        if(dateFilter==='today' && task.dueDate!==today) return false;
+        if(dateFilter==='upcoming' && !(task.dueDate && task.dueDate>today)){
+          return false;
+        }
+        if(dateFilter==='nodate' && task.dueDate) return false;
+      }
+
+      if(!query) return true;
+
+      const haystack=[
+        task.text||'',
+        task.dueDate||'',
+        task.time||''
+      ].join(' ').toLocaleLowerCase('tr-TR');
+
+      return haystack.includes(query);
+    });
+
+    const active=filtered
+      .filter(task=>!task.done)
+      .sort(
+        (a,b)=>(Number(a.sortOrder)||0)-(Number(b.sortOrder)||0)
+      );
+
+    const done=filtered
+      .filter(task=>task.done)
+      .sort(
+        (a,b)=>(b.doneAt||'').localeCompare(a.doneAt||'')
+      );
+
+    return {
+      filtered,
+      active,
+      done,
+      overdue:active.filter(task=>task.dueDate && task.dueDate<today),
+      today:active.filter(task=>task.dueDate===today),
+      upcoming:active.filter(task=>task.dueDate && task.dueDate>today),
+      noDate:active.filter(task=>!task.dueDate),
+      isFiltered:Boolean(
+        query ||
+        taskFilter!=='all' ||
+        statusFilter!=='all' ||
+        dateFilter!=='all'
+      )
+    };
+  }
+
+  function buildCard(task,options={}){
+    const {
+      tagById=()=>null,
+      normalizedTaskTagId=()=>null,
+      safeTagColor=color=>color,
+      escapeHtml=value=>String(value),
+      taskDueBadge=()=> '',
+      repeatTaskLabel=()=> ''
+    }=options;
+
+    const tag=tagById(normalizedTaskTagId(task));
+    const tagHtml=tag
+      ? '<span class="task-tag" style="--tag-color:'+safeTagColor(tag.color)
+        +'">#'+escapeHtml(tag.name)+'</span>'
+      : '';
+
+    const borderStyle=tag
+      ? ' style="border-left-color:'+safeTagColor(tag.color)+'"'
+      : '';
+
+    const dueHtml=taskDueBadge(task.dueDate,task.time,task.done);
+    const repeatHtml=task.repeat && task.repeat!=='none'
+      ? '<span class="task-repeat-badge">↻ '
+        +repeatTaskLabel(task.repeat,task.repeatDays)+'</span>'
+      : '';
+
+    return '<div class="task-card'+(task.done?' completed':'')
+      +'" draggable="true" data-task-id="'+task.id+'"'+borderStyle+'>'
+      +'<span class="task-drag-handle" title="Sürükleyerek sırala">☰</span>'
+      +'<button class="task-check'+(task.done?' done':'')
+      +'" data-action="toggle-task" data-id="'+task.id+'">'
+      +(task.done?'✓':'')+'</button>'
+      +'<div class="task-card-body">'
+      +'<div class="task-text'+(task.done?' done':'')+'">'
+      +escapeHtml(task.text)+'</div>'+tagHtml+'</div>'
+      +((dueHtml||repeatHtml)
+        ? '<div class="task-right-meta">'+dueHtml+repeatHtml+'</div>'
+        : '')
+      +(!task.done
+        ? '<button class="task-focus-btn" data-action="focus-task" data-id="'
+          +task.id+'" title="Bu görev için çalışma oturumu başlat">▶ Odaklan</button>'
+        : '')
+      +'<button class="task-del" data-action="edit-task" data-id="'+task.id
+      +'" aria-label="Görevi düzenle" title="Görevi düzenle">✎</button>'
+      +'<button class="task-del" data-action="delete-task" data-id="'+task.id
+      +'" aria-label="Görevi sil">✕</button>'
+      +'</div>';
+  }
+
+  function buildList(groups,renderCard){
+    if(!groups.filtered.length){
+      return groups.isFiltered
+        ? '<div class="task-empty">Bu arama ve filtrelere uyan görev bulunamadı.</div>'
+        : '<div class="task-empty">Henüz görev yok. Yukarıdan yeni bir görev ekleyebilirsin.</div>';
+    }
+
+    let html='';
+
+    if(groups.overdue.length){
+      html+='<div class="task-group-title">⚠️ Gecikmiş</div>'
+        +groups.overdue.map(renderCard).join('');
+    }
+
+    if(groups.today.length){
+      html+='<div class="task-group-title">Bugün</div>'
+        +groups.today.map(renderCard).join('');
+    }
+
+    if(groups.upcoming.length){
+      html+='<div class="task-group-title">Yaklaşan</div>'
+        +groups.upcoming.map(renderCard).join('');
+    }
+
+    if(groups.noDate.length){
+      html+='<div class="task-group-title">Tarihsiz</div>'
+        +groups.noDate.map(renderCard).join('');
+    }
+
+    if(groups.done.length){
+      html+='<div class="task-group-title task-group-title-with-action"><span>Tamamlanan</span><button class="task-group-clear-done" data-action="clear-completed-inline" type="button">Tümünü sil</button></div>'
+        +groups.done.map(renderCard).join('');
+    }
+
+    return html || '<div class="task-empty">Görev yok. Yukarıdan ekleyebilirsin.</div>';
+  }
+
+  window.ProductivityTaskView={
+    filterAndGroup,
+    buildCard,
+    buildList
+  };
+})();
+
+/* ===== assets/js/modules/collection-view.js ===== */
+(() => {
+  'use strict';
+
+  function build(options={}){
+    const {
+      treeProgress=0,
+      treeNumber=1,
+      collection=[],
+      treeGoal=140,
+      speciesPoolSize=0,
+      growthStage={emoji:'🌱'},
+      speciesColors={},
+      displayDate=value=>String(value)
+    }=options;
+
+    const progress=Math.max(0,Number(treeProgress)||0);
+    const goal=Math.max(1,Number(treeGoal)||140);
+    const progressPercent=Math.min(100,progress/goal*100);
+
+    let html='<div class="tree-progress-card">'
+      +'<div class="tp-emoji">'+growthStage.emoji+'</div>'
+      +'<div class="tp-info">'
+      +'<div class="tp-title">Ağaç #'+treeNumber+' büyüyor</div>'
+      +'<div class="tp-bar"><div class="tp-fill" style="width:'+progressPercent+'%"></div></div>'
+      +'<div class="tp-caption">'+Math.round(progress)+' / '+goal
+      +' büyüme puanı — tür tamamlanınca belli olacak 🌱</div>'
+      +'</div></div>';
+
+    if(collection.length>0){
+      const uniqueCount=new Set(
+        collection.map(item=>item.species)
+      ).size;
+
+      html+='<div class="collection-stats">'
+        +'<div class="collection-stat"><div class="cs-num">'+collection.length
+        +'</div><div class="cs-lbl">Toplam Ağaç</div></div>'
+        +'<div class="collection-stat"><div class="cs-num">'+uniqueCount
+        +' / '+speciesPoolSize+'</div><div class="cs-lbl">Keşfedilen Tür</div></div>'
+        +'</div>';
+    }
+
+    if(!collection.length){
+      const remaining=Math.max(0,Math.ceil(goal-progress));
+      return html
+        +'<div class="empty-state">Henüz tamamlanmış ağacın yok.<br>İlk ağacını tamamlamak için <b>'
+        +remaining+'</b> büyüme puanı daha gerek.</div>';
+    }
+
+    html+='<div class="collection-grid">';
+
+    [...collection].reverse().forEach((item,index)=>{
+      const colors=speciesColors[item.species]
+        || {accent:'#74d99f',bg:'rgba(116,217,159,0.16)'};
+
+      html+='<div class="tree-card" style="--accent:'+colors.accent
+        +';--accent-bg:'+colors.bg
+        +';animation-delay:'+(index*0.04)+'s">'
+        +'<span class="badge-num">Ağaç #'+item.treeNumber+'</span>'
+        +'<div class="emoji">'+item.emoji+'</div>'
+        +'<div class="species">'+item.species+'</div>'
+        +'<div class="date">'+displayDate(new Date(item.completedAt))+'</div>'
+        +'</div>';
+    });
+
+    html+='</div>';
+    return html;
+  }
+
+  window.ProductivityCollectionView={build};
 })();
 
 /* ===== assets/js/app-main.js ===== */
@@ -4155,8 +4923,11 @@
   const ViewFormatters=window.ProductivityViewFormatters;
   const SummaryView=window.ProductivitySummaryView;
   const CalendarView=window.ProductivityCalendarView;
+  const StatsView=window.ProductivityStatsView;
+  const TaskView=window.ProductivityTaskView;
+  const CollectionView=window.ProductivityCollectionView;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -4172,7 +4943,10 @@
       !CalendarCore ? 'CalendarCore' : null,
       !ViewFormatters ? 'ViewFormatters' : null,
       !SummaryView ? 'SummaryView' : null,
-      !CalendarView ? 'CalendarView' : null
+      !CalendarView ? 'CalendarView' : null,
+      !StatsView ? 'StatsView' : null,
+      !TaskView ? 'TaskView' : null,
+      !CollectionView ? 'CollectionView' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -8123,55 +8897,25 @@
   }
 
   function renderSubjectBreakdown(){
-    const keys = getPeriodKeys(currentPeriod);
-    const keySet = new Set(keys);
-    const rows = new Map();
-
-    Object.entries(data.sessionLog || {}).forEach(([key, sessions])=>{
-      if(!keySet.has(key) || !Array.isArray(sessions)) return;
-      sessions.forEach(session=>{
-        const subj = (session.subject && session.subject !== 'Genel') ? session.subject : 'Genel';
-        const cur = rows.get(subj) || {seconds:0, sessions:0, distractions:0, targetSessions:0, reachedTargets:0};
-        let secs = Number(session.duration || 0);
-        if(session.id === data.activeSessionId && data.isWorking && data.workStart){
-          secs += Math.floor((Date.now()-data.workStart)/1000);
+    const breakdown=AnalyticsCore.subjectBreakdown(
+      sessionsForKeys(getPeriodKeys(currentPeriod)),
+      (session,key)=>{
+        let seconds=Number(session.duration||0);
+        if(
+          session.id===data.activeSessionId &&
+          data.isWorking &&
+          data.workStart
+        ){
+          seconds+=Math.floor((Date.now()-data.workStart)/1000);
         }
-        cur.seconds += Math.max(0, secs);
-        cur.sessions += 1;
-        cur.distractions += Number(session.distractions || 0);
-        if(session.targetSeconds){
-          cur.targetSessions += 1;
-          if(secs >= Number(session.targetSeconds)) cur.reachedTargets += 1;
-        }
-        rows.set(subj, cur);
-      });
-    });
+        return seconds;
+      }
+    );
 
-    const breakdown = [...rows.entries()].sort((a,b)=>b[1].seconds-a[1].seconds);
-    if(breakdown.length === 0){
-      el.subjectBreakdownBody.innerHTML = '<div class="todo-empty">Bu dönemde henüz çalışma kaydı yok.</div>';
-      return;
-    }
-
-    const max = Math.max(1, breakdown[0][1].seconds);
-    el.subjectBreakdownBody.innerHTML = breakdown.map(([subj, stats])=>{
-      const pct = Math.max(4, Math.round(stats.seconds/max*100));
-      const avg = stats.sessions ? Math.round(stats.seconds/stats.sessions) : 0;
-      const avgDistract = stats.sessions ? (stats.distractions/stats.sessions).toFixed(1) : '0.0';
-      const targetRate = stats.targetSessions
-        ? Math.round(stats.reachedTargets/stats.targetSessions*100)+'% hedef'
-        : 'hedef verisi yok';
-      return '<div class="subject-row">'
-        + '<div class="subject-row-top"><span>'+escapeHtml(subj)+'</span><span>'+formatDurationLabel(stats.seconds)+'</span></div>'
-        + '<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+pct+'%"></div></div>'
-        + '<div class="subject-row-meta">'
-        + '<span>'+stats.sessions+' oturum</span>'
-        + '<span>ort. '+formatDurationLabel(avg)+'</span>'
-        + '<span>😕 '+avgDistract+'/oturum</span>'
-        + '<span>🎯 '+targetRate+'</span>'
-        + '</div>'
-        + '</div>';
-    }).join('');
+    el.subjectBreakdownBody.innerHTML=StatsView.buildSubjectBreakdown(
+      breakdown,
+      {escapeHtml,formatDurationLabel}
+    );
   }
 
   const WEEKDAY_SHORT = ['Paz','Pzt','Sal','Çar','Per','Cum','Cmt'];
@@ -8237,160 +8981,49 @@
   }
 
   function buildSubjectChartData(period){
-    const slots = getPeriodSlots(period);
-    const perSlot = slots.map(slot=>{
-      const totals = {};
-      slot.keys.forEach(k=>{
-        const list = data.sessionLog[k] || [];
-        list.forEach(s=>{
-          let dur = s.duration;
-          if(s.id === data.activeSessionId && data.isWorking && data.workStart && k === todayKey()){
-            dur += Math.floor((Date.now()-data.workStart)/1000);
-          }
-          if(dur <= 0) return;
-          const subj = s.subject || 'Genel';
-          totals[subj] = (totals[subj]||0) + Math.round(dur/60);
-        });
-      });
-      return totals;
+    const slots=getPeriodSlots(period);
+    return AnalyticsCore.subjectChartData(slots,{
+      sessionsForKey:key=>getSessionsFor(key),
+      sessionSeconds:(session,key)=>{
+        let duration=Number(session.duration||0);
+        if(
+          session.id===data.activeSessionId &&
+          data.isWorking &&
+          data.workStart &&
+          key===todayKey()
+        ){
+          duration+=Math.floor((Date.now()-data.workStart)/1000);
+        }
+        return duration;
+      },
+      maxSubjects:6
     });
-
-    const grandTotals = {};
-    perSlot.forEach(t=> Object.entries(t).forEach(([k,v])=> grandTotals[k] = (grandTotals[k]||0) + v));
-    let subjects = Object.entries(grandTotals).sort((a,b)=> b[1]-a[1]).map(x=>x[0]);
-
-    // en fazla 6 ders + gerisini "Diğer" altında topla, grafik karışmasın
-    if(subjects.length > 6){
-      const others = subjects.slice(6);
-      subjects = subjects.slice(0,6);
-      perSlot.forEach(t=>{
-        let sum = 0;
-        others.forEach(o=>{ if(t[o]){ sum += t[o]; delete t[o]; } });
-        if(sum > 0) t['Diğer'] = (t['Diğer']||0) + sum;
-      });
-      subjects.push('Diğer');
-    }
-
-    return { labels: slots.map(s=>s.label), subjects, perSlot };
   }
 
   function renderSubjectChart(){
-    const {labels, subjects, perSlot} = buildSubjectChartData(currentPeriod);
-    const chartW = 680;
-    const barAreaBottom = 148, barAreaTop = 16;
-    const labelY = 168;
-    const gap = 10;
-    const n = labels.length;
+    const chart=StatsView.buildSubjectChart({
+      ...buildSubjectChartData(currentPeriod),
+      chartType:currentChartType,
+      subjectColor,
+      escapeHtml
+    });
 
-    if(subjects.length === 0){
-      el.chartSvg.innerHTML = '<text x="340" y="88" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="IBM Plex Sans, sans-serif">Bu dönemde ders kaydı yok</text>';
-      el.chartLegend.innerHTML = '';
-      return;
-    }
-
-    const totalsPerSlot = perSlot.map(t=> subjects.reduce((s,subj)=> s+(t[subj]||0), 0));
-    const max = Math.max(...totalsPerSlot, 1);
-    let svg = '';
-
-    if(currentChartType === 'line'){
-      const stepX = n > 1 ? (chartW - gap*2) / (n-1) : 0;
-      subjects.forEach(subj=>{
-        const color = subjectColor(subj);
-        const points = perSlot.map((t,i)=>{
-          const v = t[subj]||0;
-          const x = gap + i*stepX;
-          const y = barAreaBottom - (v/max) * (barAreaBottom - barAreaTop);
-          return {x, y, v};
-        });
-        const linePath = points.map((p,i)=> (i===0?'M':'L') + p.x.toFixed(1)+','+p.y.toFixed(1)).join(' ');
-        svg += '<path class="chart-line" d="'+linePath+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>';
-        points.forEach(p=>{
-          if(p.v > 0) svg += '<circle class="line-point" cx="'+p.x.toFixed(1)+'" cy="'+p.y.toFixed(1)+'" r="2.8" fill="'+color+'"><title>'+subj+': '+p.v+' dk</title></circle>';
-        });
-      });
-      for(let i=0;i<n;i++){
-        const x = gap + i*stepX;
-        svg += '<text x="'+x.toFixed(1)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-      }
-    } else {
-      const barW = (chartW - gap*(n+1)) / n;
-      perSlot.forEach((t,i)=>{
-        const x = gap + i*(barW+gap);
-        let yCursor = barAreaBottom;
-        subjects.forEach(subj=>{
-          const v = t[subj]||0;
-          if(v <= 0) return;
-          const h = (v/max) * (barAreaBottom - barAreaTop);
-          yCursor -= h;
-          svg += '<rect class="chart-bar" x="'+x+'" y="'+yCursor.toFixed(1)+'" width="'+barW+'" height="'+h.toFixed(1)+'" fill="'+subjectColor(subj)+'"><title>'+subj+': '+v+' dk</title></rect>';
-        });
-        svg += '<text x="'+(x+barW/2)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-      });
-    }
-
-    el.chartSvg.innerHTML = svg;
-    el.chartLegend.innerHTML = subjects.map(s=>
-      '<div class="chart-legend-item"><span class="chart-legend-dot" style="background:'+subjectColor(s)+'"></span>'+escapeHtml(s)+'</div>'
-    ).join('');
+    el.chartSvg.innerHTML=chart.svg;
+    el.chartLegend.innerHTML=chart.legend;
   }
 
   function renderChart(){
-    const {labels, values} = buildChartData(currentPeriod);
-    const goalMinutesForChart = (currentPeriod==='day' && currentMetric==='work') ? Number(data.dailyGoalMinutes||60) : 0;
-    const max = Math.max(...values, goalMinutesForChart, 1);
-    const n = values.length;
-    const chartW = 680;
-    const barAreaBottom = 148, barAreaTop = 16;
-    const labelY = 168;
-    const gap = 10;
+    const {labels,values}=buildChartData(currentPeriod);
+    const goalMinutes=(currentPeriod==='day' && currentMetric==='work')
+      ? Number(data.dailyGoalMinutes||60)
+      : 0;
 
-    if(currentChartType === 'line'){
-      const stepX = n > 1 ? (chartW - gap*2) / (n-1) : 0;
-      const points = values.map((v,i)=>{
-        const x = gap + i*stepX;
-        const y = barAreaBottom - (v/max) * (barAreaBottom - barAreaTop);
-        return {x, y, v};
-      });
-      const linePath = points.map((p,i)=> (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
-      const areaPath = linePath + ' L' + points[points.length-1].x.toFixed(1) + ',' + barAreaBottom + ' L' + points[0].x.toFixed(1) + ',' + barAreaBottom + ' Z';
-
-      let svg = '<defs><linearGradient id="lineAreaGrad" x1="0" y1="0" x2="0" y2="1">'
-        + '<stop offset="0%" stop-color="var(--moss-bright)" stop-opacity="0.35"/>'
-        + '<stop offset="100%" stop-color="var(--moss-bright)" stop-opacity="0"/>'
-        + '</linearGradient><pattern id="goalStripe" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="var(--gold)" stroke-width="2"/></pattern></defs>';
-      svg += '<path d="'+areaPath+'" fill="url(#lineAreaGrad)" stroke="none"></path>';
-      svg += '<path class="chart-line" d="'+linePath+'" fill="none" stroke="var(--moss-bright)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>';
-      points.forEach((p,i)=>{
-        const isLast = i === points.length-1;
-        svg += '<circle class="line-point" cx="'+p.x.toFixed(1)+'" cy="'+p.y.toFixed(1)+'" r="3.5" fill="'+(isLast?'var(--gold)':'var(--moss-bright)')+'"><title>'+labels[i]+': '+p.v+'</title></circle>';
-        svg += '<text x="'+p.x.toFixed(1)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-        if(p.v > 0) svg += '<text x="'+p.x.toFixed(1)+'" y="'+(p.y-8)+'" text-anchor="middle" font-size="8.5" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+p.v+'</text>';
-      });
-      if(goalMinutesForChart>0){
-        const gy=barAreaBottom-(goalMinutesForChart/max)*(barAreaBottom-barAreaTop);
-        svg+='<line x1="0" y1="'+gy+'" x2="'+chartW+'" y2="'+gy+'" stroke="url(#goalStripe)" stroke-width="4"><title>Günlük hedef: '+goalMinutesForChart+' dk</title></line>';
-      }
-      el.chartSvg.innerHTML = svg;
-      return;
-    }
-
-    const barW = (chartW - gap*(n+1)) / n;
-    let bars = '<defs><pattern id="goalStripeBar" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="var(--gold)" stroke-width="2"/></pattern></defs>';
-    values.forEach((v,i)=>{
-      const h = (v/max) * (barAreaBottom - barAreaTop);
-      const x = gap + i*(barW+gap);
-      const y = barAreaBottom - h;
-      const isLast = i === n-1;
-      const color = isLast ? 'var(--gold)' : 'var(--moss-bright)';
-      bars += '<rect class="chart-bar" x="'+x+'" y="'+y+'" width="'+barW+'" height="'+Math.max(h,1.5)+'" rx="3" fill="'+color+'"><title>'+labels[i]+': '+v+'</title></rect>';
-      bars += '<text x="'+(x+barW/2)+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+labels[i]+'</text>';
-      if(v > 0) bars += '<text x="'+(x+barW/2)+'" y="'+(y-4)+'" text-anchor="middle" font-size="8.5" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+v+'</text>';
+    el.chartSvg.innerHTML=StatsView.buildMetricChart({
+      labels,
+      values,
+      chartType:currentChartType,
+      goalMinutes
     });
-    if(goalMinutesForChart>0){
-      const gy=barAreaBottom-(goalMinutesForChart/max)*(barAreaBottom-barAreaTop);
-      bars+='<line x1="0" y1="'+gy+'" x2="'+chartW+'" y2="'+gy+'" stroke="url(#goalStripeBar)" stroke-width="4"><title>Günlük hedef: '+goalMinutesForChart+' dk</title></line>';
-    }
-    el.chartSvg.innerHTML = bars;
   }
 
   // ================= YILLIK ISI HARİTASI =================
@@ -8404,43 +9037,23 @@
   }
 
   function renderHeatmap(){
-    const lookback = 365;
-    if(el.heatmapTitle) el.heatmapTitle.textContent = 'Yıllık Aktivite (Günlük Hedefe Göre)';
-
-    const today = new Date();
-    const startAligned = startOfWeek(addDays(today, -(lookback-1)));
-    const totalDays = Math.round((today - startAligned)/86400000) + 1;
-    const weeks = Math.ceil(totalDays/7);
-    const cellSize = 9, gap = 2;
-
-    let rects = '';
-    let lastMonth = -1;
-    for(let w=0; w<weeks; w++){
-      for(let d=0; d<7; d++){
-        const date = addDays(startAligned, w*7+d);
-        if(date > today) continue;
-        const k = dateKey(date);
-        const ratio = goalRatioFor(data.days[k]);
-        let level = 0;
-        if(ratio > 0){
-          level = ratio >= 1 ? 4 : ratio >= 0.5 ? 3 : ratio >= 0.25 ? 2 : 1;
-        }
-        const x = w*(cellSize+gap);
-        const y = d*(cellSize+gap) + 14;
-        const pctLabel = Math.round(ratio*100) + '% hedef';
-        rects += '<rect class="heat-cell level-'+level+'" x="'+x+'" y="'+y+'" width="'+cellSize+'" height="'+cellSize+'" rx="2.2"><title>'+displayDate(k)+': '+pctLabel+'</title></rect>';
-
-        if(d === 0 && date.getMonth() !== lastMonth){
-          lastMonth = date.getMonth();
-          rects += '<text x="'+x+'" y="9" font-size="7.8" fill="var(--paper-dim)" font-family="IBM Plex Mono, monospace">'+MONTH_SHORT[lastMonth]+'</text>';
-        }
-      }
+    if(el.heatmapTitle){
+      el.heatmapTitle.textContent='Yıllık Aktivite (Günlük Hedefe Göre)';
     }
 
-    const svgW = weeks*(cellSize+gap);
-    const svgH = 7*(cellSize+gap) + 14;
-    el.heatmapSvg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + svgH);
-    el.heatmapSvg.innerHTML = rects;
+    const heatmap=StatsView.buildHeatmap({
+      today:new Date(),
+      lookback:365,
+      startOfWeek,
+      addDays,
+      dateKey,
+      goalRatioFor:key=>goalRatioFor(data.days[key]),
+      displayDate,
+      monthShort:MONTH_SHORT
+    });
+
+    el.heatmapSvg.setAttribute('viewBox',heatmap.viewBox);
+    el.heatmapSvg.innerHTML=heatmap.svg;
   }
 
   function formatMinutes(seconds){
@@ -8448,90 +9061,20 @@
   }
 
   function sessionAnalyticsForKeys(keys){
-    const sessions=sessionsForKeys(keys);
-    const hourly=Array.from({length:24},()=>({seconds:0,sessions:0}));
-    let totalSeconds=0;
-    let longest=null;
-    let timedSessions=0;
-    const activeDays=new Set();
-
-    sessions.forEach(({key,session})=>{
-      const seconds=sessionSecondsForAnalytics(session);
-      totalSeconds += seconds;
-      if(seconds>0) activeDays.add(key);
-      if(!longest || seconds>longest.seconds){
-        longest={seconds,subject:(session.subject && session.subject!=='Genel')?session.subject:'Genel'};
-      }
-      if(session.startedAt){
-        const started=new Date(session.startedAt);
-        if(!Number.isNaN(started.getTime())){
-          const hour=started.getHours();
-          hourly[hour].seconds += seconds;
-          hourly[hour].sessions += 1;
-          timedSessions++;
-        }
-      }
-    });
-
-    let bestHour=-1,bestSeconds=0;
-    hourly.forEach((bucket,hour)=>{
-      if(bucket.seconds>bestSeconds){
-        bestSeconds=bucket.seconds;
-        bestHour=hour;
-      }
-    });
-
-    return {
-      sessionCount:sessions.length,
-      totalSeconds,
-      avgSeconds:sessions.length?Math.round(totalSeconds/sessions.length):0,
-      longest,
-      activeDays:activeDays.size,
-      hourly,
-      bestHour,
-      bestSeconds,
-      timedSessions
-    };
+    return AnalyticsCore.sessionAnalytics(
+      sessionsForKeys(keys),
+      session=>sessionSecondsForAnalytics(session)
+    );
   }
 
   function renderSessionAnalytics(){
     if(!el.sessionAnalyticsBody) return;
-    const keys=getPeriodKeys(currentPeriod);
-    const stats=sessionAnalyticsForKeys(keys);
 
-    if(!stats.sessionCount){
-      el.sessionAnalyticsBody.innerHTML='<div class="todo-empty">Bu dönemde henüz oturum kaydı yok.</div>';
-      return;
-    }
-
-    const bestLabel=stats.bestHour>=0 ? pad(stats.bestHour)+':00–'+pad((stats.bestHour+1)%24)+':00' : '—';
-    const longestLabel=stats.longest ? formatDurationLabel(stats.longest.seconds) : '—';
-    const shownHours=[0,2,4,6,8,10,12,14,16,18,20,22];
-    const pairTotals=shownHours.map(hour=>stats.hourly[hour].seconds + stats.hourly[hour+1].seconds);
-    const maxHour=Math.max(...pairTotals,1);
-
-    const bars=shownHours.map((hour,index)=>{
-      const bucketSeconds=pairTotals[index];
-      const height=Math.max(bucketSeconds>0?5:2,Math.round(bucketSeconds/maxHour*92));
-      const isBest=stats.bestHour===hour || stats.bestHour===hour+1;
-      const title=pad(hour)+':00–'+pad((hour+2)%24)+':00 · '+formatDurationLabel(bucketSeconds);
-      return '<div class="hour-col'+(isBest?' best':'')+'" title="'+title+'">'
-        + '<div class="hour-bar-wrap"><div class="hour-bar" style="height:'+height+'%"></div></div>'
-        + '<span class="hour-label">'+pad(hour)+'</span>'
-        + '</div>';
-    }).join('');
-
-    el.sessionAnalyticsBody.innerHTML=
-      '<div class="session-analytics-grid">'
-      + '<div class="session-analytics-stat"><div class="k">Ortalama Oturum</div><div class="v">'+formatDurationLabel(stats.avgSeconds)+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">En Uzun Oturum</div><div class="v">'+longestLabel+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">En Verimli Başlangıç</div><div class="v">'+bestLabel+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">Aktif Gün</div><div class="v">'+stats.activeDays+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">Zaman Damgalı Oturum</div><div class="v">'+stats.timedSessions+' / '+stats.sessionCount+'</div></div>'
-      + '<div class="session-analytics-stat"><div class="k">Toplam Oturum</div><div class="v">'+stats.sessionCount+'</div></div>'
-      + '</div>'
-      + '<div class="hour-analytics">'+bars+'</div>'
-      + '<div class="hour-analytics-note">Saat grafiği oturumların <b>başlangıç saatine</b> göre gruplandırılır. Eski kayıtlarda başlangıç saati yoksa bu grafiğe dahil edilmez.</div>';
+    const stats=sessionAnalyticsForKeys(getPeriodKeys(currentPeriod));
+    el.sessionAnalyticsBody.innerHTML=StatsView.buildSessionAnalytics(stats,{
+      pad,
+      formatDurationLabel
+    });
   }
 
   function renderStatsWeekNav(){
@@ -9169,24 +9712,15 @@
     return '<span class="task-due-badge '+cls+'">📅 '+escapeHtml(label)+'</span>';
   }
 
-  function renderTaskCard(t){
-    const tag = tagById(normalizedTaskTagId(t));
-    const tagHtml = tag ? '<span class="task-tag" style="--tag-color:'+safeTagColor(tag.color)+'">#'+escapeHtml(tag.name)+'</span>' : '';
-    const borderStyle = tag ? ' style="border-left-color:'+safeTagColor(tag.color)+'"' : '';
-    const dueHtml = taskDueBadge(t.dueDate, t.time, t.done);
-    const repeatHtml = t.repeat && t.repeat!=='none' ? '<span class="task-repeat-badge">↻ '+repeatTaskLabel(t.repeat,t.repeatDays)+'</span>' : '';
-    return '<div class="task-card'+(t.done?' completed':'')+'" draggable="true" data-task-id="'+t.id+'"'+borderStyle+'>'
-      + '<span class="task-drag-handle" title="Sürükleyerek sırala">☰</span>'
-      + '<button class="task-check'+(t.done?' done':'')+'" data-action="toggle-task" data-id="'+t.id+'">'+(t.done?'✓':'')+'</button>'
-      + '<div class="task-card-body">'
-      +   '<div class="task-text'+(t.done?' done':'')+'">'+escapeHtml(t.text)+'</div>'
-      +   tagHtml
-      + '</div>'
-      + ((dueHtml || repeatHtml) ? '<div class="task-right-meta">'+dueHtml+repeatHtml+'</div>' : '')
-      + (!t.done ? '<button class="task-focus-btn" data-action="focus-task" data-id="'+t.id+'" title="Bu görev için çalışma oturumu başlat">▶ Odaklan</button>' : '')
-      + '<button class="task-del" data-action="edit-task" data-id="'+t.id+'" aria-label="Görevi düzenle" title="Görevi düzenle">✎</button>'
-      + '<button class="task-del" data-action="delete-task" data-id="'+t.id+'" aria-label="Görevi sil">✕</button>'
-      + '</div>';
+  function renderTaskCard(task){
+    return TaskView.buildCard(task,{
+      tagById,
+      normalizedTaskTagId,
+      safeTagColor,
+      escapeHtml,
+      taskDueBadge,
+      repeatTaskLabel
+    });
   }
 
   if(el.taskCreateToggle && el.taskCreatePanel){
@@ -9241,53 +9775,22 @@
 
   function renderTaskList(){
     renderTaskTagControls();
-    const today = todayKey();
-    const searchQuery=(el.taskSearchInput?.value || '').trim().toLocaleLowerCase('tr-TR');
-    const filtered = data.tasks.filter(t=>{
-      if(currentTaskFilter !== 'all' && normalizedTaskTagId(t) !== currentTaskFilter) return false;
 
-      if(currentTaskStatusFilter==='active' && t.done) return false;
-      if(currentTaskStatusFilter==='done' && !t.done) return false;
-
-      if(currentTaskDateFilter!=='all'){
-        if(currentTaskDateFilter==='overdue' && !(t.dueDate && t.dueDate < today && !t.done)) return false;
-        if(currentTaskDateFilter==='today' && t.dueDate !== today) return false;
-        if(currentTaskDateFilter==='upcoming' && !(t.dueDate && t.dueDate > today)) return false;
-        if(currentTaskDateFilter==='nodate' && t.dueDate) return false;
-      }
-
-      if(!searchQuery) return true;
-      const haystack=[t.text||'', t.dueDate||'', t.time||''].join(' ').toLocaleLowerCase('tr-TR');
-      return haystack.includes(searchQuery);
+    const groups=TaskView.filterAndGroup(TaskRepository.all(),{
+      today:todayKey(),
+      taskFilter:currentTaskFilter,
+      statusFilter:currentTaskStatusFilter,
+      dateFilter:currentTaskDateFilter,
+      searchQuery:el.taskSearchInput?.value || '',
+      normalizedTaskTagId
     });
-    const active = filtered.filter(t=>!t.done).sort((a,b)=>(Number(a.sortOrder)||0)-(Number(b.sortOrder)||0));
-    const done = filtered.filter(t=>t.done).sort((a,b)=> (b.doneAt||'').localeCompare(a.doneAt||''));
 
-    if(filtered.length === 0){
-      const filteredView = searchQuery || currentTaskFilter!=='all' || currentTaskStatusFilter!=='all' || currentTaskDateFilter!=='all';
-      el.taskListBody.innerHTML = filteredView
-        ? '<div class="task-empty">Bu arama ve filtrelere uyan görev bulunamadı.</div>'
-        : '<div class="task-empty">Henüz görev yok. Yukarıdan yeni bir görev ekleyebilirsin.</div>';
-      el.clearDoneTasksBtn.style.display = 'none';
-      return;
-    }
+    el.taskListBody.innerHTML=TaskView.buildList(
+      groups,
+      task=>renderTaskCard(task)
+    );
 
-    const overdue = active.filter(t=>t.dueDate && t.dueDate < today);
-    const dueToday = active.filter(t=>t.dueDate === today);
-    const upcoming = active.filter(t=>t.dueDate && t.dueDate > today);
-    const noDate = active.filter(t=>!t.dueDate);
-
-    let html = '';
-    if(overdue.length){ html += '<div class="task-group-title">⚠️ Gecikmiş</div>' + overdue.map(renderTaskCard).join(''); }
-    if(dueToday.length){ html += '<div class="task-group-title">Bugün</div>' + dueToday.map(renderTaskCard).join(''); }
-    if(upcoming.length){ html += '<div class="task-group-title">Yaklaşan</div>' + upcoming.map(renderTaskCard).join(''); }
-    if(noDate.length){ html += '<div class="task-group-title">Tarihsiz</div>' + noDate.map(renderTaskCard).join(''); }
-    if(done.length){
-      html += '<div class="task-group-title task-group-title-with-action"><span>Tamamlanan</span><button class="task-group-clear-done" data-action="clear-completed-inline" type="button">Tümünü sil</button></div>'
-        + done.map(renderTaskCard).join('');
-    }
-    el.taskListBody.innerHTML = html || '<div class="task-empty">Görev yok. Yukarıdan ekleyebilirsin.</div>';
-    el.clearDoneTasksBtn.style.display = 'none';
+    el.clearDoneTasksBtn.style.display='none';
   }
 
   function toggleTaskDone(id){
@@ -10441,48 +10944,16 @@
 
   // ================= KOLEKSİYON =================
   function renderCollection(){
-    const stage = getGrowthStage(data.treeProgress);
-    const progressPct = Math.min(100, data.treeProgress / TREE_GOAL * 100);
-
-    let html = '<div class="tree-progress-card">'
-      + '<div class="tp-emoji">'+stage.emoji+'</div>'
-      + '<div class="tp-info">'
-      +   '<div class="tp-title">Ağaç #'+data.treeNumber+' büyüyor</div>'
-      +   '<div class="tp-bar"><div class="tp-fill" style="width:'+progressPct+'%"></div></div>'
-      +   '<div class="tp-caption">'+Math.round(data.treeProgress)+' / '+TREE_GOAL+' büyüme puanı — tür tamamlanınca belli olacak 🌱</div>'
-      + '</div>'
-      + '</div>';
-
-    if(data.collection.length > 0){
-      const uniqueCount = uniqueSpeciesCount();
-      html += '<div class="collection-stats">'
-        + '<div class="collection-stat"><div class="cs-num">'+data.collection.length+'</div><div class="cs-lbl">Toplam Ağaç</div></div>'
-        + '<div class="collection-stat"><div class="cs-num">'+uniqueCount+' / '+SPECIES_POOL.length+'</div><div class="cs-lbl">Keşfedilen Tür</div></div>'
-        + '</div>';
-    }
-
-    if(data.collection.length === 0){
-      const remaining = Math.max(0, Math.ceil(TREE_GOAL - data.treeProgress));
-      html += '<div class="empty-state">Henüz tamamlanmış ağacın yok.<br>İlk ağacını tamamlamak için <b>'+remaining+'</b> büyüme puanı daha gerek.</div>';
-      el.collectionContent.innerHTML = html;
-      return;
-    }
-
-    const items = [...data.collection].reverse();
-    html += '<div class="collection-grid">';
-    items.forEach((item, i)=>{
-      const d = new Date(item.completedAt);
-      const dateStr = displayDate(d);
-      const colors = SPECIES_COLORS[item.species] || {accent:'#74d99f', bg:'rgba(116,217,159,0.16)'};
-      html += '<div class="tree-card" style="--accent:'+colors.accent+';--accent-bg:'+colors.bg+';animation-delay:'+(i*0.04)+'s">'
-        + '<span class="badge-num">Ağaç #'+item.treeNumber+'</span>'
-        + '<div class="emoji">'+item.emoji+'</div>'
-        + '<div class="species">'+item.species+'</div>'
-        + '<div class="date">'+dateStr+'</div>'
-        + '</div>';
+    el.collectionContent.innerHTML=CollectionView.build({
+      treeProgress:data.treeProgress,
+      treeNumber:data.treeNumber,
+      collection:data.collection,
+      treeGoal:TREE_GOAL,
+      speciesPoolSize:SPECIES_POOL.length,
+      growthStage:getGrowthStage(data.treeProgress),
+      speciesColors:SPECIES_COLORS,
+      displayDate
     });
-    html += '</div>';
-    el.collectionContent.innerHTML = html;
   }
 
 
@@ -10539,7 +11010,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -10557,6 +11028,9 @@
         viewFormatters: !!window.ProductivityViewFormatters,
         summaryView: !!window.ProductivitySummaryView,
         calendarView: !!window.ProductivityCalendarView,
+        statsView: !!window.ProductivityStatsView,
+        taskView: !!window.ProductivityTaskView,
+        collectionView: !!window.ProductivityCollectionView,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -11919,6 +12393,59 @@
       equal(html.includes('id="summaryPrintArea"'),true);
       equal(html.includes('id="shareBtn"'),true);
       equal(html.includes('id="summaryPrintBtn"'),true);
+    });
+
+
+    test('StatsView, TaskView ve CollectionView modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityStatsView),true);
+      equal(Boolean(window.ProductivityTaskView),true);
+      equal(Boolean(window.ProductivityCollectionView),true);
+    });
+
+    test('AnalyticsCore subject breakdown süreye göre sıralanır', ()=>{
+      const rows=window.ProductivityAnalyticsCore.subjectBreakdown([
+        {key:'2026-11-12',session:{subject:'A',duration:300}},
+        {key:'2026-11-12',session:{subject:'B',duration:900}}
+      ],session=>session.duration);
+      equal(rows[0][0],'B');
+      equal(rows[0][1].seconds,900);
+    });
+
+    test('StatsView metric chart SVG üretir', ()=>{
+      const svg=window.ProductivityStatsView.buildMetricChart({
+        labels:['Pzt','Sal'],
+        values:[10,20],
+        chartType:'bar',
+        goalMinutes:30
+      });
+      equal(svg.includes('chart-bar'),true);
+      equal(svg.includes('Günlük hedef: 30 dk'),true);
+    });
+
+    test('TaskView filtreleri gecikmiş görevleri ayırır', ()=>{
+      const groups=window.ProductivityTaskView.filterAndGroup([
+        {id:'1',text:'Eski',dueDate:'2026-11-10',done:false,sortOrder:0},
+        {id:'2',text:'Bugün',dueDate:'2026-11-12',done:false,sortOrder:1}
+      ],{
+        today:'2026-11-12',
+        dateFilter:'overdue',
+        normalizedTaskTagId:()=>null
+      });
+      equal(groups.filtered.length,1);
+      equal(groups.overdue[0].id,'1');
+    });
+
+    test('CollectionView boş koleksiyonda kalan büyümeyi gösterir', ()=>{
+      const html=window.ProductivityCollectionView.build({
+        treeProgress:100,
+        treeNumber:2,
+        collection:[],
+        treeGoal:140,
+        speciesPoolSize:44,
+        growthStage:{emoji:'🌿'},
+        displayDate:value=>String(value)
+      });
+      equal(html.includes('<b>40</b> büyüme puanı'),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
