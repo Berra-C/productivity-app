@@ -67,3 +67,9 @@ Version change notes are stored under `changes/` to keep the project root clean.
 
 View modules build deterministic HTML or layout data and do not attach event listeners.
 `app-main.js` owns DOM insertion, event binding, modal behavior, scrolling and browser side effects.
+
+## Startup ordering invariant
+
+Runtime module aliases must be initialized before repositories or application state consume them.
+
+`npm run check` validates generated-bundle freshness, JavaScript syntax, declaration order, and production startup execution through `AppStorageRepository` initialization. This prevents lexical TDZ regressions such as accessing `StatePersistence` before its `const` initialization.
