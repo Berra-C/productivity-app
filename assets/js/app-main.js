@@ -1165,8 +1165,10 @@
   const EventRepositoryFactory=window.ProductivityEventRepository;
   const GamificationCore=window.ProductivityGamificationCore;
   const TreeService=window.ProductivityTreeService;
+  const AnalyticsCore=window.ProductivityAnalyticsCore;
+  const CalendarCore=window.ProductivityCalendarCore;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -1177,7 +1179,9 @@
       !TaskRepositoryFactory ? 'TaskRepository' : null,
       !EventRepositoryFactory ? 'EventRepository' : null,
       !GamificationCore ? 'GamificationCore' : null,
-      !TreeService ? 'TreeService' : null
+      !TreeService ? 'TreeService' : null,
+      !AnalyticsCore ? 'AnalyticsCore' : null,
+      !CalendarCore ? 'CalendarCore' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -3563,29 +3567,11 @@
   }
 
   function workIntervalsForDate(key){
-    const dayStart=new Date(key+'T00:00:00').getTime();
-    const dayEnd=new Date(key+'T00:00:00').setDate(new Date(key+'T00:00:00').getDate()+1);
-    const out=[];
-    Object.values(data.sessionLog||{}).forEach(list=>{
-      if(!Array.isArray(list)) return;
-      list.forEach(session=>{
-        mergeSessionIntervalsForDisplay(session).forEach(interval=>{
-          const start=Math.max(dayStart,interval.start);
-          const end=Math.min(dayEnd,interval.end);
-          if(end<=start) return;
-          out.push({
-            sessionId:session.id,
-            subject:(session.subject && session.subject!=='Genel') ? session.subject : (session.name||'Çalışma'),
-            start,end,
-            startMin:(start-dayStart)/60000,
-            endMin:(end-dayStart)/60000,
-            color:workIntervalColor(session),
-            legacyApprox:interval.legacyApprox
-          });
-        });
-      });
+    return CalendarCore.projectWorkIntervalsForDate(key,{
+      sessionLog:data.sessionLog,
+      intervalsForSession:session=>mergeSessionIntervalsForDisplay(session),
+      colorForSession:session=>workIntervalColor(session)
     });
-    return out.sort((a,b)=>a.start-b.start);
   }
 
   function flushWorkTime(){
@@ -5662,157 +5648,74 @@
   }
 
   function planningStatsForKeys(keys){
-    const sessions = sessionsForKeys(keys).map(x=>x.session).filter(s=>Number(s.targetSeconds)>0);
-    if(!sessions.length){
-      return {count:0, reached:0, completionRate:null, planned:0, actual:0, delta:0, avgDelta:0, avgOvertime:0, overtimeCount:0};
-    }
-    let reached=0, planned=0, actual=0, overtimeTotal=0, overtimeCount=0;
-    sessions.forEach(session=>{
-      const target=Number(session.targetSeconds)||0;
-      const secs=sessionSecondsForAnalytics(session);
-      planned+=target;
-      actual+=secs;
-      if(secs>=target) reached++;
-      if(secs>target){ overtimeTotal += secs-target; overtimeCount++; }
-    });
-    const delta=actual-planned;
-    return {
-      count:sessions.length,
-      reached,
-      completionRate:Math.round(reached/sessions.length*100),
-      planned,
-      actual,
-      delta,
-      avgDelta:Math.round(delta/sessions.length),
-      avgOvertime:overtimeCount?Math.round(overtimeTotal/overtimeCount):0,
-      overtimeCount
-    };
+    return AnalyticsCore.planningStats(
+      sessionsForKeys(keys).map(entry=>entry.session),
+      session=>sessionSecondsForAnalytics(session)
+    );
   }
 
   function productiveHourStats(keys){
-    const keySet=new Set(keys);
-    const buckets=Array.from({length:24},()=>0);
-    sessionsForKeys(keys).forEach(({key,session})=>{
-      const intervals=sessionIntervals(session);
-      if(!intervals.length && session.startedAt){
-        const d=new Date(session.startedAt);
-        if(!Number.isNaN(d.getTime())) buckets[d.getHours()]+=sessionSecondsForAnalytics(session);
-        return;
+    return AnalyticsCore.productiveHourStats(
+      keys,
+      sessionsForKeys(keys),
+      {
+        sessionIntervals:session=>sessionIntervals(session),
+        sessionSeconds:session=>sessionSecondsForAnalytics(session),
+        dateKey:date=>dateKey(date)
       }
-      intervals.forEach(interval=>{
-        let cursor=interval.start;
-        while(cursor<interval.end){
-          const d=new Date(cursor);
-          const k=dateKey(d);
-          const nextHour=new Date(d); nextHour.setMinutes(60,0,0);
-          const end=Math.min(interval.end,nextHour.getTime());
-          if(keySet.has(k)) buckets[d.getHours()]+=Math.max(0,(end-cursor)/1000);
-          cursor=end;
-        }
-      });
-    });
-    let bestHour=-1,bestSeconds=0;
-    buckets.forEach((secs,h)=>{ if(secs>bestSeconds){bestSeconds=secs;bestHour=h;} });
-    return bestHour>=0?{hour:bestHour,seconds:Math.round(bestSeconds),buckets:buckets.map(Math.round)}:null;
+    );
   }
 
   function sessionFocusScore(session){
-    const duration=Math.max(1,sessionSecondsForAnalytics(session));
-    const distractions=Math.max(0,Number(session?.distractions||0));
-    const intervals=sessionIntervals(session);
-    const interruptions=Math.max(0,intervals.length-1);
-    const todos=Array.isArray(session?.todos)?session.todos:[];
-    const done=todos.filter(t=>t?.done).length;
-    let score=100;
-    score-=Math.min(42,distractions*12);
-    score-=Math.min(20,interruptions*5);
-    if(Number(session?.targetSeconds)>0){
-      const ratio=duration/Number(session.targetSeconds);
-      if(ratio>=1) score+=8;
-      else if(ratio<.6) score-=10;
-      else if(ratio<.85) score-=5;
-    }
-    if(todos.length) score+=Math.round((done/todos.length)*10);
-    if(duration<10*60) score-=5;
-    return Math.max(0,Math.min(100,Math.round(score)));
+    return AnalyticsCore.sessionFocusScore(session,{
+      sessionIntervals:item=>sessionIntervals(item),
+      sessionSeconds:item=>sessionSecondsForAnalytics(item)
+    });
   }
 
   function focusScoreStats(keys){
-    const rows=sessionsForKeys(keys).map(({session})=>({session,score:sessionFocusScore(session),seconds:sessionSecondsForAnalytics(session)})).filter(x=>x.seconds>0);
-    if(!rows.length) return {average:null,best:null,worst:null,count:0};
-    const weight=rows.reduce((a,x)=>a+x.seconds,0)||1;
-    const average=Math.round(rows.reduce((a,x)=>a+x.score*x.seconds,0)/weight);
-    const sorted=[...rows].sort((a,b)=>b.score-a.score);
-    return {average,best:sorted[0],worst:sorted[sorted.length-1],count:rows.length};
+    return AnalyticsCore.focusScoreStats(
+      sessionsForKeys(keys),
+      {
+        sessionIntervals:session=>sessionIntervals(session),
+        sessionSeconds:session=>sessionSecondsForAnalytics(session)
+      }
+    );
   }
 
   function normPlanText(value){
-    return String(value||'').toLocaleLowerCase('tr-TR').replace(/[^a-z0-9çğıöşü]+/gi,' ').trim();
+    return AnalyticsCore.normalizePlanText(value);
   }
 
-  function timedEventDurationSeconds(ev){
-    if(!ev?.time||!ev?.endTime) return 0;
-    const [sh,sm]=ev.time.split(':').map(Number),[eh,em]=ev.endTime.split(':').map(Number);
-    const mins=(eh*60+em)-(sh*60+sm);
-    return mins>0?mins*60:0;
+  function timedEventDurationSeconds(event){
+    return AnalyticsCore.timedEventDurationSeconds(event);
   }
 
   function scheduledStudyStats(keys){
-    const keySet=new Set(keys);
-    let planned=0,actual=0,matchedEvents=0;
-    const rows=[];
-    (data.events||[]).filter(ev=>keySet.has(ev.date)&&timedEventDurationSeconds(ev)>0).forEach(ev=>{
-      const label=normPlanText(ev.title);
-      if(!label) return;
-      const matching=sessionsForKeys([ev.date]).map(x=>x.session).filter(s=>{
-        const subj=normPlanText(s.subject&&s.subject!=='Genel'?s.subject:s.name);
-        return subj && (subj===label || subj.includes(label) || label.includes(subj));
-      });
-      if(!matching.length) return;
-      const p=timedEventDurationSeconds(ev);
-      const a=matching.reduce((sum,s)=>sum+sessionSecondsForAnalytics(s),0);
-      planned+=p; actual+=a; matchedEvents++;
-      rows.push({event:ev,planned:p,actual:a});
+    return AnalyticsCore.scheduledStudyStats(keys,{
+      events:EventRepository.all(),
+      sessionsForDate:key=>sessionsForKeys([key]).map(entry=>entry.session),
+      sessionSeconds:session=>sessionSecondsForAnalytics(session)
     });
-    const adherence=planned?Math.round(Math.min(actual,planned)/planned*100):null;
-    return {planned,actual,delta:actual-planned,adherence,matchedEvents,rows};
   }
 
   function weeklyReviewStats(keys){
-    const sessions = sessionsForKeys(keys);
-    const dayRows = keys.map(key=>({key, seconds:Number(data.days[key]?.workSeconds||0)})).sort((a,b)=>b.seconds-a.seconds);
-    const bestDay = dayRows.find(d=>d.seconds>0) || null;
+    const entries=sessionsForKeys(keys);
+    const productiveHour=productiveHourStats(keys);
+    const focus=focusScoreStats(keys);
+    const scheduledStudy=scheduledStudyStats(keys);
 
-    const subjectTotals = new Map();
-    let longestSession = null;
-    let totalSessionSeconds = 0;
-    sessions.forEach(({session})=>{
-      const secs=sessionSecondsForAnalytics(session);
-      totalSessionSeconds += secs;
-      const subj=(session.subject && session.subject!=='Genel')?session.subject:'Genel';
-      subjectTotals.set(subj,(subjectTotals.get(subj)||0)+secs);
-      if(!longestSession || secs>longestSession.seconds) longestSession={seconds:secs, subject:subj};
+    return AnalyticsCore.weeklyReviewStats(keys,{
+      entries,
+      days:data.days,
+      tasks:TaskRepository.all(),
+      dateKey:date=>dateKey(date),
+      sessionSeconds:session=>sessionSecondsForAnalytics(session),
+      meetsGoal:key=>dayMeetsGoal(key),
+      productiveHour,
+      focus,
+      scheduledStudy
     });
-    const topSubject=[...subjectTotals.entries()].sort((a,b)=>b[1]-a[1])[0] || null;
-    const goalsMet=keys.filter(k=>dayMeetsGoal(k)).length;
-    const tasksCompleted=(data.tasks||[]).filter(t=>{
-      if(!t.doneAt) return false;
-      const d=new Date(t.doneAt);
-      return !Number.isNaN(d.getTime()) && keys.includes(dateKey(d));
-    }).length;
-
-    return {
-      bestDay,
-      topSubject,
-      longestSession,
-      productiveHour: productiveHourStats(keys),
-      focus: focusScoreStats(keys),
-      scheduledStudy: scheduledStudyStats(keys),
-      goalsMet,
-      tasksCompleted,
-      sessionCount:sessions.length,
-      avgSession:sessions.length?Math.round(totalSessionSeconds/sessions.length):0
-    };
   }
 
   function printWeeklySummary(){
@@ -8041,7 +7944,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -8054,6 +7957,8 @@
         eventRepository: !!window.ProductivityEventRepository,
         gamificationCore: !!window.ProductivityGamificationCore,
         treeService: !!window.ProductivityTreeService,
+        analyticsCore: !!window.ProductivityAnalyticsCore,
+        calendarCore: !!window.ProductivityCalendarCore,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -9285,6 +9190,55 @@
       equal(state.collection.length,1);
       equal(state.treeNumber,2);
       equal(state.treeProgress,120);
+    });
+
+
+    test('AnalyticsCore ve CalendarCore modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityAnalyticsCore),true);
+      equal(Boolean(window.ProductivityCalendarCore),true);
+    });
+
+    test('AnalyticsCore focus score dikkat dağınıklığını düşürür', ()=>{
+      const clean={distractions:0,targetSeconds:1500,todos:[],workIntervals:[{start:0,end:1500000}]};
+      const distracted={...clean,distractions:2};
+      const options={
+        sessionSeconds:()=>1500,
+        sessionIntervals:session=>session.workIntervals
+      };
+      const cleanScore=window.ProductivityAnalyticsCore.sessionFocusScore(clean,options);
+      const distractedScore=window.ProductivityAnalyticsCore.sessionFocusScore(distracted,options);
+      equal(cleanScore>distractedScore,true);
+    });
+
+    test('AnalyticsCore planlanan ve gerçekleşen süreyi hesaplar', ()=>{
+      const stats=window.ProductivityAnalyticsCore.planningStats([
+        {targetSeconds:600,duration:700},
+        {targetSeconds:300,duration:200}
+      ],session=>session.duration);
+      equal(stats.count,2);
+      equal(stats.reached,1);
+      equal(stats.planned,900);
+      equal(stats.actual,900);
+      equal(stats.completionRate,50);
+    });
+
+    test('CalendarCore gün dışına taşan intervalı gün sınırında kırpar', ()=>{
+      const start=new Date('2026-11-12T00:00:00').getTime();
+      const end=new Date('2026-11-13T00:00:00').getTime();
+      const blocks=window.ProductivityCalendarCore.projectWorkIntervalsForDate(
+        '2026-11-12',
+        {
+          sessionLog:{x:[{id:'s1',subject:'Test'}]},
+          intervalsForSession:()=>[
+            {start:start-60000,end:start+60000},
+            {start:end-60000,end:end+60000}
+          ],
+          colorForSession:()=> '#000'
+        }
+      );
+      equal(blocks.length,2);
+      equal(blocks[0].start,start);
+      equal(blocks[1].end,end);
     });
 
     const passed=results.filter(r=>r.ok).length;
