@@ -1,4 +1,36 @@
-/* === v77 INLINE STATE MERGE RUNTIME START === */
+/*
+ * GENERATED FILE — DO NOT EDIT assets/js/app.js DIRECTLY.
+ * Edit modules/*.js or assets/js/app-main.js, then run: npm run build
+ */
+/* ===== assets/js/modules/ui-helpers.js ===== */
+(() => {
+  'use strict';
+
+  function scrollCurrentMonthIntoView(container, year, options={}){
+    if(!container) return false;
+    const maxWidth = Number(options.maxWidth || 620);
+    if(window.innerWidth > maxWidth) return false;
+
+    const now = new Date();
+    if(Number(year) !== now.getFullYear()) return false;
+
+    const key = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const target = container.querySelector(`[data-month="${key}"]`);
+    if(!target) return false;
+
+    requestAnimationFrame(() => {
+      target.scrollIntoView({behavior:'smooth', block:'start', inline:'nearest'});
+    });
+    return true;
+  }
+
+
+  window.ProductivityUIHelpers = {
+    scrollCurrentMonthIntoView
+  };
+})();
+
+/* ===== assets/js/modules/state-merge.js ===== */
 (() => {
   'use strict';
 
@@ -229,13 +261,158 @@
     __test:{freshness,stateFreshness,mergeTombstones}
   };
 })();
-/* === v77 INLINE STATE MERGE RUNTIME END === */
 
-/* === v75 INLINE TIMER RUNTIME START === */
-/* v74 production timer bundle
-   Generated from timer-core.js + timer-service.js + timer-controller.js.
-   Keeping timer modules in one production request prevents partial/stale module loading.
-*/
+/* ===== assets/js/modules/state-persistence.js ===== */
+(() => {
+  'use strict';
+
+  function semanticSnapshot(value){
+    const copy={...(value||{})};
+    delete copy.storageMeta;
+    return JSON.stringify(copy);
+  }
+
+  function compareStorageMeta(a,b){
+    const aa=a && typeof a==='object' ? a : {};
+    const bb=b && typeof b==='object' ? b : {};
+    const ar=Number(aa.revision)||0;
+    const br=Number(bb.revision)||0;
+    if(ar!==br) return ar-br;
+
+    const at=Number(aa.updatedAt)||0;
+    const bt=Number(bb.updatedAt)||0;
+    if(at!==bt) return at-bt;
+
+    return String(aa.writerId||'').localeCompare(String(bb.writerId||''));
+  }
+
+  function createRepository(options={}){
+    const storage=options.storage || window.localStorage;
+    const primaryKey=String(options.primaryKey||'');
+    const backupKey=String(options.backupKey||'');
+    const legacyKey=String(options.legacyKey||'');
+    const preImportKey=String(options.preImportKey||`${primaryKey}_pre_import`);
+    const mirrorSnapshot=typeof options.mirrorSnapshot==='function'
+      ? options.mirrorSnapshot
+      : ()=>{};
+    const clearRecoverySnapshot=typeof options.clearRecoverySnapshot==='function'
+      ? options.clearRecoverySnapshot
+      : async()=>true;
+    const readRecoverySnapshot=typeof options.readRecoverySnapshot==='function'
+      ? options.readRecoverySnapshot
+      : async()=>null;
+
+    if(!primaryKey || !backupKey){
+      throw new Error('StatePersistence primaryKey/backupKey gerekli');
+    }
+
+    function readRaw(key){
+      try{ return storage.getItem(key); }
+      catch(error){ return null; }
+    }
+
+    function readJson(key){
+      const raw=readRaw(key);
+      if(!raw) return null;
+      try{ return JSON.parse(raw); }
+      catch(error){ return null; }
+    }
+
+    function writeRaw(key,value){
+      try{
+        storage.setItem(key,value);
+        return true;
+      }catch(error){
+        console.error('Yerel depolama yazımı başarısız:',error);
+        return false;
+      }
+    }
+
+    function remove(key){
+      try{
+        storage.removeItem(key);
+        return true;
+      }catch(error){
+        return false;
+      }
+    }
+
+    return Object.freeze({
+      readJson,
+      readRaw,
+      writeRaw,
+      remove,
+
+      readPrimary(){
+        return readJson(primaryKey);
+      },
+
+      readBackup(){
+        return readJson(backupKey);
+      },
+
+      readLegacy(){
+        return legacyKey ? readJson(legacyKey) : null;
+      },
+
+      readPrimaryMeta(){
+        const raw=readJson(primaryKey);
+        return raw && raw.storageMeta && typeof raw.storageMeta==='object'
+          ? raw.storageMeta
+          : null;
+      },
+
+      commitSnapshot(serialized,{mirror=true}={}){
+        const previous=readRaw(primaryKey);
+
+        if(previous && previous!==serialized){
+          if(!writeRaw(backupKey,previous)) return false;
+        }
+
+        if(!writeRaw(primaryKey,serialized)) return false;
+
+        if(mirror){
+          try{ mirrorSnapshot(serialized); }
+          catch(error){ console.warn('Snapshot mirror başlatılamadı:',error); }
+        }
+
+        return true;
+      },
+
+      savePreImport(value){
+        try{
+          return writeRaw(preImportKey,JSON.stringify(value));
+        }catch(error){
+          return false;
+        }
+      },
+
+      async resetAll(){
+        remove(primaryKey);
+        remove(backupKey);
+        remove(preImportKey);
+        if(legacyKey) remove(legacyKey);
+        return clearRecoverySnapshot();
+      },
+
+      readRecoverySnapshot(){
+        return readRecoverySnapshot();
+      },
+
+      mirror(serialized){
+        return mirrorSnapshot(serialized);
+      }
+    });
+  }
+
+  window.ProductivityStatePersistence={
+    semanticSnapshot,
+    compareStorageMeta,
+    createRepository
+  };
+})();
+
+/* ===== assets/js/modules/timer-core.js ===== */
 (() => {
   'use strict';
 
@@ -322,6 +499,7 @@
   };
 })();
 
+/* ===== assets/js/modules/timer-service.js ===== */
 (() => {
   'use strict';
 
@@ -443,6 +621,7 @@
   };
 })();
 
+/* ===== assets/js/modules/timer-controller.js ===== */
 (() => {
   'use strict';
 
@@ -587,9 +766,8 @@
 
   window.ProductivityTimerController={create};
 })();
-/* === v75 INLINE TIMER RUNTIME END === */
 
-/* === v76 INLINE SESSION REPOSITORY START === */
+/* ===== assets/js/modules/session-repository.js ===== */
 (() => {
   'use strict';
 
@@ -679,9 +857,8 @@
 
   window.ProductivitySessionRepository={create};
 })();
-/* === v76 INLINE SESSION REPOSITORY END === */
 
-
+/* ===== assets/js/app-main.js ===== */
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
   const OLD_KEY = 'direncAgaci_v1';
@@ -1592,82 +1769,19 @@
     }
   }
 
-  const AppStorageRepository = {
-    readJson(key){
-      try{
-        const raw=localStorage.getItem(key);
-        return raw ? JSON.parse(raw) : null;
-      }catch(error){
-        return null;
-      }
-    },
-    readRaw(key){
-      try{ return localStorage.getItem(key); }
-      catch(error){ return null; }
-    },
-    writeRaw(key,value){
-      try{
-        localStorage.setItem(key,value);
-        return true;
-      }catch(error){
-        console.error('Yerel depolama yazımı başarısız:', error);
-        return false;
-      }
-    },
-    remove(key){
-      try{
-        localStorage.removeItem(key);
-        return true;
-      }catch(error){
-        return false;
-      }
-    },
-    readPrimary(){
-      return this.readJson(STORAGE_KEY);
-    },
-    readBackup(){
-      return this.readJson(BACKUP_KEY);
-    },
-    readLegacy(){
-      return this.readJson(OLD_KEY);
-    },
-    readPrimaryMeta(){
-      const raw=this.readPrimary();
-      return raw && raw.storageMeta && typeof raw.storageMeta==='object'
-        ? raw.storageMeta
-        : null;
-    },
-    commitSnapshot(serialized,{mirror=true}={}){
-      const previous=this.readRaw(STORAGE_KEY);
-      if(previous && previous!==serialized && !this.writeRaw(BACKUP_KEY,previous)){
-        return false;
-      }
-      if(!this.writeRaw(STORAGE_KEY,serialized)) return false;
-      if(mirror) mirrorSnapshotToIndexedDB(serialized);
-      return true;
-    },
-    savePreImport(value){
-      try{
-        return this.writeRaw(STORAGE_KEY+'_pre_import',JSON.stringify(value));
-      }catch(error){
-        return false;
-      }
-    },
-    async resetAll(){
-      this.remove(STORAGE_KEY);
-      this.remove(BACKUP_KEY);
-      this.remove(STORAGE_KEY+'_pre_import');
-      this.remove(OLD_KEY);
-      return clearIndexedDBSnapshot();
-    },
-    async readRecoverySnapshot(){
+  const AppStorageRepository = StatePersistence.createRepository({
+    storage:window.localStorage,
+    primaryKey:STORAGE_KEY,
+    backupKey:BACKUP_KEY,
+    legacyKey:OLD_KEY,
+    preImportKey:STORAGE_KEY+'_pre_import',
+    mirrorSnapshot:serialized=>mirrorSnapshotToIndexedDB(serialized),
+    clearRecoverySnapshot:()=>clearIndexedDBSnapshot(),
+    readRecoverySnapshot:async()=>{
       const snapshot=await readIndexedDBSnapshot();
       return parseIndexedDBSnapshot(snapshot);
-    },
-    mirror(serialized){
-      return mirrorSnapshotToIndexedDB(serialized);
     }
-  };
+  });
 
   function loadData(){
     const raw = AppStorageRepository.readPrimary();
@@ -1903,13 +2017,15 @@
   let lastSemanticSnapshot = null;
   let reassertStorageTimer = null;
 
+  const StatePersistence=window.ProductivityStatePersistence;
   const TimerCore=window.ProductivityTimerCore;
   const TimerService=window.ProductivityTimerService;
   const TimerControllerFactory=window.ProductivityTimerController;
   const SessionRepositoryFactory=window.ProductivitySessionRepository;
 
-  if(!TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory){
+  if(!StatePersistence || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory){
     const missing=[
+      !StatePersistence ? 'StatePersistence' : null,
       !TimerCore ? 'TimerCore' : null,
       !TimerService ? 'TimerService' : null,
       !TimerControllerFactory ? 'TimerController' : null,
@@ -1988,19 +2104,11 @@
   }
 
   function semanticSnapshot(value){
-    const copy={...value};
-    delete copy.storageMeta;
-    return JSON.stringify(copy);
+    return StatePersistence.semanticSnapshot(value);
   }
 
   function storageMetaCompare(a,b){
-    const aa=a && typeof a==='object' ? a : {};
-    const bb=b && typeof b==='object' ? b : {};
-    const ar=Number(aa.revision)||0, br=Number(bb.revision)||0;
-    if(ar!==br) return ar-br;
-    const at=Number(aa.updatedAt)||0, bt=Number(bb.updatedAt)||0;
-    if(at!==bt) return at-bt;
-    return String(aa.writerId||'').localeCompare(String(bb.writerId||''));
+    return StatePersistence.compareStorageMeta(a,b);
   }
 
   function readPrimaryStorageMeta(){
@@ -8920,12 +9028,14 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
         uiHelpers: !!window.ProductivityUIHelpers,
         stateMerge: !!window.ProductivityStateMerge,
+        statePersistence: !!window.ProductivityStatePersistence,
+        sessionRepository: !!window.ProductivitySessionRepository,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -9937,6 +10047,35 @@
     test('Production app StateMerge runtime kendi içinde yüklüdür', ()=>{
       equal(Boolean(window.ProductivityStateMerge),true);
       equal(typeof window.ProductivityStateMerge.mergeStates,'function');
+    });
+
+
+    test('StatePersistence modülü yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityStatePersistence),true);
+    });
+
+    test('StatePersistence commit önceki primary kaydı backup yapar', ()=>{
+      const memory=new Map();
+      const storage={
+        getItem:key=>memory.has(key)?memory.get(key):null,
+        setItem:(key,value)=>memory.set(key,String(value)),
+        removeItem:key=>memory.delete(key)
+      };
+      const repo=window.ProductivityStatePersistence.createRepository({
+        storage,
+        primaryKey:'primary',
+        backupKey:'backup'
+      });
+      repo.commitSnapshot('{"v":1}',{mirror:false});
+      repo.commitSnapshot('{"v":2}',{mirror:false});
+      equal(repo.readRaw('primary'),'{"v":2}');
+      equal(repo.readRaw('backup'),'{"v":1}');
+    });
+
+    test('StatePersistence storage meta karşılaştırması revision önceliklidir', ()=>{
+      const newer={revision:5,updatedAt:1,writerId:'a'};
+      const older={revision:4,updatedAt:999999,writerId:'z'};
+      equal(window.ProductivityStatePersistence.compareStorageMeta(newer,older)>0,true);
     });
 
     const passed=results.filter(r=>r.ok).length;
