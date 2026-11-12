@@ -25,8 +25,10 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 8. **Session repository** — session lookup and date-bucket access.
 9. **Task repository** — task lookup, collection mutation and task-specific queries.
 10. **Event repository** — event lookup, collection mutation and event-specific queries.
-11. **App main** — composition root, UI rendering, gamification and remaining feature orchestration.
-12. **Cloud sync** — optional cloud transport and account synchronization.
+11. **Gamification core** — XP, levels, badges and streak/freeze calculations.
+12. **Tree service** — tree growth, completion and rollback mutations.
+13. **App main** — composition root, UI rendering and remaining feature orchestration.
+14. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -44,5 +46,4 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Move gamification calculations into a dedicated domain module.
 - Split calendar and analytics rendering from the main composition file.
