@@ -1117,6 +1117,393 @@
   window.ProductivityEventRepository={create};
 })();
 
+/* ===== assets/js/modules/gamification-core.js ===== */
+(() => {
+  'use strict';
+
+  function xpRequiredForLevel(level,{base=100,growth=30}={}){
+    const safeLevel=Math.max(1,Math.floor(Number(level)||1));
+    return Math.max(1,Number(base)||100) + (safeLevel-1)*(Number(growth)||0);
+  }
+
+  function xpFromWork(workSeconds,xpPerWorkMin=2){
+    const minutes=Math.floor(Math.max(0,Number(workSeconds)||0)/60);
+    return minutes*Math.max(0,Number(xpPerWorkMin)||0);
+  }
+
+  function xpFromTodos(totalTodosCompleted,xpPerTodo=15){
+    return Math.max(0,Number(totalTodosCompleted)||0)*Math.max(0,Number(xpPerTodo)||0);
+  }
+
+  function totalXP({
+    workSeconds=0,
+    totalTodosCompleted=0,
+    xpPerWorkMin=2,
+    xpPerTodo=15
+  }={}){
+    return xpFromWork(workSeconds,xpPerWorkMin)
+      + xpFromTodos(totalTodosCompleted,xpPerTodo);
+  }
+
+  function levelInfo(total,{
+    base=100,
+    growth=30
+  }={}){
+    let remaining=Math.max(0,Math.floor(Number(total)||0));
+    let level=1;
+    let required=xpRequiredForLevel(level,{base,growth});
+
+    while(remaining>=required){
+      remaining-=required;
+      level+=1;
+      required=xpRequiredForLevel(level,{base,growth});
+    }
+
+    return {
+      level,
+      xpInLevel:remaining,
+      xpNeeded:required
+    };
+  }
+
+  function rankForLevel(level,ranks=[]){
+    if(!Array.isArray(ranks) || !ranks.length) return '';
+    const index=Math.max(0,Math.min(ranks.length-1,(Math.floor(Number(level)||1)-1)));
+    return ranks[index];
+  }
+
+  function countUnlockedBadges(categories=[]){
+    let count=0;
+    categories.forEach(category=>{
+      const value=category?.getValue?.();
+      if(value===null || value===undefined) return;
+      (category.thresholds||[]).forEach(threshold=>{
+        if(value>=threshold) count+=1;
+      });
+    });
+    return count;
+  }
+
+  function unlockedBadgeMap(categories=[]){
+    const map=new Map();
+    categories.forEach(category=>{
+      const value=category?.getValue?.();
+      if(value===null || value===undefined) return;
+      (category.thresholds||[]).forEach(threshold=>{
+        if(value>=threshold){
+          map.set(
+            category.title+'|'+threshold,
+            {
+              icon:category.icon,
+              label:category.label(threshold),
+              category:category.title
+            }
+          );
+        }
+      });
+    });
+    return map;
+  }
+
+  function nextBadgeProgress(categories=[]){
+    const candidates=[];
+
+    categories.forEach(category=>{
+      const value=Number(category?.getValue?.());
+      if(!Number.isFinite(value)) return;
+
+      const thresholds=Array.isArray(category.thresholds)
+        ? category.thresholds
+        : [];
+      const next=thresholds.find(threshold=>value<threshold);
+      if(next===undefined) return;
+
+      const previous=[...thresholds].filter(threshold=>threshold<=value).pop() || 0;
+      const span=Math.max(1,next-previous);
+      const pct=Math.max(0,Math.min(100,((value-previous)/span)*100));
+
+      candidates.push({
+        icon:category.icon,
+        category:category.title,
+        label:category.label(next),
+        current:value,
+        next,
+        pct
+      });
+    });
+
+    if(!candidates.length) return null;
+    candidates.sort((a,b)=>b.pct-a.pct || (a.next-a.current)-(b.next-b.current));
+    return candidates[0];
+  }
+
+  function bestStreak(keys=[]){
+    const sorted=[...keys].sort();
+    if(!sorted.length) return 0;
+
+    let best=1;
+    let current=1;
+
+    for(let index=1;index<sorted.length;index+=1){
+      const previous=new Date(sorted[index-1]+'T12:00:00');
+      const next=new Date(sorted[index]+'T12:00:00');
+      const diff=Math.round((next-previous)/86400000);
+
+      if(diff===1){
+        current+=1;
+        best=Math.max(best,current);
+      }else if(diff>1){
+        current=1;
+      }
+    }
+
+    return best;
+  }
+
+  function bestCleanStreak({keys=[],days={},today=null}={}){
+    const sorted=[...keys]
+      .filter(key=>key!==today)
+      .sort();
+
+    let best=0;
+    let current=0;
+    let previousKey=null;
+
+    sorted.forEach(key=>{
+      const day=days?.[key];
+
+      if(previousKey){
+        const previous=new Date(previousKey+'T12:00:00');
+        const next=new Date(key+'T12:00:00');
+        const diff=Math.round((next-previous)/86400000);
+        if(diff!==1) current=0;
+      }
+
+      if(day && Number(day.distraction||0)===0){
+        current+=1;
+        best=Math.max(best,current);
+      }else{
+        current=0;
+      }
+
+      previousKey=key;
+    });
+
+    return best;
+  }
+
+  function addDayKey(key,amount=1){
+    const date=new Date(key+'T12:00:00');
+    date.setDate(date.getDate()+Number(amount||0));
+    const pad=value=>String(value).padStart(2,'0');
+    return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate());
+  }
+
+  function streakFreezeState({
+    days={},
+    frozenDays=[],
+    today,
+    meetsGoal,
+    rewardEvery=7,
+    maxFreezes=2
+  }={}){
+    if(!today || typeof meetsGoal!=='function'){
+      return {
+        streak:0,
+        freezes:0,
+        toward:0,
+        best:0,
+        frozenDays:Array.isArray(frozenDays)?[...frozenDays]:[]
+      };
+    }
+
+    const frozenSet=new Set(Array.isArray(frozenDays)?frozenDays:[]);
+    const known=[...new Set([
+      ...Object.keys(days||{}),
+      ...frozenSet
+    ])]
+      .filter(key=>/^\d{4}-\d{2}-\d{2}$/.test(key) && key<=today)
+      .sort();
+
+    const first=known.find(key=>meetsGoal(key) || frozenSet.has(key));
+    if(!first){
+      return {
+        streak:0,
+        freezes:0,
+        toward:0,
+        best:0,
+        frozenDays:[...frozenSet].sort()
+      };
+    }
+
+    let key=first;
+    let streak=0;
+    let freezes=0;
+    let toward=0;
+    let best=0;
+
+    while(key<=today){
+      const reached=Boolean(meetsGoal(key));
+      const alreadyFrozen=frozenSet.has(key);
+
+      if(reached){
+        streak+=1;
+        toward+=1;
+
+        if(toward>=rewardEvery){
+          toward=0;
+          freezes=Math.min(maxFreezes,freezes+1);
+        }
+      }else if(alreadyFrozen){
+        if(streak>0) freezes=Math.max(0,freezes-1);
+      }else if(key!==today){
+        if(streak>0 && freezes>0){
+          freezes-=1;
+          frozenSet.add(key);
+        }else{
+          streak=0;
+          toward=0;
+        }
+      }
+
+      best=Math.max(best,streak);
+      key=addDayKey(key,1);
+    }
+
+    return {
+      streak,
+      freezes:Math.min(maxFreezes,freezes),
+      toward,
+      best,
+      frozenDays:[...frozenSet].sort()
+    };
+  }
+
+  window.ProductivityGamificationCore={
+    xpRequiredForLevel,
+    xpFromWork,
+    xpFromTodos,
+    totalXP,
+    levelInfo,
+    rankForLevel,
+    countUnlockedBadges,
+    unlockedBadgeMap,
+    nextBadgeProgress,
+    bestStreak,
+    bestCleanStreak,
+    streakFreezeState
+  };
+})();
+
+/* ===== assets/js/modules/tree-service.js ===== */
+(() => {
+  'use strict';
+
+  function pickSpecies(pool=[]){
+    if(!Array.isArray(pool) || !pool.length){
+      return {name:'Filiz',emoji:'🌱'};
+    }
+
+    let index;
+
+    if(
+      typeof crypto!=='undefined' &&
+      typeof crypto.getRandomValues==='function'
+    ){
+      const value=new Uint32Array(1);
+      crypto.getRandomValues(value);
+      index=value[0] % pool.length;
+    }else{
+      index=Math.floor(Math.random()*pool.length);
+    }
+
+    return pool[index];
+  }
+
+  function ensureTreeState(state){
+    if(!Array.isArray(state.collection)) state.collection=[];
+    state.treeProgress=Math.max(0,Number(state.treeProgress)||0);
+    state.treeNumber=Math.max(1,Number(state.treeNumber)||1);
+    return state;
+  }
+
+  function completeTree(state,{
+    pool=[],
+    pick=pickSpecies,
+    now=()=>new Date().toISOString()
+  }={}){
+    ensureTreeState(state);
+
+    const species=pick(pool);
+    state.collection.push({
+      species:species.name,
+      emoji:species.emoji,
+      treeNumber:state.treeNumber,
+      completedAt:now()
+    });
+    state.treeNumber+=1;
+
+    return species;
+  }
+
+  function addGrowth(state,amount,{
+    goal=140,
+    pool=[],
+    pick=pickSpecies,
+    now=()=>new Date().toISOString()
+  }={}){
+    ensureTreeState(state);
+
+    const growth=Math.max(0,Number(amount)||0);
+    const safeGoal=Math.max(1,Number(goal)||140);
+    if(growth<=0) return [];
+
+    state.treeProgress+=growth;
+    const completed=[];
+
+    while(state.treeProgress>=safeGoal){
+      state.treeProgress-=safeGoal;
+      completed.push(completeTree(state,{pool,pick,now}));
+    }
+
+    return completed;
+  }
+
+  function removeGrowth(state,amount,{goal=140}={}){
+    ensureTreeState(state);
+
+    let remaining=Math.max(0,Number(amount)||0);
+    const safeGoal=Math.max(1,Number(goal)||140);
+    if(remaining<=0) return 0;
+
+    const totalAvailable=state.treeProgress+state.collection.length*safeGoal;
+    remaining=Math.min(remaining,totalAvailable);
+    const original=remaining;
+
+    while(remaining>state.treeProgress+1e-9 && state.collection.length){
+      remaining-=state.treeProgress;
+      state.treeProgress=0;
+      state.collection.pop();
+      state.treeNumber=Math.max(1,state.treeNumber-1);
+      state.treeProgress=safeGoal;
+    }
+
+    state.treeProgress=Math.max(0,state.treeProgress-remaining);
+    if(state.treeProgress>=safeGoal){
+      state.treeProgress%=safeGoal;
+    }
+
+    return original;
+  }
+
+  window.ProductivityTreeService={
+    pickSpecies,
+    completeTree,
+    addGrowth,
+    removeGrowth
+  };
+})();
+
 /* ===== assets/js/app-main.js ===== */
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
@@ -2283,8 +2670,10 @@
   const SessionRepositoryFactory=window.ProductivitySessionRepository;
   const TaskRepositoryFactory=window.ProductivityTaskRepository;
   const EventRepositoryFactory=window.ProductivityEventRepository;
+  const GamificationCore=window.ProductivityGamificationCore;
+  const TreeService=window.ProductivityTreeService;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -2293,7 +2682,9 @@
       !TimerControllerFactory ? 'TimerController' : null,
       !SessionRepositoryFactory ? 'SessionRepository' : null,
       !TaskRepositoryFactory ? 'TaskRepository' : null,
-      !EventRepositoryFactory ? 'EventRepository' : null
+      !EventRepositoryFactory ? 'EventRepository' : null,
+      !GamificationCore ? 'GamificationCore' : null,
+      !TreeService ? 'TreeService' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -3116,81 +3507,33 @@
   function activeDayKeys(){ return Object.keys(data.days).filter(k=> data.days[k].workSeconds>0).sort(); }
 
   function computeBestStreak(){
-    const keys = activeDayKeys();
-    if(keys.length===0) return 0;
-    let best=1, cur=1;
-    for(let i=1;i<keys.length;i++){
-      const diffDays = Math.round((new Date(keys[i]) - new Date(keys[i-1]))/86400000);
-      if(diffDays===1){ cur+=1; best=Math.max(best,cur); } else if(diffDays>1){ cur=1; }
-    }
-    return best;
+    return GamificationCore.bestStreak(activeDayKeys());
   }
 
   // Bugün henüz bitmediği için sayılmaz — bir günün "temiz" sayılması ancak gün tamamlandıktan sonra olur
   function computeBestCleanStreak(){
-    const keys = activeDayKeys().filter(k=> k !== todayKey());
-    let best=0, cur=0, prevKey=null;
-    keys.forEach(k=>{
-      const d = data.days[k];
-      if(prevKey){
-        const diffDays = Math.round((new Date(k) - new Date(prevKey))/86400000);
-        if(diffDays!==1) cur=0;
-      }
-      if(d.distraction===0){ cur+=1; best=Math.max(best,cur); } else { cur=0; }
-      prevKey=k;
+    return GamificationCore.bestCleanStreak({
+      keys:activeDayKeys(),
+      days:data.days,
+      today:todayKey()
     });
-    return best;
   }
 
   // Seri + dondurma sistemi geçmiş günlerden deterministik olarak yeniden hesaplanır.
   function computeStreakFreezeState(){
     if(!Array.isArray(data.frozenDays)) data.frozenDays=[];
-    const frozenSet=new Set(data.frozenDays);
-    const today=todayKey();
 
-    const known=[...new Set([
-      ...Object.keys(data.days||{}),
-      ...data.frozenDays
-    ])].filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k) && k<=today).sort();
+    const state=GamificationCore.streakFreezeState({
+      days:data.days,
+      frozenDays:data.frozenDays,
+      today:todayKey(),
+      meetsGoal:key=>dayMeetsGoal(key),
+      rewardEvery:7,
+      maxFreezes:2
+    });
 
-    const first=known.find(k=>dayMeetsGoal(k) || frozenSet.has(k));
-    if(!first) return {streak:0,freezes:0,toward:0,best:0};
-
-    let cursor=new Date(first+'T12:00:00');
-    const end=new Date(today+'T12:00:00');
-    let streak=0, freezes=0, toward=0, best=0;
-
-    while(cursor<=end){
-      const key=dateKey(cursor);
-      const reached=dayMeetsGoal(key);
-      const alreadyFrozen=frozenSet.has(key);
-
-      if(reached){
-        streak+=1;
-        toward+=1;
-        if(toward>=7){
-          toward=0;
-          freezes=Math.min(2,freezes+1);
-        }
-      }else if(alreadyFrozen){
-        if(streak>0) freezes=Math.max(0,freezes-1);
-      }else if(key!==today){
-        if(streak>0 && freezes>0){
-          freezes-=1;
-          frozenSet.add(key);
-          data.frozenDays.push(key);
-        }else{
-          streak=0;
-          toward=0;
-        }
-      }
-
-      best=Math.max(best,streak);
-      cursor=addDays(cursor,1);
-    }
-
-    data.frozenDays=[...new Set(data.frozenDays)].sort();
-    return {streak,freezes:Math.min(2,freezes),toward,best};
+    data.frozenDays=state.frozenDays;
+    return state;
   }
 
   function computeGoalStreak(){
@@ -3277,22 +3620,36 @@
   }
 
   // ---------- Zorlaşan seviye eğrisi (çalışma süresi + görev tamamlama) ----------
-  function xpRequiredForLevel(level){ return LEVEL_BASE_XP + (level-1)*LEVEL_GROWTH; }
-  function xpFromWork(){ return Math.floor(totalWorkSecondsAll()/60) * XP_PER_WORK_MIN; }
-  function xpFromTodos(){ return (data.totalTodosCompleted||0) * XP_PER_TODO; }
-  function getTotalXP(){ return xpFromWork() + xpFromTodos(); }
+  function xpRequiredForLevel(level){
+    return GamificationCore.xpRequiredForLevel(level,{
+      base:LEVEL_BASE_XP,
+      growth:LEVEL_GROWTH
+    });
+  }
+  function xpFromWork(){
+    return GamificationCore.xpFromWork(totalWorkSecondsAll(),XP_PER_WORK_MIN);
+  }
+  function xpFromTodos(){
+    return GamificationCore.xpFromTodos(data.totalTodosCompleted||0,XP_PER_TODO);
+  }
+  function getTotalXP(){
+    return GamificationCore.totalXP({
+      workSeconds:totalWorkSecondsAll(),
+      totalTodosCompleted:data.totalTodosCompleted||0,
+      xpPerWorkMin:XP_PER_WORK_MIN,
+      xpPerTodo:XP_PER_TODO
+    });
+  }
   function getLevelInfo(){
-    let totalXP = getTotalXP();
-    let level = 1, req = xpRequiredForLevel(1);
-    while(totalXP >= req){
-      totalXP -= req;
-      level += 1;
-      req = xpRequiredForLevel(level);
-    }
-    return { level, xpInLevel: totalXP, xpNeeded: req };
+    return GamificationCore.levelInfo(getTotalXP(),{
+      base:LEVEL_BASE_XP,
+      growth:LEVEL_GROWTH
+    });
   }
   function getLevel(){ return getLevelInfo().level; }
-  function getRank(level){ return RANKS[Math.min(level-1, RANKS.length-1)]; }
+  function getRank(level){
+    return GamificationCore.rankForLevel(level,RANKS);
+  }
   function getGrowthStage(progress){
     let s = GROWTH_STAGES[0];
     for(const st of GROWTH_STAGES){ if(progress >= st.min) s = st; }
@@ -3330,47 +3687,15 @@
   const TOTAL_BADGE_COUNT = BADGE_CATEGORIES.reduce((s,c)=>s+c.thresholds.length,0);
 
   function countUnlockedBadges(){
-    let n=0;
-    BADGE_CATEGORIES.forEach(cat=>{
-      const v = cat.getValue();
-      if(v===null || v===undefined) return;
-      cat.thresholds.forEach(t=>{ if(v>=t) n++; });
-    });
-    return n;
+    return GamificationCore.countUnlockedBadges(BADGE_CATEGORIES);
   }
 
   function getUnlockedBadgeMap(){
-    const map = new Map();
-    BADGE_CATEGORIES.forEach(cat=>{
-      const v = cat.getValue();
-      if(v===null || v===undefined) return;
-      cat.thresholds.forEach(t=>{ if(v>=t) map.set(cat.title+'|'+t, {icon:cat.icon, label:cat.label(t), category:cat.title}); });
-    });
-    return map;
+    return GamificationCore.unlockedBadgeMap(BADGE_CATEGORIES);
   }
 
   function getNextBadgeProgress(){
-    const candidates=[];
-    BADGE_CATEGORIES.forEach(cat=>{
-      const value=Number(cat.getValue());
-      if(!Number.isFinite(value)) return;
-      const next=cat.thresholds.find(t=>value<t);
-      if(next===undefined) return;
-      const prev=[...cat.thresholds].filter(t=>t<=value).pop() || 0;
-      const span=Math.max(1,next-prev);
-      const pct=Math.max(0,Math.min(100,((value-prev)/span)*100));
-      candidates.push({
-        icon:cat.icon,
-        category:cat.title,
-        label:cat.label(next),
-        current:value,
-        next,
-        pct
-      });
-    });
-    if(!candidates.length) return null;
-    candidates.sort((a,b)=>b.pct-a.pct || (a.next-a.current)-(b.next-b.current));
-    return candidates[0];
+    return GamificationCore.nextBadgeProgress(BADGE_CATEGORIES);
   }
 
   function renderNextBadgeProgress(){
@@ -4307,66 +4632,30 @@
   setInterval(ambientSpark, 5000);
 
   function randomSpecies(){
-    if(!SPECIES_POOL.length) return {name:'Filiz',emoji:'🌱'};
-    let index;
-    if(typeof crypto!=='undefined' && typeof crypto.getRandomValues==='function'){
-      const value=new Uint32Array(1);
-      crypto.getRandomValues(value);
-      index=value[0] % SPECIES_POOL.length;
-    }else{
-      index=Math.floor(Math.random()*SPECIES_POOL.length);
-    }
-    return SPECIES_POOL[index];
+    return TreeService.pickSpecies(SPECIES_POOL);
   }
 
   function completeTree(){
-    const species = randomSpecies();
-    data.collection.push({
-      species: species.name,
-      emoji: species.emoji,
-      treeNumber: data.treeNumber,
-      completedAt: new Date().toISOString()
+    return TreeService.completeTree(data,{
+      pool:SPECIES_POOL
     });
-    data.treeNumber += 1;
-    return species;
   }
 
   // Ağaç çalışma süresi ve tamamlanan görevlerin ortak katkısıyla büyür.
   // Kalan fazla büyüme puanı bir sonraki ağaca aktarılır (kayıp olmaz).
   function addTreeGrowth(amount){
-    if(!amount || amount <= 0) return [];
-    data.treeProgress += amount;
-    const completed = [];
-    while(data.treeProgress >= TREE_GOAL){
-      data.treeProgress -= TREE_GOAL;
-      completed.push(completeTree());
-    }
-    return completed;
+    return TreeService.addGrowth(data,amount,{
+      goal:TREE_GOAL,
+      pool:SPECIES_POOL
+    });
   }
 
   // Daha önce verilmiş büyüme puanını güvenli biçimde geri alır.
   // Gerekirse en son tamamlanan ağaçları koleksiyondan geri çeker.
   function removeTreeGrowth(amount){
-    let remaining = Math.max(0, Number(amount) || 0);
-    if(remaining <= 0) return 0;
-
-    const totalAvailable = Math.max(0, Number(data.treeProgress || 0)) + (data.collection?.length || 0) * TREE_GOAL;
-    remaining = Math.min(remaining, totalAvailable);
-    const original = remaining;
-
-    while(remaining > Number(data.treeProgress || 0) + 1e-9 && data.collection.length){
-      remaining -= Number(data.treeProgress || 0);
-      data.treeProgress = 0;
-
-      const removedTree = data.collection.pop();
-      data.treeNumber = Math.max(1, Number(data.treeNumber || 1) - 1);
-
-      data.treeProgress = TREE_GOAL;
-    }
-
-    data.treeProgress = Math.max(0, Number(data.treeProgress || 0) - remaining);
-    if(data.treeProgress >= TREE_GOAL) data.treeProgress = data.treeProgress % TREE_GOAL;
-    return original;
+    return TreeService.removeGrowth(data,amount,{
+      goal:TREE_GOAL
+    });
   }
 
   function celebrateTreeCompletions(completedList){
@@ -9259,7 +9548,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -9270,6 +9559,8 @@
         sessionRepository: !!window.ProductivitySessionRepository,
         taskRepository: !!window.ProductivityTaskRepository,
         eventRepository: !!window.ProductivityEventRepository,
+        gamificationCore: !!window.ProductivityGamificationCore,
+        treeService: !!window.ProductivityTreeService,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -10427,6 +10718,80 @@
     test('TaskRepository ve EventRepository modülleri yüklüdür', ()=>{
       equal(Boolean(window.ProductivityTaskRepository),true);
       equal(Boolean(window.ProductivityEventRepository),true);
+    });
+
+
+    test('GamificationCore ve TreeService modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityGamificationCore),true);
+      equal(Boolean(window.ProductivityTreeService),true);
+    });
+
+    test('GamificationCore XP ve level hesabı mevcut kuralla aynıdır', ()=>{
+      const xp=window.ProductivityGamificationCore.totalXP({
+        workSeconds:3600,
+        totalTodosCompleted:2,
+        xpPerWorkMin:2,
+        xpPerTodo:15
+      });
+      equal(xp,150);
+      const info=window.ProductivityGamificationCore.levelInfo(xp,{base:100,growth:30});
+      equal(info.level,2);
+      equal(info.xpInLevel,50);
+      equal(info.xpNeeded,130);
+    });
+
+    test('GamificationCore freeze hesabı kaçırılan günü otomatik korur', ()=>{
+      const days={
+        '2026-11-01':{goal:true},
+        '2026-11-02':{goal:true},
+        '2026-11-03':{goal:true},
+        '2026-11-04':{goal:true},
+        '2026-11-05':{goal:true},
+        '2026-11-06':{goal:true},
+        '2026-11-07':{goal:true},
+        '2026-11-09':{goal:true}
+      };
+      const result=window.ProductivityGamificationCore.streakFreezeState({
+        days,
+        frozenDays:[],
+        today:'2026-11-09',
+        meetsGoal:key=>Boolean(days[key]?.goal),
+        rewardEvery:7,
+        maxFreezes:2
+      });
+      equal(result.streak,8);
+      equal(result.frozenDays.includes('2026-11-08'),true);
+      equal(result.freezes,0);
+    });
+
+    test('TreeService fazla büyümeyi sonraki ağaca aktarır', ()=>{
+      const state={treeProgress:130,treeNumber:1,collection:[]};
+      const completed=window.ProductivityTreeService.addGrowth(state,20,{
+        goal:140,
+        pool:[{name:'Test',emoji:'🌱'}],
+        pick:pool=>pool[0],
+        now:()=> '2026-11-12T00:00:00.000Z'
+      });
+      equal(completed.length,1);
+      equal(state.treeProgress,10);
+      equal(state.collection.length,1);
+      equal(state.treeNumber,2);
+    });
+
+    test('TreeService büyüme geri alırken son ağacı geri çeker', ()=>{
+      const state={
+        treeProgress:10,
+        treeNumber:3,
+        collection:[
+          {species:'A',emoji:'🌱',treeNumber:1},
+          {species:'B',emoji:'🌳',treeNumber:2}
+        ]
+      };
+      const removed=window.ProductivityTreeService.removeGrowth(state,30,{goal:140});
+      equal(removed,30);
+      equal(state.collection.length,1);
+      equal(state.treeNumber,2);
+      equal(state.treeProgress,120);
     });
 
     const passed=results.filter(r=>r.ok).length;
