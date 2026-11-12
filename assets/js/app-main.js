@@ -27,8 +27,9 @@
   const SessionView=window.ProductivitySessionView;
   const FocusView=window.ProductivityFocusView;
   const WorkControlsView=window.ProductivityWorkControlsView;
+  const ModalService=window.ProductivityModalService;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -50,7 +51,8 @@
       !CollectionView ? 'CollectionView' : null,
       !SessionView ? 'SessionView' : null,
       !FocusView ? 'FocusView' : null,
-      !WorkControlsView ? 'WorkControlsView' : null
+      !WorkControlsView ? 'WorkControlsView' : null,
+      !ModalService ? 'ModalService' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -288,55 +290,22 @@
     return Number.isFinite(ms) ? ms : null;
   }
 
-  function askSessionTimeRange(dateKeyValue, currentStart, currentEnd){
-    return new Promise(resolve=>{
-      el.sessionTimeDateLabel.textContent = displayDate(dateKeyValue) + ' tarihindeki oturum';
-      el.sessionTimeStart.value = currentStart || '';
-      el.sessionTimeEnd.value = currentEnd || '';
-      el.sessionTimeError.textContent = '';
-
-      function cleanup(result){
-        modalController.close(el.sessionTimeBackdrop);
-        el.sessionTimeSave.removeEventListener('click', onSave);
-        el.sessionTimeCancel.removeEventListener('click', onCancel);
-        el.sessionTimeClose.removeEventListener('click', onCancel);
-        el.sessionTimeStart.removeEventListener('keydown', onKey);
-        el.sessionTimeEnd.removeEventListener('keydown', onKey);
-        resolve(result);
-      }
-
-      function onSave(){
-        const start = parseClockOnDate(dateKeyValue, el.sessionTimeStart.value);
-        const end = parseClockOnDate(dateKeyValue, el.sessionTimeEnd.value);
-
-        if(start===null || end===null){
-          el.sessionTimeError.textContent = 'Başlangıç ve bitiş saatini seç.';
-          return;
-        }
-        if(end<=start){
-          el.sessionTimeError.textContent = 'Bitiş saati başlangıç saatinden sonra olmalı.';
-          return;
-        }
-        cleanup({start,end});
-      }
-
-      function onCancel(){ cleanup(null); }
-      function onKey(e){
-        if(e.key==='Enter'){ e.preventDefault(); onSave(); }
-        if(e.key==='Escape'){ e.preventDefault(); onCancel(); }
-      }
-
-      el.sessionTimeSave.addEventListener('click', onSave);
-      el.sessionTimeCancel.addEventListener('click', onCancel);
-      el.sessionTimeClose.addEventListener('click', onCancel);
-      el.sessionTimeStart.addEventListener('keydown', onKey);
-      el.sessionTimeEnd.addEventListener('keydown', onKey);
-
-      modalController.open(el.sessionTimeBackdrop,{
-        onCancel,
-        focus:el.sessionTimeStart,
-        select:false
-      });
+  function askSessionTimeRange(dateKeyValue,currentStart,currentEnd){
+    return ModalService.timeRange({
+      controller:modalController,
+      backdrop:el.sessionTimeBackdrop,
+      dateLabel:el.sessionTimeDateLabel,
+      startInput:el.sessionTimeStart,
+      endInput:el.sessionTimeEnd,
+      errorElement:el.sessionTimeError,
+      saveButton:el.sessionTimeSave,
+      cancelButton:el.sessionTimeCancel,
+      closeButton:el.sessionTimeClose,
+      label:displayDate(dateKeyValue)+' tarihindeki oturum',
+      currentStart,
+      currentEnd,
+      parseStart:value=>parseClockOnDate(dateKeyValue,value),
+      parseEnd:value=>parseClockOnDate(dateKeyValue,value)
     });
   }
 
@@ -1399,50 +1368,10 @@
   }
 
   function confirmDestructiveCloudReplace(risk){
-    if(!risk?.risky) return Promise.resolve(true);
-
-    const fmt=x=>`Oturum ${x.sessions} · Görev ${x.tasks} · Etkinlik ${x.events} · Gün ${x.days}`;
-
-    return new Promise(resolve=>{
-      const backdrop=document.createElement('div');
-      backdrop.className='modal-backdrop cloud-risk-backdrop show';
-      backdrop.innerHTML=`
-        <div class="modal cloud-risk-modal" role="dialog" aria-modal="true" aria-labelledby="cloudRiskTitle">
-          <div class="modal-header">
-            <div>
-              <h3 id="cloudRiskTitle">⚠️ Olası veri kaybı engellendi</h3>
-              <p class="muted">Buluttaki kayıt daha yeni görünüyor ancak bu cihazdaki veriden belirgin biçimde daha az içerik taşıyor.</p>
-            </div>
-          </div>
-
-          <div class="cloud-risk-compare">
-            <div class="cloud-risk-card">
-              <b>Bu cihaz</b>
-              <span>${escapeHtml(fmt(risk.local))}</span>
-            </div>
-            <div class="cloud-risk-card">
-              <b>Bulut</b>
-              <span>${escapeHtml(fmt(risk.remote))}</span>
-            </div>
-          </div>
-
-          <p class="cloud-risk-note">Otomatik değiştirme durduruldu. Güvenli seçenek bu cihazdaki veriyi korumaktır.</p>
-
-          <div class="cloud-risk-actions">
-            <button type="button" class="btn-secondary" data-action="keep-local">Bu cihazdaki veriyi koru</button>
-            <button type="button" class="btn-danger" data-action="use-cloud">Yine de bulutu kullan</button>
-          </div>
-        </div>`;
-
-      document.body.appendChild(backdrop);
-
-      const finish=value=>{
-        backdrop.remove();
-        resolve(value);
-      };
-
-      backdrop.querySelector('[data-action="keep-local"]').addEventListener('click',()=>finish(false));
-      backdrop.querySelector('[data-action="use-cloud"]').addEventListener('click',()=>finish(true));
+    return ModalService.destructiveRisk({
+      document,
+      risk,
+      escapeHtml
     });
   }
 
@@ -1711,89 +1640,45 @@
   }
 
   function askLongSessionChoice(elapsedMs){
-    return new Promise(resolve=>{
-      el.confirmText.textContent =
-        'Bu oturum yaklaşık '+formatLongElapsed(elapsedMs)+' boyunca açık görünüyor. Hâlâ çalışıyor musun?';
-
-      el.confirmOk.textContent = 'Evet, devam ediyorum';
-      el.confirmOk.classList.remove('danger');
-      el.confirmOk.classList.add('primary');
-
-      el.confirmAlt.textContent = 'Hayır, bıraktım';
-      el.confirmAlt.style.display = '';
-
-      const oldCancelDisplay = el.confirmCancel.style.display;
-      el.confirmCancel.style.display = 'none';
-
-      function cleanup(result){
-        modalController.close(el.confirmBackdrop);
-        el.confirmAlt.style.display = 'none';
-        el.confirmCancel.style.display = oldCancelDisplay;
-        el.confirmOk.removeEventListener('click', onContinue);
-        el.confirmAlt.removeEventListener('click', onStopped);
-        resolve(result);
-      }
-      function onContinue(){ cleanup('continue'); }
-      function onStopped(){ cleanup('stopped'); }
-
-      el.confirmOk.addEventListener('click', onContinue);
-      el.confirmAlt.addEventListener('click', onStopped);
-      modalController.open(el.confirmBackdrop,{onCancel:()=>{},focus:el.confirmOk});
+    return ModalService.choice({
+      controller:modalController,
+      backdrop:el.confirmBackdrop,
+      textElement:el.confirmText,
+      okButton:el.confirmOk,
+      altButton:el.confirmAlt,
+      cancelButton:el.confirmCancel,
+      message:'Bu oturum yaklaşık '+formatLongElapsed(elapsedMs)+' boyunca açık görünüyor. Hâlâ çalışıyor musun?',
+      okLabel:'Evet, devam ediyorum',
+      okValue:'continue',
+      okDanger:false,
+      altLabel:'Hayır, bıraktım',
+      altValue:'stopped',
+      showAlt:true,
+      showCancel:false,
+      focus:'ok',
+      backdropCancel:false
     });
   }
 
-  function askStoppedDateTime(minMs, maxMs){
-    return new Promise(resolve=>{
-      const oldType = el.promptInput.type;
-      const oldMaxLength = el.promptInput.maxLength;
-      const oldMin = el.promptInput.min;
-      const oldMax = el.promptInput.max;
-
-      el.promptLabel.textContent = 'Çalışmayı ne zaman bıraktın?';
-      el.promptInput.type = 'datetime-local';
-      el.promptInput.removeAttribute('maxlength');
-      el.promptInput.min = formatLocalDateTimeInput(minMs);
-      el.promptInput.max = formatLocalDateTimeInput(maxMs);
-
-      // Varsayılan olarak son güvenilir kayıttan 30 dakika sonrasını öner;
-      // hiçbir zaman "şimdi"yi geçme.
-      const suggested = Math.min(maxMs, minMs + 30*60*1000);
-      el.promptInput.value = formatLocalDateTimeInput(suggested);
-
-      function cleanup(result){
-        modalController.close(el.promptBackdrop);
-        el.promptOk.removeEventListener('click', onOk);
-        el.promptCancel.removeEventListener('click', onCancel);
-        el.promptInput.removeEventListener('keydown', onKey);
-
-        el.promptInput.type = oldType || 'text';
-        if(oldMaxLength >= 0) el.promptInput.maxLength = oldMaxLength;
-        else el.promptInput.removeAttribute('maxlength');
-
-        if(oldMin) el.promptInput.min = oldMin; else el.promptInput.removeAttribute('min');
-        if(oldMax) el.promptInput.max = oldMax; else el.promptInput.removeAttribute('max');
-
-        resolve(result);
-      }
-
-      function onOk(){
-        const parsed = parseLocalDateTimeInput(el.promptInput.value);
-        if(!Number.isFinite(parsed) || parsed < minMs || parsed > maxMs){
-          showToast('Lütfen son kesin kayıt ile şu an arasında geçerli bir tarih/saat seç.', true);
-          return;
-        }
-        cleanup(parsed);
-      }
-      function onCancel(){ cleanup(null); }
-      function onKey(e){
-        if(e.key==='Enter'){ e.preventDefault(); onOk(); }
-        if(e.key==='Escape'){ e.preventDefault(); onCancel(); }
-      }
-
-      el.promptOk.addEventListener('click', onOk);
-      el.promptCancel.addEventListener('click', onCancel);
-      el.promptInput.addEventListener('keydown', onKey);
-      modalController.open(el.promptBackdrop,{onCancel,focus:el.promptInput,select:false});
+  function askStoppedDateTime(minMs,maxMs){
+    return ModalService.dateTimePrompt({
+      controller:modalController,
+      backdrop:el.promptBackdrop,
+      labelElement:el.promptLabel,
+      input:el.promptInput,
+      okButton:el.promptOk,
+      cancelButton:el.promptCancel,
+      label:'Çalışmayı ne zaman bıraktın?',
+      minMs,
+      maxMs,
+      initialMs:Math.min(maxMs,minMs+30*60*1000),
+      formatValue:formatLocalDateTimeInput,
+      parseValue:parseLocalDateTimeInput,
+      validate:value=>Number.isFinite(value) && value>=minMs && value<=maxMs,
+      onInvalid:()=>showToast(
+        'Lütfen son kesin kayıt ile şu an arasında geçerli bir tarih/saat seç.',
+        true
+      )
     });
   }
 
@@ -4304,193 +4189,72 @@
 
 
   // ---------- Merkezi modal yöneticisi ----------
-  const modalController = (() => {
-    const stack = [];
-    const cancelHandlers = new WeakMap();
-    const previousFocus = new WeakMap();
-
-    function focusables(backdrop){
-      if(!backdrop) return [];
-      return [...backdrop.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-      )].filter(node => node.offsetParent !== null && getComputedStyle(node).visibility !== 'hidden');
-    }
-
-    function syncBody(){
-      document.body.classList.toggle('app-modal-open', stack.length > 0);
-    }
-
-    function open(backdrop, options={}){
-      if(!backdrop) return;
-      const existing = stack.indexOf(backdrop);
-      if(existing >= 0) stack.splice(existing,1);
-
-      previousFocus.set(backdrop, document.activeElement);
-      cancelHandlers.set(backdrop, typeof options.onCancel === 'function' ? options.onCancel : null);
-
-      backdrop.setAttribute('aria-hidden','false');
-      const box=backdrop.querySelector('.modal-box');
-      if(box){
-        box.setAttribute('role','dialog');
-        box.setAttribute('aria-modal','true');
-      }
-
-      backdrop.classList.add('show');
-      stack.push(backdrop);
-      syncBody();
-
-      setTimeout(()=>{
-        const target = options.focus || focusables(backdrop)[0] || box;
-        if(target){
-          if(target===box && !box.hasAttribute('tabindex')) box.setAttribute('tabindex','-1');
-          target.focus?.();
-          if(options.select && typeof target.select === 'function') target.select();
-        }
-      }, 30);
-    }
-
-    function close(backdrop, options={}){
-      if(!backdrop) return;
-      backdrop.classList.remove('show');
-      backdrop.setAttribute('aria-hidden','true');
-      cancelHandlers.delete(backdrop);
-
-      const index=stack.lastIndexOf(backdrop);
-      if(index>=0) stack.splice(index,1);
-      syncBody();
-
-      if(options.restoreFocus !== false){
-        const prior=previousFocus.get(backdrop);
-        if(prior && prior.isConnected) setTimeout(()=>prior.focus?.(),0);
-      }
-      previousFocus.delete(backdrop);
-    }
-
-    function top(){ return stack[stack.length-1] || null; }
-
-    function cancelTop(){
-      const backdrop=top();
-      if(!backdrop) return false;
-      const cancel=cancelHandlers.get(backdrop);
-      if(typeof cancel==='function'){
-        cancel();
-        return true;
-      }
-      return false;
-    }
-
-    document.addEventListener('keydown', e=>{
-      const backdrop=top();
-      if(!backdrop) return;
-
-      if(e.key==='Escape'){
-        if(cancelTop()){
-          e.preventDefault();
-          e.stopPropagation();
-        }
-        return;
-      }
-
-      if(e.key==='Tab'){
-        const items=focusables(backdrop);
-        if(!items.length) return;
-        const first=items[0], last=items[items.length-1];
-        if(e.shiftKey && document.activeElement===first){
-          e.preventDefault(); last.focus();
-        }else if(!e.shiftKey && document.activeElement===last){
-          e.preventDefault(); first.focus();
-        }
-      }
-    }, true);
-
-    document.addEventListener('click', e=>{
-      const backdrop=top();
-      if(backdrop && e.target===backdrop){
-        const cancel=cancelHandlers.get(backdrop);
-        if(typeof cancel==='function') cancel();
-      }
-    });
-
-    return {open, close, top, cancelTop};
-  })();
+  const modalController=ModalService.createController({
+    document,
+    getComputedStyle,
+    setTimeout
+  });
 
   // ---------- Özel modallar (onay / metin girişi) ----------
-  function askConfirm(message, okLabel='Evet', danger=true){
-    return new Promise(resolve=>{
-      el.confirmText.textContent = message;
-      el.confirmOk.textContent = okLabel;
-      el.confirmOk.classList.toggle('danger', danger);
-      el.confirmOk.classList.toggle('primary', !danger);
-      el.confirmAlt.style.display = 'none';
-      function cleanup(result){
-        modalController.close(el.confirmBackdrop);
-        el.confirmOk.removeEventListener('click', onOk);
-        el.confirmCancel.removeEventListener('click', onCancel);
-        resolve(result);
-      }
-      function onOk(){ cleanup(true); }
-      function onCancel(){ cleanup(false); }
-      el.confirmOk.addEventListener('click', onOk);
-      el.confirmCancel.addEventListener('click', onCancel);
-      modalController.open(el.confirmBackdrop,{onCancel,focus:el.confirmCancel});
+  function askConfirm(message,okLabel='Evet',danger=true){
+    return ModalService.choice({
+      controller:modalController,
+      backdrop:el.confirmBackdrop,
+      textElement:el.confirmText,
+      okButton:el.confirmOk,
+      altButton:el.confirmAlt,
+      cancelButton:el.confirmCancel,
+      message,
+      okLabel,
+      okValue:true,
+      okDanger:danger,
+      showAlt:false,
+      cancelValue:false,
+      showCancel:true,
+      focus:'cancel'
     });
   }
 
   function askSessionDeleteChoice(){
-    return new Promise(resolve=>{
-      el.confirmText.textContent = 'Bu oturum için ne yapmak istiyorsun? “Sadece Gizle” istatistiklere, XP’ye ve ağaç ilerlemesine dokunmaz.';
-      el.confirmOk.textContent = 'Tamamen Sil';
-      el.confirmOk.classList.add('danger');
-      el.confirmOk.classList.remove('primary');
-      el.confirmAlt.textContent = 'Sadece Gizle';
-      el.confirmAlt.style.display = '';
-      function cleanup(result){
-        modalController.close(el.confirmBackdrop);
-        el.confirmAlt.style.display = 'none';
-        el.confirmOk.removeEventListener('click', onDelete);
-        el.confirmAlt.removeEventListener('click', onHide);
-        el.confirmCancel.removeEventListener('click', onCancel);
-        resolve(result);
-      }
-      function onDelete(){ cleanup('delete'); }
-      function onHide(){ cleanup('hide'); }
-      function onCancel(){ cleanup('cancel'); }
-
-      el.confirmOk.addEventListener('click', onDelete);
-      el.confirmAlt.addEventListener('click', onHide);
-      el.confirmCancel.addEventListener('click', onCancel);
-      modalController.open(el.confirmBackdrop,{onCancel,focus:el.confirmCancel});
+    return ModalService.choice({
+      controller:modalController,
+      backdrop:el.confirmBackdrop,
+      textElement:el.confirmText,
+      okButton:el.confirmOk,
+      altButton:el.confirmAlt,
+      cancelButton:el.confirmCancel,
+      message:'Bu oturum için ne yapmak istiyorsun? “Sadece Gizle” istatistiklere, XP’ye ve ağaç ilerlemesine dokunmaz.',
+      okLabel:'Tamamen Sil',
+      okValue:'delete',
+      okDanger:true,
+      altLabel:'Sadece Gizle',
+      altValue:'hide',
+      showAlt:true,
+      cancelValue:'cancel',
+      showCancel:true,
+      focus:'cancel'
     });
   }
 
   function askRecurringEditChoice(kind='öğe'){
-    return new Promise(resolve=>{
-      el.confirmText.textContent = 'Bu '+kind+' tekrarlanan bir serinin parçası. Değişiklik hangi kayıtlara uygulansın?';
-      el.confirmOk.textContent = 'Tüm Seri';
-      el.confirmOk.classList.remove('danger');
-      el.confirmOk.classList.add('primary');
-      el.confirmAlt.textContent = 'Bu + Sonrakiler';
-      el.confirmAlt.style.display = '';
-
-      function cleanup(result){
-        modalController.close(el.confirmBackdrop);
-        el.confirmAlt.style.display = 'none';
-        el.confirmOk.removeEventListener('click', onAll);
-        el.confirmAlt.removeEventListener('click', onFuture);
-        el.confirmCancel.removeEventListener('click', onSingle);
-        resolve(result);
-      }
-      function onAll(){ cleanup('all'); }
-      function onFuture(){ cleanup('future'); }
-      function onSingle(){ cleanup('single'); }
-
-      el.confirmOk.addEventListener('click', onAll);
-      el.confirmAlt.addEventListener('click', onFuture);
-      el.confirmCancel.addEventListener('click', onSingle);
-      el.confirmCancel.textContent = 'Yalnızca Bu';
-      modalController.open(el.confirmBackdrop,{onCancel:onSingle,focus:el.confirmCancel});
-    }).finally(()=>{
-      el.confirmCancel.textContent = 'Vazgeç';
+    return ModalService.choice({
+      controller:modalController,
+      backdrop:el.confirmBackdrop,
+      textElement:el.confirmText,
+      okButton:el.confirmOk,
+      altButton:el.confirmAlt,
+      cancelButton:el.confirmCancel,
+      message:'Bu '+kind+' tekrarlanan bir serinin parçası. Değişiklik hangi kayıtlara uygulansın?',
+      okLabel:'Tüm Seri',
+      okValue:'all',
+      okDanger:false,
+      altLabel:'Bu + Sonrakiler',
+      altValue:'future',
+      showAlt:true,
+      cancelLabel:'Yalnızca Bu',
+      cancelValue:'single',
+      showCancel:true,
+      focus:'cancel'
     });
   }
 
@@ -4505,89 +4269,53 @@
   }
 
   function askRecurringDeleteChoice(kind='öğe'){
-    return new Promise(resolve=>{
-      el.confirmText.textContent = 'Bu '+kind+' tekrarlanan bir serinin parçası. Yalnızca bunu mu, yoksa bunu ve sonraki tekrarları mı silmek istiyorsun?';
-      el.confirmOk.textContent = 'Bu + Sonrakiler';
-      el.confirmOk.classList.add('danger');
-      el.confirmOk.classList.remove('primary');
-      el.confirmAlt.textContent = 'Yalnızca Bu';
-      el.confirmAlt.style.display = '';
-
-      function cleanup(result){
-        modalController.close(el.confirmBackdrop);
-        el.confirmAlt.style.display = 'none';
-        el.confirmOk.removeEventListener('click', onFuture);
-        el.confirmAlt.removeEventListener('click', onSingle);
-        el.confirmCancel.removeEventListener('click', onCancel);
-        resolve(result);
-      }
-      function onFuture(){ cleanup('future'); }
-      function onSingle(){ cleanup('single'); }
-      function onCancel(){ cleanup('cancel'); }
-
-      el.confirmOk.addEventListener('click', onFuture);
-      el.confirmAlt.addEventListener('click', onSingle);
-      el.confirmCancel.addEventListener('click', onCancel);
-      modalController.open(el.confirmBackdrop,{onCancel,focus:el.confirmCancel});
+    return ModalService.choice({
+      controller:modalController,
+      backdrop:el.confirmBackdrop,
+      textElement:el.confirmText,
+      okButton:el.confirmOk,
+      altButton:el.confirmAlt,
+      cancelButton:el.confirmCancel,
+      message:'Bu '+kind+' tekrarlanan bir serinin parçası. Yalnızca bunu mu, yoksa bunu ve sonraki tekrarları mı silmek istiyorsun?',
+      okLabel:'Bu + Sonrakiler',
+      okValue:'future',
+      okDanger:true,
+      altLabel:'Yalnızca Bu',
+      altValue:'single',
+      showAlt:true,
+      cancelValue:'cancel',
+      showCancel:true,
+      focus:'cancel'
     });
   }
 
-  function askPrompt(label, defaultValue){
-    return new Promise(resolve=>{
-      el.promptLabel.textContent = label;
-      el.promptInput.value = defaultValue || '';
-      function cleanup(result){
-        modalController.close(el.promptBackdrop);
-        el.promptOk.removeEventListener('click', onOk);
-        el.promptCancel.removeEventListener('click', onCancel);
-        el.promptInput.removeEventListener('keydown', onKey);
-        resolve(result);
-      }
-      function onOk(){ cleanup(el.promptInput.value); }
-      function onCancel(){ cleanup(null); }
-      function onKey(e){ if(e.key==='Enter') onOk(); if(e.key==='Escape') onCancel(); }
-      el.promptOk.addEventListener('click', onOk);
-      el.promptCancel.addEventListener('click', onCancel);
-      el.promptInput.addEventListener('keydown', onKey);
-      modalController.open(el.promptBackdrop,{onCancel,focus:el.promptInput,select:true});
+  function askPrompt(label,defaultValue){
+    return ModalService.textPrompt({
+      controller:modalController,
+      backdrop:el.promptBackdrop,
+      labelElement:el.promptLabel,
+      input:el.promptInput,
+      okButton:el.promptOk,
+      cancelButton:el.promptCancel,
+      label,
+      defaultValue,
+      select:true
     });
   }
 
   function askSubject(defaultValue){
-    return new Promise(resolve=>{
-      el.subjectEditLabel.textContent = 'Ne çalışıyorsun?';
-      el.subjectEditInput.value = defaultValue || '';
-      const subjects = data.subjects || [];
-      el.subjectEditChips.innerHTML = subjects.slice(0,8).map(subject =>
-        '<button type="button" class="subject-chip" data-subject="'+escapeHtml(subject)+'">'+escapeHtml(subject)+'</button>'
-      ).join('');
-
-      function cleanup(result){
-        modalController.close(el.subjectEditBackdrop);
-        el.subjectEditSave.removeEventListener('click', onSave);
-        el.subjectEditCancel.removeEventListener('click', onCancel);
-        el.subjectEditInput.removeEventListener('keydown', onKey);
-        el.subjectEditChips.removeEventListener('click', onChip);
-        resolve(result);
-      }
-      function onSave(){ cleanup(el.subjectEditInput.value); }
-      function onCancel(){ cleanup(null); }
-      function onKey(e){
-        if(e.key==='Enter'){ e.preventDefault(); onSave(); }
-        if(e.key==='Escape'){ e.preventDefault(); onCancel(); }
-      }
-      function onChip(e){
-        const chip = e.target.closest('.subject-chip');
-        if(!chip) return;
-        el.subjectEditInput.value = chip.dataset.subject || '';
-        el.subjectEditInput.focus();
-      }
-
-      el.subjectEditSave.addEventListener('click', onSave);
-      el.subjectEditCancel.addEventListener('click', onCancel);
-      el.subjectEditInput.addEventListener('keydown', onKey);
-      el.subjectEditChips.addEventListener('click', onChip);
-      modalController.open(el.subjectEditBackdrop,{onCancel,focus:el.subjectEditInput,select:true});
+    return ModalService.subject({
+      controller:modalController,
+      backdrop:el.subjectEditBackdrop,
+      labelElement:el.subjectEditLabel,
+      input:el.subjectEditInput,
+      chipsElement:el.subjectEditChips,
+      saveButton:el.subjectEditSave,
+      cancelButton:el.subjectEditCancel,
+      label:'Ne çalışıyorsun?',
+      defaultValue,
+      subjects:data.subjects || [],
+      escapeHtml
     });
   }
 
@@ -4728,92 +4456,32 @@
     data.subjects = data.subjects.slice(0, 12);
   }
 
-  function askMinutes(promptText, defaultMinutes, allowNone, showSubject, mode='session', initialSubject=''){
-    return new Promise(resolve=>{
-      const isBreak = mode === 'break';
-      const isDailyGoal = mode === 'dailyGoal';
-      const maxMinutes = isDailyGoal ? Infinity : GOAL_MAX;
-      const presetValues = isBreak ? [5,10,15] : (isDailyGoal ? [30,60,90,120] : [15,25,45,60,90]);
-      let minutes = Math.max(GOAL_MIN, Number(defaultMinutes) || (isBreak ? 5 : 25));
-
-      document.getElementById('goalPromptText').textContent = promptText;
-      el.goalNone.style.display = allowNone ? '' : 'none';
-      el.subjectSection.style.display = showSubject ? 'block' : 'none';
-      if(showSubject){
-        el.subjectInput.value = initialSubject || '';
-        renderSubjectChips();
-      }
-
-      const presetWrap = el.goalBackdrop.querySelector('.goal-presets');
-      presetWrap.innerHTML = presetValues.map(v=>'<button class="goal-chip" data-min="'+v+'">'+v+'</button>').join('');
-      const chips = presetWrap.querySelectorAll('.goal-chip');
-
-      function normalize(value){
-        const n = Math.floor(Number(value));
-        if(!Number.isFinite(n) || n < GOAL_MIN) return GOAL_MIN;
-        return Number.isFinite(maxMinutes) ? Math.min(maxMinutes, n) : n;
-      }
-      function render(){
-        minutes = normalize(minutes);
-        el.goalMinutesDisplay.value = minutes;
-        el.goalMinutesDisplay.removeAttribute('max');
-        if(Number.isFinite(maxMinutes)) el.goalMinutesDisplay.max = String(maxMinutes);
-        chips.forEach(c=> c.classList.toggle('active', parseInt(c.dataset.min,10) === minutes));
-      }
-      function syncFromInput(){
-        if(el.goalMinutesDisplay.value === '') return;
-        minutes = normalize(el.goalMinutesDisplay.value);
-        chips.forEach(c=> c.classList.toggle('active', parseInt(c.dataset.min,10) === minutes));
-      }
-      function onUp(){ syncFromInput(); minutes = normalize(minutes + GOAL_STEP); render(); playNote(660,0,0.05,'sine',0.08); }
-      function onDown(){ syncFromInput(); minutes = normalize(minutes - GOAL_STEP); render(); playNote(500,0,0.05,'sine',0.08); }
-      function onChip(e){ minutes = normalize(e.currentTarget.dataset.min); render(); }
-      function onInput(){ syncFromInput(); }
-      function onInputBlur(){ minutes = normalize(el.goalMinutesDisplay.value); render(); }
-      function onInputKey(e){
-        if(e.key === 'Enter'){ e.preventDefault(); onStart(); }
-        if(e.key === 'Escape'){ e.preventDefault(); onCancel(); }
-      }
-      function onSubjectChip(e){ el.subjectInput.value = e.currentTarget.dataset.subject; }
-      function onStart(){
-        minutes = normalize(el.goalMinutesDisplay.value || minutes);
-        cleanup({ minutes, subject: showSubject ? el.subjectInput.value.trim() : undefined });
-      }
-      function onNone(){ cleanup({ minutes: null, subject: showSubject ? el.subjectInput.value.trim() : undefined }); }
-      function onCancel(){ cleanup(undefined); }
-
-      function cleanup(result){
-        modalController.close(el.goalBackdrop);
-        el.goalUp.removeEventListener('click', onUp);
-        el.goalDown.removeEventListener('click', onDown);
-        el.goalMinutesDisplay.removeEventListener('input', onInput);
-        el.goalMinutesDisplay.removeEventListener('blur', onInputBlur);
-        el.goalMinutesDisplay.removeEventListener('keydown', onInputKey);
-        chips.forEach(c=> c.removeEventListener('click', onChip));
-        el.subjectChips.removeEventListener('click', onSubjectChipDelegate);
-        el.goalStart.removeEventListener('click', onStart);
-        el.goalNone.removeEventListener('click', onNone);
-        el.goalCancel.removeEventListener('click', onCancel);
-        resolve(result);
-      }
-      function onSubjectChipDelegate(e){ const c = e.target.closest('.subject-chip'); if(c) onSubjectChip({currentTarget:c}); }
-
-      render();
-      el.goalUp.addEventListener('click', onUp);
-      el.goalDown.addEventListener('click', onDown);
-      el.goalMinutesDisplay.addEventListener('input', onInput);
-      el.goalMinutesDisplay.addEventListener('blur', onInputBlur);
-      el.goalMinutesDisplay.addEventListener('keydown', onInputKey);
-      chips.forEach(c=> c.addEventListener('click', onChip));
-      el.subjectChips.addEventListener('click', onSubjectChipDelegate);
-      el.goalStart.addEventListener('click', onStart);
-      el.goalNone.addEventListener('click', onNone);
-      el.goalCancel.addEventListener('click', onCancel);
-      modalController.open(el.goalBackdrop,{
-        onCancel,
-        focus:showSubject ? el.subjectInput : el.goalMinutesDisplay,
-        select:!showSubject
-      });
+  function askMinutes(promptText,defaultMinutes,allowNone,showSubject,mode='session',initialSubject=''){
+    return ModalService.minutes({
+      controller:modalController,
+      backdrop:el.goalBackdrop,
+      promptTextElement:document.getElementById('goalPromptText'),
+      noneButton:el.goalNone,
+      subjectSection:el.subjectSection,
+      subjectInput:el.subjectInput,
+      subjectChips:el.subjectChips,
+      minutesInput:el.goalMinutesDisplay,
+      upButton:el.goalUp,
+      downButton:el.goalDown,
+      startButton:el.goalStart,
+      cancelButton:el.goalCancel,
+      presetWrap:el.goalBackdrop.querySelector('.goal-presets'),
+      promptText,
+      defaultMinutes,
+      allowNone,
+      showSubject,
+      mode,
+      initialSubject,
+      goalMin:GOAL_MIN,
+      goalMax:GOAL_MAX,
+      goalStep:GOAL_STEP,
+      renderSubjectChips,
+      playNote
     });
   }
 
@@ -7169,7 +6837,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView || !window.ProductivitySessionView || !window.ProductivityFocusView || !window.ProductivityWorkControlsView){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView || !window.ProductivitySessionView || !window.ProductivityFocusView || !window.ProductivityWorkControlsView || !window.ProductivityModalService){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -7193,6 +6861,7 @@
         sessionView: !!window.ProductivitySessionView,
         focusView: !!window.ProductivityFocusView,
         workControlsView: !!window.ProductivityWorkControlsView,
+        modalService: !!window.ProductivityModalService,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -8664,6 +8333,14 @@
       });
       equal(html.includes('workResumeBtn'),true);
       equal(html.includes('workFinishBtn'),true);
+    });
+
+
+    test('ModalService modülü yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityModalService),true);
+      equal(typeof window.ProductivityModalService.createController,'function');
+      equal(typeof window.ProductivityModalService.choice,'function');
+      equal(typeof window.ProductivityModalService.minutes,'function');
     });
 
     const passed=results.filter(r=>r.ok).length;
