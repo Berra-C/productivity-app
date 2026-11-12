@@ -32,8 +32,11 @@ The generated `app.js` is committed so GitHub Pages can serve the application wi
 15. **View formatters** — shared display formatting and trend markup.
 16. **Summary view** — pure weekly/monthly summary HTML builder.
 17. **Calendar view** — pure month/year/week/agenda HTML builders and overlap layout.
-18. **App main** — composition root, DOM binding and remaining feature orchestration.
-19. **Cloud sync** — optional cloud transport and account synchronization.
+18. **Stats view** — chart, heatmap, subject and session analytics markup.
+19. **Task view** — task filtering, grouping and task-card markup.
+20. **Collection view** — tree progress and collection-grid markup.
+21. **App main** — composition root, DOM binding and remaining feature orchestration.
+22. **Cloud sync** — optional cloud transport and account synchronization.
 
 ## Dependency direction
 
@@ -51,7 +54,7 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 
 ## Next refactor targets
 
-- Continue splitting remaining statistics/chart DOM rendering from the main composition file.
+- Extract session-list rendering and remaining modal/browser interaction clusters from the main composition file.
 
 ## Change log organization
 
