@@ -25,7 +25,8 @@ const declarations = [
   ['CollectionView', 'const CollectionView=window.ProductivityCollectionView;'],
   ['SessionView', 'const SessionView=window.ProductivitySessionView;'],
   ['FocusView', 'const FocusView=window.ProductivityFocusView;'],
-  ['WorkControlsView', 'const WorkControlsView=window.ProductivityWorkControlsView;']
+  ['WorkControlsView', 'const WorkControlsView=window.ProductivityWorkControlsView;'],
+  ['ModalService', 'const ModalService=window.ProductivityModalService;']
 ];
 
 const consumers = [
