@@ -988,6 +988,135 @@
   window.ProductivitySessionRepository={create};
 })();
 
+/* ===== assets/js/modules/task-repository.js ===== */
+(() => {
+  'use strict';
+
+  function create(options={}){
+    const getState=options.getState;
+    if(typeof getState!=='function'){
+      throw new Error('TaskRepository getState gerekli');
+    }
+
+    function list(){
+      const state=getState();
+      if(!Array.isArray(state.tasks)) state.tasks=[];
+      return state.tasks;
+    }
+
+    function byId(id){
+      if(!id) return null;
+      return list().find(task=>task?.id===id) || null;
+    }
+
+    function add(task){
+      if(!task || typeof task!=='object'){
+        throw new Error('TaskRepository geçerli task gerekli');
+      }
+      list().push(task);
+      return task;
+    }
+
+    function removeById(id){
+      const tasks=list();
+      const index=tasks.findIndex(task=>task?.id===id);
+      if(index<0) return null;
+      return tasks.splice(index,1)[0] || null;
+    }
+
+    function forDate(key){
+      return list().filter(task=>task?.dueDate===key);
+    }
+
+    function completed(){
+      return list().filter(task=>Boolean(task?.done));
+    }
+
+    function pending(){
+      return list().filter(task=>!task?.done);
+    }
+
+    function nextSortOrder(){
+      return list().reduce(
+        (max,task)=>Math.max(max,Number(task?.sortOrder)||0),
+        -1
+      )+1;
+    }
+
+    return Object.freeze({
+      all:list,
+      byId,
+      add,
+      removeById,
+      forDate,
+      completed,
+      pending,
+      nextSortOrder
+    });
+  }
+
+  window.ProductivityTaskRepository={create};
+})();
+
+/* ===== assets/js/modules/event-repository.js ===== */
+(() => {
+  'use strict';
+
+  function create(options={}){
+    const getState=options.getState;
+    if(typeof getState!=='function'){
+      throw new Error('EventRepository getState gerekli');
+    }
+
+    function list(){
+      const state=getState();
+      if(!Array.isArray(state.events)) state.events=[];
+      return state.events;
+    }
+
+    function byId(id){
+      if(!id) return null;
+      return list().find(event=>event?.id===id) || null;
+    }
+
+    function add(event){
+      if(!event || typeof event!=='object'){
+        throw new Error('EventRepository geçerli event gerekli');
+      }
+      list().push(event);
+      return event;
+    }
+
+    function removeById(id){
+      const events=list();
+      const index=events.findIndex(event=>event?.id===id);
+      if(index<0) return null;
+      return events.splice(index,1)[0] || null;
+    }
+
+    function startingOn(key){
+      return list().filter(event=>event?.date===key);
+    }
+
+    function recurring(){
+      return list().filter(
+        event=>event?.repeat && event.repeat!=='none'
+      );
+    }
+
+    return Object.freeze({
+      all:list,
+      byId,
+      add,
+      removeById,
+      startingOn,
+      recurring
+    });
+  }
+
+  window.ProductivityEventRepository={create};
+})();
+
 /* ===== assets/js/app-main.js ===== */
 (function(){
   const STORAGE_KEY = 'direncAgaci_v2';
@@ -2152,15 +2281,19 @@
   const TimerService=window.ProductivityTimerService;
   const TimerControllerFactory=window.ProductivityTimerController;
   const SessionRepositoryFactory=window.ProductivitySessionRepository;
+  const TaskRepositoryFactory=window.ProductivityTaskRepository;
+  const EventRepositoryFactory=window.ProductivityEventRepository;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
       !TimerCore ? 'TimerCore' : null,
       !TimerService ? 'TimerService' : null,
       !TimerControllerFactory ? 'TimerController' : null,
-      !SessionRepositoryFactory ? 'SessionRepository' : null
+      !SessionRepositoryFactory ? 'SessionRepository' : null,
+      !TaskRepositoryFactory ? 'TaskRepository' : null,
+      !EventRepositoryFactory ? 'EventRepository' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
@@ -2483,35 +2616,13 @@
     }
   });
 
-  const DataRepository = {
-    tasks:{
-      all:()=>data.tasks,
-      byId:id=>data.tasks.find(item=>item.id===id) || null,
-      add:item=>{ data.tasks.push(item); return item; },
-      removeById(id){
-        const index=data.tasks.findIndex(item=>item.id===id);
-        if(index<0) return null;
-        return data.tasks.splice(index,1)[0] || null;
-      }
-    },
-    events:{
-      all:()=>data.events,
-      byId:id=>data.events.find(item=>item.id===id) || null,
-      add:item=>{ data.events.push(item); return item; },
-      removeById(id){
-        const index=data.events.findIndex(item=>item.id===id);
-        if(index<0) return null;
-        return data.events.splice(index,1)[0] || null;
-      }
-    },
-    days:{
-      byKey:key=>data.days[key] || null,
-      ensure(key){
-        if(!data.days[key]) data.days[key]=emptyDay(data.dailyGoalMinutes||60);
-        return data.days[key];
-      }
-    }
-  };
+  const TaskRepository=TaskRepositoryFactory.create({
+    getState:()=>data
+  });
+
+  const EventRepository=EventRepositoryFactory.create({
+    getState:()=>data
+  });
 
   function ensureTombstones(){
     if(!data.tombstones || typeof data.tombstones!=='object') data.tombstones={sessions:{},tasks:{},events:{}};
@@ -7359,9 +7470,9 @@
       updatedAt: Date.now(),
       doneAt: null,
       xpCounted: false,
-      sortOrder: data.tasks.reduce((m,t)=>Math.max(m,Number(t.sortOrder)||0),-1)+1
+      sortOrder: TaskRepository.nextSortOrder()
     };
-    DataRepository.tasks.add(task);
+    TaskRepository.add(task);
     saveData();
     return task;
   }
@@ -7974,7 +8085,7 @@
     const from=visible.indexOf(draggedTaskId), to=visible.indexOf(over.dataset.taskId);
     if(from<0||to<0) return;
     visible.splice(to,0,visible.splice(from,1)[0]);
-    visible.forEach((id,index)=>{const task=data.tasks.find(t=>t.id===id);if(task) task.sortOrder=index;});
+    visible.forEach((id,index)=>{const task=TaskRepository.byId(id);if(task) task.sortOrder=index;});
     saveData(); renderTaskList();
   });
   el.taskListBody.addEventListener('dragend',()=>{
@@ -8062,7 +8173,7 @@
       createdAt:new Date().toISOString(),
       updatedAt:Date.now()
     };
-    DataRepository.events.add(ev);
+    EventRepository.add(ev);
     return ev;
   }
 
@@ -8151,7 +8262,7 @@
       createdAt:new Date().toISOString(),
       updatedAt:Date.now()
     };
-    DataRepository.events.add(ev);
+    EventRepository.add(ev);
     if(safeRepeat!=='none') generateRecurringEventSeries(ev);
     saveData();
     return ev;
@@ -8172,7 +8283,7 @@
   }
 
   function openEventDetail(id){
-    const ev=data.events.find(item=>item.id===id);
+    const ev=EventRepository.byId(id);
     if(!ev) return;
     openEventDetailId=id;
     el.eventDetailTitle.textContent=ev.title || 'Etkinlik';
@@ -8207,7 +8318,7 @@
     const id=openEventDetailId;
     if(!id) return;
     await editEvent(id);
-    const ev=data.events.find(item=>item.id===id);
+    const ev=EventRepository.byId(id);
     if(ev){
       el.eventDetailTitle.textContent=ev.title;
       el.eventDetailMeta.innerHTML=eventDetailMetaHtml(ev);
@@ -9148,7 +9259,7 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository){
+  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository){
     console.error(
       'Test · Gerekli modüllerden biri yüklenemedi:',
       {
@@ -9157,6 +9268,8 @@
         statePersistence: !!window.ProductivityStatePersistence,
         stateWriter: !!window.ProductivityStateWriter,
         sessionRepository: !!window.ProductivitySessionRepository,
+        taskRepository: !!window.ProductivityTaskRepository,
+        eventRepository: !!window.ProductivityEventRepository,
         timerCore: !!window.ProductivityTimerCore,
         timerService: !!window.ProductivityTimerService,
         timerController: !!window.ProductivityTimerController
@@ -9579,18 +9692,47 @@
       }
     });
 
-    test('DataRepository task ekleme ve silme işlemini kapsüller', ()=>{
+    test('TaskRepository task ekleme ve silme işlemini kapsüller', ()=>{
       const oldData=data;
       try{
         data=freshData();
-        DataRepository.tasks.add({id:'task-test'});
-        equal(DataRepository.tasks.byId('task-test').id,'task-test');
-        equal(DataRepository.tasks.removeById('task-test').id,'task-test');
-        equal(DataRepository.tasks.byId('task-test'),null);
+        TaskRepository.add({id:'task-test',sortOrder:0});
+        equal(TaskRepository.byId('task-test').id,'task-test');
+        equal(TaskRepository.nextSortOrder(),1);
+        equal(TaskRepository.removeById('task-test').id,'task-test');
+        equal(TaskRepository.byId('task-test'),null);
       }finally{
         data=oldData;
       }
     });
+
+    test('TaskRepository tarih bazlı görevleri döndürür', ()=>{
+      const oldData=data;
+      try{
+        data=freshData();
+        TaskRepository.add({id:'t1',dueDate:'2026-11-12'});
+        TaskRepository.add({id:'t2',dueDate:'2026-11-13'});
+        equal(TaskRepository.forDate('2026-11-12').length,1);
+        equal(TaskRepository.forDate('2026-11-12')[0].id,'t1');
+      }finally{
+        data=oldData;
+      }
+    });
+
+    test('EventRepository event ekleme ve silme işlemini kapsüller', ()=>{
+      const oldData=data;
+      try{
+        data=freshData();
+        EventRepository.add({id:'event-test',date:'2026-11-12'});
+        equal(EventRepository.byId('event-test').id,'event-test');
+        equal(EventRepository.startingOn('2026-11-12').length,1);
+        equal(EventRepository.removeById('event-test').id,'event-test');
+        equal(EventRepository.byId('event-test'),null);
+      }finally{
+        data=oldData;
+      }
+    });
+
 
     test('Storage repository primary meta bilgisini tek kapıdan okur', ()=>{
       const original=AppStorageRepository.readPrimaryMeta;
@@ -10279,6 +10421,12 @@
       });
       writer.save({force:true,suppressCloud:true});
       equal(emitted,0);
+    });
+
+
+    test('TaskRepository ve EventRepository modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityTaskRepository),true);
+      equal(Boolean(window.ProductivityEventRepository),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
