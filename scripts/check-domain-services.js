@@ -3,10 +3,10 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 global.window = global;
 
-require(path.join(root, 'assets/js/modules/recurrence-service.js'));
-require(path.join(root, 'assets/js/modules/session-service.js'));
-require(path.join(root, 'assets/js/modules/task-service.js'));
-require(path.join(root, 'assets/js/modules/event-service.js'));
+require(path.join(root, 'assets/js/modules/shared/recurrence-service.js'));
+require(path.join(root, 'assets/js/modules/sessions/session-service.js'));
+require(path.join(root, 'assets/js/modules/tasks/task-service.js'));
+require(path.join(root, 'assets/js/modules/calendar/event-service.js'));
 
 function dateKey(date){
   const pad=value=>String(value).padStart(2,'0');
@@ -141,6 +141,28 @@ function assert(value,message){
   assert(state.events.length===1,'future event deletion mismatch');
   deletion.undo();
   assert(state.events.length===before,'future event deletion undo mismatch');
+}
+
+
+
+// v93: linked session todos can mirror a global task without awarding a second todo reward.
+{
+  let clock=1000;
+  const state={totalTodosCompleted:0,sessionLog:{},subjects:[]};
+  const service=global.ProductivitySessionService.create({
+    getState:()=>state,
+    now:()=>++clock,
+    idFactory:()=> 'todo-linked'
+  });
+  const session={id:'s-linked',todos:[],updatedAt:0};
+  const todo=service.addTodo(session,'Linked task');
+  todo.linkedTaskId='task-1';
+  const addedAt=session.updatedAt;
+  const result=service.toggleTodo(session,todo.id,{reward:false});
+  assert(result.todo.done===true,'linked todo toggled');
+  assert(result.newlyRewarded===false,'linked todo reward suppressed');
+  assert(state.totalTodosCompleted===0,'linked todo did not double count completion');
+  assert(session.updatedAt>addedAt,'linked todo mutation touched session timestamp');
 }
 
 console.log('domain service checks passed');
