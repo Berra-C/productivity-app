@@ -21,6 +21,7 @@ const MODULE_SOURCES = Object.freeze([
   "assets/js/modules/shared/recurrence-service.js",
   "assets/js/modules/sessions/session-service.js",
   "assets/js/modules/tasks/task-service.js",
+  "assets/js/modules/tasks/task-focus-service.js",
   "assets/js/modules/calendar/event-service.js",
   "assets/js/modules/gamification/gamification-core.js",
   "assets/js/modules/gamification/tree-service.js",
