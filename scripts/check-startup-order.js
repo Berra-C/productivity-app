@@ -16,6 +16,7 @@ const declarations = [
   ['RecurrenceServiceFactory', 'const RecurrenceServiceFactory=window.ProductivityRecurrenceService;'],
   ['SessionDomainServiceFactory', 'const SessionDomainServiceFactory=window.ProductivitySessionService;'],
   ['TaskDomainServiceFactory', 'const TaskDomainServiceFactory=window.ProductivityTaskService;'],
+  ['TaskFocusService', 'const TaskFocusService=window.ProductivityTaskFocusService;'],
   ['EventDomainServiceFactory', 'const EventDomainServiceFactory=window.ProductivityEventService;'],
   ['GamificationCore', 'const GamificationCore=window.ProductivityGamificationCore;'],
   ['TreeService', 'const TreeService=window.ProductivityTreeService;'],
