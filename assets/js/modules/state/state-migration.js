@@ -234,6 +234,27 @@
             legacyApprox:!!interval?.legacyApprox
           })).filter(interval=>interval.start);
         }
+        if(session.linkedTaskId === undefined || session.linkedTaskId === null){
+          const linkedTodo=Array.isArray(session.todos)
+            ? session.todos.find(todo=>String(todo?.linkedTaskId||'').trim())
+            : null;
+          session.linkedTaskId=linkedTodo?.linkedTaskId
+            ? String(linkedTodo.linkedTaskId)
+            : null;
+        }else{
+          session.linkedTaskId=String(session.linkedTaskId||'').trim() || null;
+        }
+        if(session.linkedTaskText === undefined || session.linkedTaskText === null){
+          const linkedTodo=Array.isArray(session.todos)
+            ? session.todos.find(todo=>String(todo?.linkedTaskId||'').trim()===String(session.linkedTaskId||''))
+            : null;
+          const linkedTask=Array.isArray(raw.tasks)
+            ? raw.tasks.find(task=>String(task?.id||'')===String(session.linkedTaskId||''))
+            : null;
+          session.linkedTaskText=String(linkedTask?.text||linkedTodo?.text||'').trim().slice(0,120) || null;
+        }else{
+          session.linkedTaskText=String(session.linkedTaskText||'').trim().slice(0,120) || null;
+        }
         if(session.hidden === undefined) session.hidden = false;
         if(session.createdAt===undefined) session.createdAt=Number(session.startedAt)||null;
         if(!Number.isFinite(Number(session.updatedAt))){
