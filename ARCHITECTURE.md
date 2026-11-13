@@ -107,3 +107,20 @@ The composition layer supplies UI callbacks; reliability modules own determinist
 Critical invariant: when the user chooses to keep this device's data after a destructive-sync warning, the local state remains dirty and the base revision is not advanced. This prevents a protected local state from being silently marked as synchronized.
 
 `npm run sync:check` verifies the controller decision matrix. `npm run deployment:check` verifies production script ordering, asset-version alignment and the protected-local integration contract.
+
+## Composition boundary
+
+`view-coordinator.js` owns cross-screen render coordination and expensive-view visibility rules. `startup-controller.js` owns the recovery → fallback → onboarding → ready lifecycle. `runtime-error-service.js` owns global runtime-error banner wiring.
+
+`app-main.js` remains the browser composition root, but cross-feature lifecycle policy should move into small injected coordinators rather than accumulating inline promise chains and render fan-out.
+
+## Browser regression gate
+
+`npm run browser:check` launches real headless Chromium and executes the generated production `app.js`, cloud config and cloud sync code against the real Chromium DOM.
+
+Because the current execution environment applies a managed policy that blocks localhost and `file://` navigation, the gate uses Chromium DevTools Protocol `Page.setDocumentContent` on `about:blank`, injects an in-memory Storage implementation, then executes the exact generated production JavaScript. It performs actual DOM clicks for task creation/completion and timer start/pause/resume/finish.
+
+This is a genuine browser DOM/runtime regression test, but it does not validate service-worker registration, network transport or native browser localStorage persistence. Those remain covered separately by deployment, state-persistence and sync tests.
+
+
+The browser regression gate also validates that mutations travel through the real application persistence path by checking the serialized primary state after task/session actions. The Storage object is memory-backed only to bypass the execution environment's navigation policy; StateWriter and StatePersistence are the production implementations.
