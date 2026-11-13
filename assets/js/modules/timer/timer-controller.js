@@ -26,7 +26,7 @@
     const transitionMode=requireFn(deps,'transitionMode');
     const persist=requireFn(deps,'persist');
 
-    function start({subject='',targetMinutes=null,seedTodoText=null}={}){
+    function start({subject='',targetMinutes=null,seedTodoText=null,linkedTaskId=null,linkedTaskText=null}={}){
       deps.ensureReady?.();
       if(deps.isBreakActive?.()) deps.stopBreak?.();
 
@@ -39,7 +39,9 @@
         name:'Oturum ' + (Number(getTodaySessionCount())+1),
         subject:cleanSubject || 'Genel',
         targetSeconds:Number(targetMinutes)>0 ? Number(targetMinutes)*60 : null,
-        seedTodoText
+        seedTodoText,
+        linkedTaskId,
+        linkedTaskText
       });
 
       const sessionDate=todayKey();
