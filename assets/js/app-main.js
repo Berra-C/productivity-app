@@ -37,8 +37,11 @@
   const StateRecoveryServiceFactory=window.ProductivityStateRecoveryService;
   const DestructiveSyncGuard=window.ProductivityDestructiveSyncGuard;
   const ExternalStateService=window.ProductivityExternalStateService;
+  const RuntimeErrorService=window.ProductivityRuntimeErrorService;
+  const ViewCoordinatorFactory=window.ProductivityViewCoordinator;
+  const StartupControllerFactory=window.ProductivityStartupController;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -70,31 +73,17 @@
       !RecoveryStoreFactory ? 'RecoveryStore' : null,
       !StateRecoveryServiceFactory ? 'StateRecoveryService' : null,
       !DestructiveSyncGuard ? 'DestructiveSyncGuard' : null,
-      !ExternalStateService ? 'ExternalStateService' : null
+      !ExternalStateService ? 'ExternalStateService' : null,
+      !RuntimeErrorService ? 'RuntimeErrorService' : null,
+      !ViewCoordinatorFactory ? 'ViewCoordinator' : null,
+      !StartupControllerFactory ? 'StartupController' : null
     ].filter(Boolean).join(', ');
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
 
+  const RuntimeErrorBinding=RuntimeErrorService.bind({window,document});
+
   const TAB_ID = (()=>{
-  window.addEventListener('error',event=>{
-    const box=document.getElementById('runtimeErrorBanner');
-    const text=document.getElementById('runtimeErrorText');
-    if(box && text){
-      text.textContent='Uygulamada bir hata oluştu: '+(event.error?.message || event.message || 'Bilinmeyen hata');
-      box.classList.add('show');
-    }
-  });
-  window.addEventListener('unhandledrejection',event=>{
-    const box=document.getElementById('runtimeErrorBanner');
-    const text=document.getElementById('runtimeErrorText');
-    if(box && text){
-      text.textContent='Uygulamada bir işlem tamamlanamadı: '+(event.reason?.message || String(event.reason || 'Bilinmeyen hata'));
-      box.classList.add('show');
-    }
-  });
-  document.addEventListener('click',event=>{
-    if(event.target?.id==='runtimeErrorClose') document.getElementById('runtimeErrorBanner')?.classList.remove('show');
-  });
     try{
       const existing=sessionStorage.getItem('test_tab_id');
       if(existing) return existing;
@@ -832,18 +821,34 @@
     });
   }
 
+  const ViewCoordinator=ViewCoordinatorFactory.create({
+    renderTaskList:()=>renderTaskList(),
+    renderCalendar:()=>renderCalendar(),
+    renderToday:celebrate=>renderToday(celebrate),
+    renderStats:()=>renderStats(),
+    renderSummary:()=>renderSummary(),
+    renderCollection:()=>renderCollection(),
+    renderWorkButtonRow:()=>renderWorkButtonRow(),
+    renderDistractionCategorySummary:()=>renderDistractionCategorySummary(),
+    renderSessionList:()=>renderSessionList(),
+    updateIntentDisplay:()=>updateIntentDisplay(),
+    renderTaskTagControls:()=>renderTaskTagControls(),
+    scheduleLongSessionReview:delay=>scheduleLongSessionReview(delay),
+    isStatsActive:()=>Boolean(
+      el.panels?.stats?.classList.contains('active')
+    ),
+    isCollectionVisible:()=>Boolean(
+      el.collectionContent &&
+      !el.collectionContent.classList.contains('collapsed')
+    ),
+    isSummaryVisible:()=>Boolean(
+      el.summaryContent &&
+      !el.summaryContent.classList.contains('collapsed')
+    )
+  });
+
   function renderAfterExternalSync(){
-    renderWorkButtonRow();
-    renderToday(false);
-    renderDistractionCategorySummary();
-    renderSessionList();
-    updateIntentDisplay();
-    renderTaskTagControls();
-    renderTaskList();
-    renderCalendar();
-    if(el.panels?.stats?.classList.contains('active')) renderStats();
-    if(el.collectionContent && !el.collectionContent.classList.contains('collapsed')) renderCollection();
-    if(el.summaryContent && !el.summaryContent.classList.contains('collapsed')) renderSummary();
+    return ViewCoordinator.renderExternal();
   }
 
   function adoptExternalState(incoming){
@@ -4800,25 +4805,8 @@
 
 
   // ---------- Merkezi UI yenileme ----------
-  function refreshUI(parts, options={}){
-    const requested = new Set(Array.isArray(parts) ? parts : [parts]);
-
-    if(requested.has('tasks')) renderTaskList();
-    if(requested.has('calendar')) renderCalendar();
-    if(requested.has('today')) renderToday(!!options.celebrateTree);
-
-    if(requested.has('stats')){
-      const statsPanel=el.panels?.stats;
-      if(statsPanel?.classList.contains('active')) renderStats();
-    }
-
-    if(requested.has('summary') && el.summaryContent && !el.summaryContent.classList.contains('collapsed')){
-      renderSummary();
-    }
-
-    if(requested.has('collection') && el.collectionContent && !el.collectionContent.classList.contains('collapsed')){
-      renderCollection();
-    }
+  function refreshUI(parts,options={}){
+    return ViewCoordinator.refresh(parts,options);
   }
 
   // ================= GÖREVLER =================
@@ -6061,47 +6049,9 @@
 
   initializeTooltips();
 
-  if(!window.ProductivityUIHelpers || !window.ProductivityStateMerge || !window.ProductivityStatePersistence || !window.ProductivityStateWriter || !window.ProductivityTimerCore || !window.ProductivityTimerService || !window.ProductivityTimerController || !window.ProductivitySessionRepository || !window.ProductivityTaskRepository || !window.ProductivityEventRepository || !window.ProductivityGamificationCore || !window.ProductivityTreeService || !window.ProductivityAnalyticsCore || !window.ProductivityCalendarCore || !window.ProductivityViewFormatters || !window.ProductivitySummaryView || !window.ProductivityCalendarView || !window.ProductivityStatsView || !window.ProductivityTaskView || !window.ProductivityCollectionView || !window.ProductivitySessionView || !window.ProductivityFocusView || !window.ProductivityWorkControlsView || !window.ProductivityModalService || !window.ProductivityRecurrenceService || !window.ProductivitySessionService || !window.ProductivityTaskService || !window.ProductivityEventService){
-    console.error(
-      'Test · Gerekli modüllerden biri yüklenemedi:',
-      {
-        uiHelpers: !!window.ProductivityUIHelpers,
-        stateMerge: !!window.ProductivityStateMerge,
-        statePersistence: !!window.ProductivityStatePersistence,
-        stateWriter: !!window.ProductivityStateWriter,
-        sessionRepository: !!window.ProductivitySessionRepository,
-        taskRepository: !!window.ProductivityTaskRepository,
-        eventRepository: !!window.ProductivityEventRepository,
-        gamificationCore: !!window.ProductivityGamificationCore,
-        treeService: !!window.ProductivityTreeService,
-        analyticsCore: !!window.ProductivityAnalyticsCore,
-        calendarCore: !!window.ProductivityCalendarCore,
-        viewFormatters: !!window.ProductivityViewFormatters,
-        summaryView: !!window.ProductivitySummaryView,
-        calendarView: !!window.ProductivityCalendarView,
-        statsView: !!window.ProductivityStatsView,
-        taskView: !!window.ProductivityTaskView,
-        collectionView: !!window.ProductivityCollectionView,
-        sessionView: !!window.ProductivitySessionView,
-        focusView: !!window.ProductivityFocusView,
-        workControlsView: !!window.ProductivityWorkControlsView,
-        modalService: !!window.ProductivityModalService,
-        recurrenceService: !!window.ProductivityRecurrenceService,
-        sessionService: !!window.ProductivitySessionService,
-        taskService: !!window.ProductivityTaskService,
-        eventService: !!window.ProductivityEventService,
-        timerCore: !!window.ProductivityTimerCore,
-        timerService: !!window.ProductivityTimerService,
-        timerController: !!window.ProductivityTimerController
-      }
-    );
-  }
 
-  renderToday(false);
-  renderDistractionCategorySummary();
-  renderSessionList();
-  updateIntentDisplay();
-  scheduleLongSessionReview(450);
+
+  ViewCoordinator.renderInitial();
 
   // ---------- İlk kullanım tanıtımı ----------
   function initOnboarding(){
@@ -6131,23 +6081,25 @@
     setTimeout(()=> modalController.open(backdrop,{onCancel:finish,focus:nextBtn}), 300);
   }
 
-  recoverFromIndexedDBIfNeeded()
-    .then(recovered=>{
-      if(dataWasReset && !recovered){
-        showToast('Kayıtlı verin okunamadı, güvenli bir başlangıç yapıldı.', true);
-      }
-      initOnboarding();
-    })
-    .catch(error=>{
-      console.warn('Başlangıç kurtarma kontrolü tamamlanamadı:', error);
+  const StartupController=StartupControllerFactory.create({
+    recover:()=>recoverFromIndexedDBIfNeeded(),
+    wasReset:()=>dataWasReset,
+    showResetWarning:()=>showToast(
+      'Kayıtlı verin okunamadı, güvenli bir başlangıç yapıldı.',
+      true
+    ),
+    clearRecoveryPending:()=>{
       startupNeedsIDBRecovery=false;
-      saveData();
-      if(dataWasReset){
-        showToast('Kayıtlı verin okunamadı, güvenli bir başlangıç yapıldı.', true);
-      }
-      initOnboarding();
-    })
-    .finally(()=>window.dispatchEvent(new CustomEvent('app:ready')));
+    },
+    saveFallback:()=>saveData(),
+    initOnboarding:()=>initOnboarding(),
+    dispatchReady:()=>window.dispatchEvent(
+      new CustomEvent('app:ready')
+    ),
+    logger:console
+  });
+
+  StartupController.run();
 
 
   // ---------- Geliştirici birim testleri (?test=1) ----------
@@ -7666,6 +7618,13 @@
       equal(Boolean(window.ProductivityStateRecoveryService),true);
       equal(Boolean(window.ProductivityDestructiveSyncGuard),true);
       equal(Boolean(window.ProductivityExternalStateService),true);
+    });
+
+
+    test('Composition modülleri yüklüdür', ()=>{
+      equal(Boolean(window.ProductivityRuntimeErrorService),true);
+      equal(Boolean(window.ProductivityViewCoordinator),true);
+      equal(Boolean(window.ProductivityStartupController),true);
     });
 
     const passed=results.filter(r=>r.ok).length;
