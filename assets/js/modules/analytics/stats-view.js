@@ -351,11 +351,42 @@
     };
   }
 
+
+  function buildTaskFocusBreakdown(rows=[],{
+    escapeHtml=value=>String(value),
+    formatDurationLabel=value=>String(value)
+  }={}){
+    if(!rows.length){
+      return '<div class="todo-empty">Bu dönemde göreve bağlı odak oturumu yok.</div>';
+    }
+
+    const max=Math.max(1,Number(rows[0]?.seconds)||0);
+
+    return rows.map(row=>{
+      const percent=Math.max(4,Math.round((Number(row.seconds)||0)/max*100));
+      const state=row.missing
+        ? 'görev silinmiş'
+        : row.done
+          ? 'tamamlandı'
+          : 'açık';
+
+      return '<div class="subject-row task-focus-analysis-row">'
+        +'<div class="subject-row-top"><span>'+escapeHtml(row.text)
+        +'</span><span>'+formatDurationLabel(row.seconds)+'</span></div>'
+        +'<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+percent+'%"></div></div>'
+        +'<div class="subject-row-meta">'
+        +'<span>'+row.sessions+' oturum</span>'
+        +'<span>'+state+'</span>'
+        +'</div></div>';
+    }).join('');
+  }
+
   window.ProductivityStatsView={
     buildMetricChart,
     buildSubjectChart,
     buildSessionAnalytics,
     buildSubjectBreakdown,
+    buildTaskFocusBreakdown,
     buildHeatmap
   };
 })();
