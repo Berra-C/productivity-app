@@ -35,7 +35,10 @@ const declarations = [
   ['RecoveryStoreFactory', 'const RecoveryStoreFactory=window.ProductivityRecoveryStore;'],
   ['StateRecoveryServiceFactory', 'const StateRecoveryServiceFactory=window.ProductivityStateRecoveryService;'],
   ['DestructiveSyncGuard', 'const DestructiveSyncGuard=window.ProductivityDestructiveSyncGuard;'],
-  ['ExternalStateService', 'const ExternalStateService=window.ProductivityExternalStateService;']
+  ['ExternalStateService', 'const ExternalStateService=window.ProductivityExternalStateService;'],
+  ['RuntimeErrorService', 'const RuntimeErrorService=window.ProductivityRuntimeErrorService;'],
+  ['ViewCoordinatorFactory', 'const ViewCoordinatorFactory=window.ProductivityViewCoordinator;'],
+  ['StartupControllerFactory', 'const StartupControllerFactory=window.ProductivityStartupController;']
 ];
 
 const consumers = [
