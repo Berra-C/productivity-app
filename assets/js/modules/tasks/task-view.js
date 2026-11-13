@@ -79,7 +79,9 @@
       safeTagColor=color=>color,
       escapeHtml=value=>String(value),
       taskDueBadge=()=> '',
-      repeatTaskLabel=()=> ''
+      repeatTaskLabel=()=> '',
+      focusSummary=()=>null,
+      formatDurationLabel=value=>String(value)
     }=options;
 
     const tag=tagById(normalizedTaskTagId(task));
@@ -98,7 +100,23 @@
         +repeatTaskLabel(task.repeat,task.repeatDays)+'</span>'
       : '';
 
-    return '<div class="task-card'+(task.done?' completed':'')
+    const focus=focusSummary(task);
+    const focusMeta=focus && (focus.sessions>0 || focus.active)
+      ? '<div class="task-focus-meta">'
+        +(focus.active
+          ? '<span class="task-focus-live '+(focus.activeState==='paused'?'paused':'')+'">'
+            +(focus.activeState==='paused'?'⏸ Oturum açık':'● Odakta')+'</span>'
+          : '')
+        +(focus.seconds>0
+          ? '<span>⏱ '+formatDurationLabel(focus.seconds)+'</span>'
+          : '')
+        +(focus.sessions>0
+          ? '<span>'+focus.sessions+' oturum</span>'
+          : '')
+        +'</div>'
+      : '';
+
+    return '<div class="task-card'+(task.done?' completed':'')+(focus?.active?' task-focused':'')
       +'" draggable="true" data-task-id="'+task.id+'"'+borderStyle+'>'
       +'<span class="task-drag-handle" title="Sürükleyerek sırala">☰</span>'
       +'<button class="task-check'+(task.done?' done':'')
@@ -106,11 +124,11 @@
       +(task.done?'✓':'')+'</button>'
       +'<div class="task-card-body">'
       +'<div class="task-text'+(task.done?' done':'')+'">'
-      +escapeHtml(task.text)+'</div>'+tagHtml+'</div>'
+      +escapeHtml(task.text)+'</div>'+tagHtml+focusMeta+'</div>'
       +((dueHtml||repeatHtml)
         ? '<div class="task-right-meta">'+dueHtml+repeatHtml+'</div>'
         : '')
-      +(!task.done
+      +(!task.done && !focus?.active
         ? '<button class="task-focus-btn" data-action="focus-task" data-id="'
           +task.id+'" title="Bu görev için çalışma oturumu başlat">▶ Odaklan</button>'
         : '')
