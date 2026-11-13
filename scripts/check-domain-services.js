@@ -1,168 +1,168 @@
 const path = require('path');
 
-global.window=global;
-require(path.resolve(__dirname,'../assets/js/modules/state/state-migration.js'));
-require(path.resolve(__dirname,'../assets/js/modules/state/recovery-store.js'));
-require(path.resolve(__dirname,'../assets/js/modules/state/state-recovery-service.js'));
-require(path.resolve(__dirname,'../assets/js/modules/sync/destructive-sync-guard.js'));
-require(path.resolve(__dirname,'../assets/js/modules/sync/external-state-service.js'));
+const root = path.resolve(__dirname, '..');
+global.window = global;
 
-function assert(condition,message){
-  if(!condition) throw new Error(message);
+require(path.join(root, 'assets/js/modules/shared/recurrence-service.js'));
+require(path.join(root, 'assets/js/modules/sessions/session-service.js'));
+require(path.join(root, 'assets/js/modules/tasks/task-service.js'));
+require(path.join(root, 'assets/js/modules/calendar/event-service.js'));
+
+function dateKey(date){
+  const pad=value=>String(value).padStart(2,'0');
+  return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate());
 }
 
-function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
-  const intervals=Array.isArray(session?.workIntervals)?session.workIntervals:[];
-  const total=intervals.reduce((sum,interval)=>{
-    const start=Number(interval?.start);
-    const end=Number(interval?.end);
-    return Number.isFinite(start)&&Number.isFinite(end)&&end>start
-      ? sum+(end-start)/1000
-      : sum;
-  },0);
-  return total>0?Math.round(total):(fallbackToDuration?Math.max(0,Number(session?.duration)||0):0);
+function assert(value,message){
+  if(!value) throw new Error(message);
 }
 
-(async()=>{
-  const migration=global.ProductivityStateMigration.create({
-    schemaVersion:47,
-    closedIntervalSeconds,
-    logger:{error:()=>{}}
+// Recurrence: month-end, weekly stepping and exception lifecycle.
+{
+  const state={recurrenceExceptions:{tasks:{},events:{}}};
+  const service=global.ProductivityRecurrenceService.create({
+    getState:()=>state,
+    dateKey
   });
 
-  const legacy={
-    totalResists:0,
-    treeProgress:0,
-    days:{'2026-01-01':{workSeconds:0,distraction:0,resist:0,sessions:0}},
-    sessionLog:{'2026-01-01':[{
-      id:'s1',
-      duration:600,
-      startedAt:1000,
-      endedAt:601000,
-      distractions:0,
-      todos:[{id:'todo1',text:'Monthly',done:false,linkedTaskId:'t1'}]
-    }]},
-    tasks:[{id:'t1',text:'Monthly',dueDate:'2026-01-31',repeat:'monthly'}],
-    events:[{id:'e1',title:'Monthly event',date:'2026-01-31',repeat:'monthly'}],
-    collection:[]
+  assert(service.nextDate('2026-01-31','monthly',[],31)==='2026-02-28','monthly recurrence must clamp to month end');
+  assert(service.nextDate('2026-11-02','weekly',[1,3])==='2026-11-04','weekly recurrence must select next configured weekday');
+  assert(service.addException('tasks','series-1','2026-11-04')===true,'exception add failed');
+  assert(service.isException('tasks','series-1','2026-11-04')===true,'exception lookup failed');
+  assert(service.removeException('tasks','series-1','2026-11-04')===true,'exception remove failed');
+}
+
+// Session: rename/dedupe, one-time todo reward and historical interval edit.
+{
+  const state={
+    subjects:['Math','math','Physics'],
+    totalTodosCompleted:0,
+    sessionLog:{day:[{id:'s1',name:'Math',subject:'Math',todos:[]}]}
   };
-
-  assert(migration.validate(legacy),'legacy state should validate');
-  const migrated=migration.migrate(JSON.parse(JSON.stringify(legacy)));
-  assert(migrated.schemaVersion===47,'schema version');
-  assert(migrated.tasks[0].repeatAnchorDay===31,'task monthly anchor');
-  assert(migrated.events[0].repeatAnchorDay===31,'event monthly anchor');
-  assert(Array.isArray(migrated.sessionLog['2026-01-01'][0].workIntervals),'work interval migration');
-  assert(migrated.sessionLog['2026-01-01'][0].duration===600,'duration preserved');
-  assert(migrated.timerState?.mode==='idle','timer state migration');
-  assert(migrated.sessionLog['2026-01-01'][0].linkedTaskId==='t1','legacy linked task promoted');
-  assert(migrated.sessionLog['2026-01-01'][0].linkedTaskText==='Monthly','legacy linked task text promoted');
-  assert(!migration.validate({treeProgress:0,days:{}}),'invalid state rejected');
-
-  const store=global.ProductivityRecoveryStore.create({
-    indexedDBProvider:()=>null,
-    schemaVersion:47,
-    logger:{warn:()=>{}}
+  let timestamp=100;
+  const service=global.ProductivitySessionService.create({
+    getState:()=>state,
+    now:()=>timestamp++
   });
-  assert(store.parse({payload:JSON.stringify(migrated)},value=>migration.validate(value))?.schemaVersion===47,'valid recovery parse');
-  assert(store.parse({payload:'{broken'},()=>true)===null,'invalid JSON rejected');
-  assert(await store.readRaw()===null,'missing IDB read');
-  assert(await store.clear()===false,'missing IDB clear');
 
-  const events=[];
-  let needs=true;
-  let recovered=null;
-  const recovery=global.ProductivityStateRecoveryService.create({
-    getNeedsRecovery:()=>needs,
-    setNeedsRecovery:value=>{needs=value;events.push('needs:'+value);},
-    readRecoverySnapshot:async()=>migrated,
-    migrate:value=>value,
-    setState:value=>{recovered=value;events.push('set');},
-    normalizeRecoveredState:()=>events.push('normalize'),
-    prepareRecoveredState:()=>events.push('prepare'),
-    saveCurrent:options=>events.push(options?.force?'save-force':'save'),
-    scheduleReview:()=>events.push('schedule'),
-    renderRecovered:()=>events.push('render'),
-    notifyRecovered:()=>events.push('notify'),
-    logger:{warn:()=>{}}
+  assert(service.renameGroupEverywhere('Math','Matematik')===1,'session group rename count mismatch');
+  assert(state.sessionLog.day[0].name==='Matematik','session name rename failed');
+  assert(state.sessionLog.day[0].subject==='Matematik','session subject rename failed');
+  assert(state.subjects.filter(item=>item==='Matematik').length===1,'subject rename must deduplicate suggestions');
+
+  const todo=service.addTodo(state.sessionLog.day[0],'  Deneme çöz  ');
+  const first=service.toggleTodo(state.sessionLog.day[0],todo.id);
+  service.toggleTodo(state.sessionLog.day[0],todo.id);
+  const third=service.toggleTodo(state.sessionLog.day[0],todo.id);
+  assert(first.newlyRewarded===true,'first todo completion must be rewarded');
+  assert(third.newlyRewarded===false,'re-completing rewarded todo must not reward twice');
+  assert(state.totalTodosCompleted===1,'todo total must increment once');
+
+  const session={duration:0};
+  const timing=service.editHistoricalTiming(session,{
+    newStart:1000,
+    newEnd:10000,
+    existingIntervals:[{start:0,end:5000},{start:5001,end:20000}],
+    mergeGapMs:1000
   });
-  assert(await recovery.recoverIfNeeded()===true,'recovery success');
-  assert(recovered===migrated,'recovered state set');
-  assert(events.join('|')==='needs:false|set|normalize|prepare|save-force|schedule|render|notify','recovery sequence');
+  assert(timing.ok===true,'historical timing edit failed');
+  assert(session.startedAt===1000 && session.endedAt===10000,'historical bounds mismatch');
+  assert(session.duration===9,'historical duration mismatch');
+}
 
-  let emptyNeeds=true;
-  let fallbackSaves=0;
-  const emptyRecovery=global.ProductivityStateRecoveryService.create({
-    getNeedsRecovery:()=>emptyNeeds,
-    setNeedsRecovery:value=>{emptyNeeds=value;},
-    readRecoverySnapshot:async()=>null,
-    migrate:()=>null,
-    saveCurrent:()=>{fallbackSaves++;},
-    logger:{warn:()=>{}}
+// Task: completion/reward, recurrence spawning, scoped deletion and undo.
+{
+  const state={tasks:[],totalTodosCompleted:0,recurrenceExceptions:{tasks:{},events:{}}};
+  const tombstones=new Set();
+  const recurrence=global.ProductivityRecurrenceService.create({getState:()=>state,dateKey});
+  let timestamp=1000;
+  const service=global.ProductivityTaskService.create({
+    getState:()=>state,
+    recurrence,
+    normalizeTime:value=>value||null,
+    tagExists:()=>false,
+    normalizedTagId:()=>null,
+    nextSortOrder:()=>state.tasks.length,
+    touchRecord:(record,at)=>{record.updatedAt=at;return record;},
+    recordTombstone:(kind,id)=>tombstones.add(kind+':'+id),
+    clearTombstone:(kind,id)=>tombstones.delete(kind+':'+id),
+    now:()=>timestamp++,
+    random:()=>0.123
   });
-  assert(await emptyRecovery.recoverIfNeeded()===false,'empty recovery false');
-  assert(emptyNeeds===false,'recovery flag cleared');
-  assert(fallbackSaves===1,'fresh state mirrored after empty recovery');
 
-  const rich={
-    sessionLog:{a:Array.from({length:40},(_,i)=>({id:'s'+i}))},
-    tasks:Array.from({length:30},(_,i)=>({id:'t'+i})),
-    events:[],
-    days:Object.fromEntries(Array.from({length:20},(_,i)=>['d'+i,{}]))
-  };
-  const sparse={
-    sessionLog:{a:Array.from({length:5},(_,i)=>({id:'r'+i}))},
-    tasks:Array.from({length:4},(_,i)=>({id:'q'+i})),
-    events:[],
-    days:{d1:{}}
-  };
-  const danger=global.ProductivityDestructiveSyncGuard.risk(rich,sparse);
-  assert(danger.risky===true,'destructive sync risky');
-  assert(danger.local.sessions===40 && danger.remote.sessions===5,'sync counts');
+  const rootTask=service.createTask('Daily','2026-11-01',null,null,'daily');
+  rootTask.repeatSourceId=rootTask.id;
+  const completed=service.toggleDone(rootTask.id);
+  assert(completed.newlyRewarded===true && state.totalTodosCompleted===1,'task completion reward mismatch');
 
-  const external=global.ProductivityExternalStateService;
-  const activeSession={
-    id:'active',
-    duration:100,
-    workIntervals:[{start:1000,end:null}],
-    name:'Local active'
-  };
-  const localState={
-    activeSessionId:'active',
-    activeSessionDate:'2026-11-12',
-    isWorking:true,
-    workStart:1000,
-    activeTimerOwnerId:'tab-a',
-    timerState:{mode:'working',sessionId:'active',runningSince:1000,ownerId:'tab-a'},
-    breakState:null
-  };
-  const snapshot=external.captureDeviceLocalTimerState(localState,{
-    tabId:'tab-a',
-    findSession:id=>id==='active'?activeSession:null,
-    isBreakActive:()=>false
+  const second=service.spawnNext(rootTask);
+  assert(second?.dueDate==='2026-11-02','first recurring task spawn failed');
+  const third=service.spawnNext(second);
+  assert(third?.dueDate==='2026-11-03','second recurring task spawn failed');
+
+  const before=state.tasks.length;
+  const deletion=service.deleteTask(second.id,'future');
+  assert(deletion.removedCount===2 && state.tasks.length===1,'future task deletion mismatch');
+  deletion.undo();
+  assert(state.tasks.length===before,'future task deletion undo mismatch');
+}
+
+// Event: horizon generation skips exceptions and scoped deletion can be undone.
+{
+  const state={events:[],recurrenceExceptions:{tasks:{},events:{}}};
+  const tombstones=new Set();
+  const recurrence=global.ProductivityRecurrenceService.create({getState:()=>state,dateKey});
+  let timestamp=2000;
+  const service=global.ProductivityEventService.create({
+    getState:()=>state,
+    recurrence,
+    normalizeTime:value=>value||null,
+    defaultColor:'#7aa2f7',
+    dateKey,
+    touchRecord:(record,at)=>{record.updatedAt=at;return record;},
+    recordTombstone:(kind,id)=>tombstones.add(kind+':'+id),
+    clearTombstone:(kind,id)=>tombstones.delete(kind+':'+id),
+    now:()=>timestamp++,
+    random:()=>0.234
   });
-  assert(snapshot?.activeSession?.name==='Local active','capture active session');
 
-  const incoming={
-    sessionLog:{'2026-11-12':[{id:'active',duration:10,name:'Remote old'}]},
-    activeSessionId:null,
-    activeSessionDate:null,
-    isWorking:false,
-    workStart:null,
-    activeTimerOwnerId:null,
-    timerState:{mode:'idle'},
-    breakState:null
-  };
-  const restored=external.restoreDeviceLocalTimerState(incoming,snapshot,{
-    findSessionDateKey:()=>null,
-    todayKey:()=> '2026-11-12'
+  const rootEvent=service.createOccurrence(
+    'Ders','2026-11-01','10:00','11:00','#7aa2f7','daily',null,[],null,'Açıklama'
+  );
+  recurrence.addException('events',rootEvent.id,'2026-11-03');
+  service.generateSeries(rootEvent,'2026-11-04');
+
+  const dates=state.events.map(event=>event.date).sort();
+  assert(dates.join(',')==='2026-11-01,2026-11-02,2026-11-04','event recurrence exception mismatch');
+
+  const second=state.events.find(event=>event.date==='2026-11-02');
+  const before=state.events.length;
+  const deletion=service.deleteEvent(second.id,'future');
+  assert(state.events.length===1,'future event deletion mismatch');
+  deletion.undo();
+  assert(state.events.length===before,'future event deletion undo mismatch');
+}
+
+
+
+// v93: linked session todos can mirror a global task without awarding a second todo reward.
+{
+  let clock=1000;
+  const state={totalTodosCompleted:0,sessionLog:{},subjects:[]};
+  const service=global.ProductivitySessionService.create({
+    getState:()=>state,
+    now:()=>++clock,
+    idFactory:()=> 'todo-linked'
   });
-  assert(restored.isWorking===true,'local working timer preserved');
-  assert(restored.sessionLog['2026-11-12'][0].name==='Local active','active session object preserved');
-  assert(restored.timerState.ownerId==='tab-a','timer owner preserved');
+  const session={id:'s-linked',todos:[],updatedAt:0};
+  const todo=service.addTodo(session,'Linked task');
+  todo.linkedTaskId='task-1';
+  const addedAt=session.updatedAt;
+  const result=service.toggleTodo(session,todo.id,{reward:false});
+  assert(result.todo.done===true,'linked todo toggled');
+  assert(result.newlyRewarded===false,'linked todo reward suppressed');
+  assert(state.totalTodosCompleted===0,'linked todo did not double count completion');
+  assert(session.updatedAt>addedAt,'linked todo mutation touched session timestamp');
+}
 
-  console.log('reliability service checks passed');
-})().catch(error=>{
-  console.error(error);
-  process.exit(1);
-});
+console.log('domain service checks passed');
