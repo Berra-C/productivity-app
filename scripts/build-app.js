@@ -14,6 +14,7 @@ const sources = [
   'assets/js/modules/state-recovery-service.js',
   'assets/js/modules/destructive-sync-guard.js',
   'assets/js/modules/external-state-service.js',
+  'assets/js/modules/sync-controller.js',
   'assets/js/modules/timer-core.js',
   'assets/js/modules/timer-service.js',
   'assets/js/modules/timer-controller.js',
