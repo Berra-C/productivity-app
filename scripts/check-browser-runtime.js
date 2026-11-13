@@ -44,6 +44,36 @@ class CDP {
     this.nextId=0;
     this.pending=new Map();
     this.events=[];
+    this.defaultSessionId=null;
+
+    this.openPromise=new Promise((resolve,reject)=>{
+      const cleanup=()=>{
+        this.ws.removeEventListener('open',onOpen);
+        this.ws.removeEventListener('error',onError);
+      };
+
+      const onOpen=()=>{
+        cleanup();
+        resolve();
+      };
+
+      const onError=event=>{
+        cleanup();
+        reject(event);
+      };
+
+      this.ws.addEventListener('open',onOpen);
+      this.ws.addEventListener('error',onError);
+
+      if(this.ws.readyState===WebSocket.OPEN){
+        onOpen();
+      }else if(
+        this.ws.readyState===WebSocket.CLOSING ||
+        this.ws.readyState===WebSocket.CLOSED
+      ){
+        onError(new Error('CDP WebSocket closed before open'));
+      }
+    });
 
     this.ws.onmessage=event=>{
       const message=JSON.parse(event.data);
@@ -69,17 +99,25 @@ class CDP {
   }
 
   open(){
-    return new Promise((resolve,reject)=>{
-      this.ws.onopen=resolve;
-      this.ws.onerror=reject;
-    });
+    if(this.ws.readyState===WebSocket.OPEN){
+      return Promise.resolve();
+    }
+
+    return this.openPromise;
   }
 
-  send(method,params={}){
+  send(method,params={},sessionId=this.defaultSessionId){
     return new Promise((resolve,reject)=>{
       const id=++this.nextId;
       this.pending.set(id,{resolve,reject});
-      this.ws.send(JSON.stringify({id,method,params}));
+
+      const message={id,method,params};
+
+      if(sessionId){
+        message.sessionId=sessionId;
+      }
+
+      this.ws.send(JSON.stringify(message));
     });
   }
 
@@ -164,10 +202,11 @@ function browserStubs(){
     );
   }
 
-  const debugPort=10000+Math.floor(Math.random()*3000);
   const profile=fs.mkdtempSync(
     path.join(os.tmpdir(),'productivity-browser-check-')
   );
+
+  let browserStderr='';
 
   const browser=spawn(
     chromium,
@@ -177,29 +216,129 @@ function browserStubs(){
       '--disable-gpu',
       '--disable-dev-shm-usage',
       '--disable-extensions',
-      `--remote-debugging-port=${debugPort}`,
+      '--remote-allow-origins=*',
+      '--remote-debugging-address=127.0.0.1',
+      '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
       'about:blank'
     ],
     {stdio:['ignore','ignore','pipe']}
   );
 
+  browser.stderr?.on('data',chunk=>{
+    browserStderr+=String(chunk);
+    if(browserStderr.length>12000){
+      browserStderr=browserStderr.slice(-12000);
+    }
+  });
+
   let cdp=null;
 
   try{
-    const target=await waitFor(async()=>{
-      const response=await fetch(
-        `http://127.0.0.1:${debugPort}/json`
-      );
+    const activePortFile=path.join(
+      profile,
+      'DevToolsActivePort'
+    );
 
-      if(!response.ok) return null;
+    const activePort=await waitFor(async()=>{
+      if(!fs.existsSync(activePortFile)){
+        if(browser.exitCode!==null){
+          throw new Error(
+            'Chromium exited before DevTools startup. '+
+            browserStderr
+          );
+        }
+        return null;
+      }
 
-      const targets=await response.json();
-      return targets.find(item=>item.type==='page') || null;
+      const lines=fs
+        .readFileSync(activePortFile,'utf8')
+        .split(/\r?\n/)
+        .filter(Boolean);
+
+      const port=Number(lines[0]);
+      const browserPath=lines[1];
+
+      if(
+        !Number.isInteger(port) ||
+        port<=0 ||
+        !browserPath
+      ){
+        return null;
+      }
+
+      return {port,browserPath};
     },20000);
 
-    cdp=new CDP(target.webSocketDebuggerUrl);
-    await cdp.open();
+    const browserWebSocketUrl=
+      `ws://127.0.0.1:${activePort.port}${activePort.browserPath}`;
+
+    cdp=await waitFor(async()=>{
+      if(browser.exitCode!==null){
+        throw new Error(
+          'Chromium exited before CDP attachment. '+
+          browserStderr
+        );
+      }
+
+      const candidate=new CDP(browserWebSocketUrl);
+
+      try{
+        await candidate.open();
+        return candidate;
+      }catch(error){
+        try{
+          candidate.close();
+        }catch(closeError){}
+        return null;
+      }
+    },10000);
+
+    let targets=await cdp.send(
+      'Target.getTargets',
+      {},
+      null
+    );
+
+    let pageTarget=targets.targetInfos.find(
+      item=>item.type==='page'
+    );
+
+    if(!pageTarget){
+      const created=await cdp.send(
+        'Target.createTarget',
+        {url:'about:blank'},
+        null
+      );
+
+      targets=await cdp.send(
+        'Target.getTargets',
+        {},
+        null
+      );
+
+      pageTarget=targets.targetInfos.find(
+        item=>item.targetId===created.targetId
+      );
+    }
+
+    if(!pageTarget){
+      throw new Error(
+        'Chromium page target bulunamadı.'
+      );
+    }
+
+    const attached=await cdp.send(
+      'Target.attachToTarget',
+      {
+        targetId:pageTarget.targetId,
+        flatten:true
+      },
+      null
+    );
+
+    cdp.defaultSessionId=attached.sessionId;
+
     await cdp.send('Runtime.enable');
     await cdp.send('Page.enable');
 
