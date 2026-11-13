@@ -85,6 +85,7 @@
     function setHidden(session,hidden){
       if(!session || typeof session!=='object') return false;
       session.hidden=Boolean(hidden);
+      session.updatedAt=now();
       return true;
     }
 
@@ -95,10 +96,11 @@
       if(!Array.isArray(session.todos)) session.todos=[];
       const todo={id:idFactory(),text:clean,done:false};
       session.todos.push(todo);
+      session.updatedAt=now();
       return todo;
     }
 
-    function toggleTodo(session,todoId){
+    function toggleTodo(session,todoId,options={}){
       if(!session || !Array.isArray(session.todos)) return null;
       const todo=session.todos.find(item=>item?.id===todoId);
       if(!todo) return null;
@@ -106,9 +108,12 @@
       const value=state();
       const wasDone=Boolean(todo.done);
       todo.done=!wasDone;
+      session.updatedAt=now();
       let newlyRewarded=false;
 
-      if(!wasDone && todo.done && !todo.xpCounted){
+      const reward=options.reward!==false;
+
+      if(reward && !wasDone && todo.done && !todo.xpCounted){
         todo.xpCounted=true;
         value.totalTodosCompleted=(Number(value.totalTodosCompleted)||0)+1;
         newlyRewarded=true;
@@ -126,7 +131,9 @@
       if(!session || !Array.isArray(session.todos)) return null;
       const index=session.todos.findIndex(item=>item?.id===todoId);
       if(index<0) return null;
-      return session.todos.splice(index,1)[0] || null;
+      const removed=session.todos.splice(index,1)[0] || null;
+      if(removed) session.updatedAt=now();
+      return removed;
     }
 
     function editHistoricalTiming(session,{newStart,newEnd,existingIntervals=[],mergeGapMs=1000}={}){
