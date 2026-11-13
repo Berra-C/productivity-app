@@ -2,7 +2,7 @@
   const STORAGE_KEY = 'direncAgaci_v2';
   const BACKUP_KEY = STORAGE_KEY + '_backup';
   const OLD_KEY = 'direncAgaci_v1';
-  const SCHEMA_VERSION = 46;
+  const SCHEMA_VERSION = 47;
 
   // Runtime modules must be initialized before repositories/state consume them.
   // Startup-order checks enforce this invariant.
@@ -17,6 +17,7 @@
   const RecurrenceServiceFactory=window.ProductivityRecurrenceService;
   const SessionDomainServiceFactory=window.ProductivitySessionService;
   const TaskDomainServiceFactory=window.ProductivityTaskService;
+  const TaskFocusService=window.ProductivityTaskFocusService;
   const EventDomainServiceFactory=window.ProductivityEventService;
   const GamificationCore=window.ProductivityGamificationCore;
   const TreeService=window.ProductivityTreeService;
@@ -41,7 +42,7 @@
   const ViewCoordinatorFactory=window.ProductivityViewCoordinator;
   const StartupControllerFactory=window.ProductivityStartupController;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -68,6 +69,7 @@
       !RecurrenceServiceFactory ? 'RecurrenceService' : null,
       !SessionDomainServiceFactory ? 'SessionService' : null,
       !TaskDomainServiceFactory ? 'TaskService' : null,
+      !TaskFocusService ? 'TaskFocusService' : null,
       !EventDomainServiceFactory ? 'EventService' : null,
       !StateMigrationFactory ? 'StateMigration' : null,
       !RecoveryStoreFactory ? 'RecoveryStore' : null,
@@ -1962,6 +1964,7 @@
     chartSvg: document.getElementById('chartSvg'),
     chartLegend: document.getElementById('chartLegend'),
     subjectBreakdownBody: document.getElementById('subjectBreakdownBody'),
+    taskFocusBreakdownBody: document.getElementById('taskFocusBreakdownBody'),
     sessionAnalyticsBody: document.getElementById('sessionAnalyticsBody'),
 
     collectionContent: document.getElementById('collectionContent'),
@@ -2058,11 +2061,28 @@
   // Aktif oturumun to-do listesindeki ilk tamamlanmamış görevi bul
   function getCurrentTodoTask(){
     if(!data.activeSessionId) return null;
-    const s = findSession(data.activeSessionId);
-    if(!s || !s.todos || s.todos.length===0) return null;
-    const todo = s.todos.find(t=>!t.done);
-    if(!todo) return null;
-    return { session:s, todo };
+    const s=findSession(data.activeSessionId);
+    if(!s) return null;
+
+    const todos=Array.isArray(s.todos)?s.todos:[];
+    const todo=todos.find(item=>!item.done);
+    if(todo) return {session:s,todo};
+
+    const linked=TaskFocusService.linkedTaskInfo(s,TaskRepository.all());
+    if(linked && !linked.done){
+      return {
+        session:s,
+        todo:{
+          id:'linked-task-display',
+          text:linked.text,
+          done:false,
+          linkedTaskId:linked.taskId,
+          displayOnly:true
+        }
+      };
+    }
+
+    return null;
   }
 
   function updateIntentDisplay(){
@@ -3231,8 +3251,14 @@
   }
 
   // Yeni bir oturum başlatır (sadece aktif/duraklatılmış oturum yokken çağrılır)
-  function startWorking(subject, targetMinutes, seedTodoText=null){
-    const result=timerController.start({subject,targetMinutes,seedTodoText});
+  function startWorking(subject,targetMinutes,seedTodoText=null,linkedTaskId=null){
+    const result=timerController.start({
+      subject,
+      targetMinutes,
+      seedTodoText,
+      linkedTaskId,
+      linkedTaskText:seedTodoText
+    });
     const newSession=result.session;
 
     expandedSessions.add(newSession.id);
@@ -3257,6 +3283,7 @@
     el.workTimer.textContent=formatRingTime(pausedSession ? pausedSession.duration : 0);
     renderToday(completedList.length > 0);
     renderSessionList();
+    renderTaskList();
     updateIntentDisplay();
     celebrateTreeCompletions(completedList);
     showToast('Duraklatıldı. "Devam Et" ile kaldığın yerden sürdürebilirsin.', true);
@@ -3273,6 +3300,7 @@
     ensureTimerScheduler();
     renderToday(false);
     renderSessionList();
+    renderTaskList();
     playNote(660,0,0.12);
   }
 
@@ -3479,24 +3507,54 @@
   el.focusFinishBtn.addEventListener('click', async ()=>{
     const ok = await askConfirm('Bu odak oturumunu bitirmek istediğine emin misin?');
     if(!ok) return;
-    endSession();
+    await endSession();
   });
 
   // Oturumu bitirir; sayaç hedef sürede kendiliğinden durmaz, bitirme kararı kullanıcıdadır.
-  function endSession(){
+  async function endSession(){
     // Oturum hangi arayüzden bitirilirse bitirilsin Focus Mode kapalı kalmalı.
     closeFocusMode();
     const beforeBadges=getUnlockedBadgeMap();
     const beforeLevel=getLevelInfo().level;
     const result=timerController.finish();
-    const completedList=result.completedList || [];
+    const completedTrees=[...(result.completedList || [])];
+    const linked=TaskFocusService.linkedTaskInfo(
+      result.session,
+      TaskRepository.all()
+    );
+    let linkedTaskCompleted=false;
 
-    celebrateTreeCompletions(completedList);
+    if(linked?.task && !linked.task.done){
+      const choice=await askLinkedTaskFinishChoice(linked.text);
+      if(choice==='complete'){
+        const taskResult=TaskDomainService.toggleDone(linked.taskId);
+        if(taskResult && !taskResult.wasDone && taskResult.task.done){
+          TaskFocusService.syncLinkedTodo(result.session,true,{now:Date.now()});
+          if(taskResult.newlyRewarded){
+            completedTrees.push(...addTreeGrowth(GROWTH_PER_TODO));
+          }
+          spawnNextRecurringTask(taskResult.task);
+          linkedTaskCompleted=true;
+        }
+      }
+    }
+
+    saveData();
+    refreshUI(['tasks','calendar']);
+    renderToday(completedTrees.length>0);
+    celebrateTreeCompletions(completedTrees);
     renderSessionList();
     updateIntentDisplay();
+    renderStats();
     reportProgress(beforeLevel,beforeBadges);
-    showToast('Oturum bitirildi. Şimdi kısa bir mola zamanı ☕', true);
+    showToast(
+      linkedTaskCompleted
+        ? 'Oturum bitirildi ve bağlı görev tamamlandı. Şimdi kısa bir mola zamanı ☕'
+        : 'Oturum bitirildi. Şimdi kısa bir mola zamanı ☕',
+      true
+    );
     startBreak(5);
+    return {session:result.session,linkedTaskCompleted};
   }
 
   async function skipBreakAndStartNewSession(){
@@ -3521,7 +3579,7 @@
     } else if(btn.id === 'workResumeBtn'){
       resumeWorking();
     } else if(btn.id === 'workFinishBtn'){
-      endSession();
+      await endSession();
     } else if(btn.id === 'breakAdjustBtn'){
       const currentMinutes = Math.max(GOAL_MIN, Math.round((data.breakState && data.breakState.targetSeconds || 300)/60));
       const result = await askMinutes('Mola süresini ayarla', currentMinutes, false, false, 'break');
@@ -3608,7 +3666,11 @@
       escapeHtml,
       formatDurationLabel,
       displayClockTime,
-      sessionFocusScore
+      sessionFocusScore,
+      linkedTaskInfo:session=>TaskFocusService.linkedTaskInfo(
+        session,
+        TaskRepository.all()
+      )
     });
 
     el.sessionList.innerHTML=view.html;
@@ -3724,18 +3786,41 @@
       const session=findSession(sid);
       const beforeBadges=getUnlockedBadgeMap();
       const beforeLevel=getLevelInfo().level;
-      const result=session && SessionDomainService.toggleTodo(session,target.dataset.todo);
+      const todo=session?.todos?.find(item=>item?.id===target.dataset.todo) || null;
+      const linkedTask=todo?.linkedTaskId
+        ? TaskDomainService.byId(todo.linkedTaskId)
+        : null;
+      const result=session && SessionDomainService.toggleTodo(
+        session,
+        target.dataset.todo,
+        {reward:!linkedTask}
+      );
       if(result){
-        const completedList=result.newlyRewarded ? addTreeGrowth(GROWTH_PER_TODO) : [];
+        let completedList=result.newlyRewarded ? addTreeGrowth(GROWTH_PER_TODO) : [];
+
+        if(linkedTask && sid===data.activeSessionId && linkedTask.done!==result.todo.done){
+          const taskResult=TaskDomainService.toggleDone(linkedTask.id);
+          if(taskResult && !taskResult.wasDone && taskResult.task.done){
+            if(taskResult.newlyRewarded){
+              completedList=[...completedList,...addTreeGrowth(GROWTH_PER_TODO)];
+            }
+            spawnNextRecurringTask(taskResult.task);
+          }
+        }
+
         saveData();
+        refreshUI(['tasks','calendar']);
         renderSessionList();
         updateIntentDisplay();
+        if(el.focusOverlay.classList.contains('show')) renderFocusOverlay();
         if(!result.wasDone && result.todo.done){
           playTodoCheckSound();
           renderToday(completedList.length>0);
           celebrateTreeCompletions(completedList);
           reportProgress(beforeLevel,beforeBadges);
           if(result.allDone) showToast('Bu oturumun tüm görevleri tamamlandı! 🎉');
+        }else{
+          renderToday(false);
         }
       }
     } else if(action === 'delete-todo'){
@@ -3796,6 +3881,26 @@
       cancelValue:false,
       showCancel:true,
       focus:'cancel'
+    });
+  }
+
+  function askLinkedTaskFinishChoice(taskText){
+    return ModalService.choice({
+      controller:modalController,
+      backdrop:el.confirmBackdrop,
+      textElement:el.confirmText,
+      okButton:el.confirmOk,
+      altButton:el.confirmAlt,
+      cancelButton:el.confirmCancel,
+      message:'“'+taskText+'” görevi için odak oturumu bitti. Görevi de tamamlandı olarak işaretlemek ister misin?',
+      okLabel:'Görevi Tamamla',
+      okValue:'complete',
+      okDanger:false,
+      showAlt:false,
+      cancelLabel:'Açık Bırak',
+      cancelValue:'keep',
+      showCancel:true,
+      focus:'ok'
     });
   }
 
@@ -4277,6 +4382,21 @@
     );
   }
 
+  function renderTaskFocusBreakdown(){
+    if(!el.taskFocusBreakdownBody) return;
+
+    const rows=TaskFocusService.breakdown(
+      sessionsForKeys(getPeriodKeys(currentPeriod)),
+      TaskRepository.all(),
+      session=>sessionSecondsForAnalytics(session)
+    );
+
+    el.taskFocusBreakdownBody.innerHTML=StatsView.buildTaskFocusBreakdown(
+      rows,
+      {escapeHtml,formatDurationLabel}
+    );
+  }
+
   const WEEKDAY_SHORT = ['Paz','Pzt','Sal','Çar','Per','Cum','Cmt'];
   const MONTH_SHORT = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
   const MONTH_FULL = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
@@ -4461,6 +4581,7 @@
     renderChartDispatch();
     renderSessionAnalytics();
     renderSubjectBreakdown();
+    renderTaskFocusBreakdown();
     renderHeatmap();
   }
 
@@ -4962,7 +5083,17 @@
       safeTagColor,
       escapeHtml,
       taskDueBadge,
-      repeatTaskLabel
+      repeatTaskLabel,
+      formatDurationLabel,
+      focusSummary:item=>TaskFocusService.summarizeTask(
+        item.id,
+        sessionsForKeys(Object.keys(data.sessionLog||{})),
+        session=>sessionSecondsForAnalytics(session),
+        {
+          activeSessionId:data.activeSessionId,
+          isWorking:data.isWorking
+        }
+      )
     });
   }
 
@@ -5048,8 +5179,19 @@
     }
     if(!result.wasDone && result.task.done) spawnNextRecurringTask(result.task);
 
+    const activeSession=data.activeSessionId ? findSession(data.activeSessionId) : null;
+    if(
+      activeSession &&
+      TaskFocusService.sessionTaskId(activeSession)===result.task.id
+    ){
+      TaskFocusService.syncLinkedTodo(activeSession,result.task.done,{now:Date.now()});
+    }
+
     saveData();
     refreshUI(['tasks','calendar']);
+    renderSessionList();
+    updateIntentDisplay();
+    if(el.focusOverlay.classList.contains('show')) renderFocusOverlay();
     if(!result.wasDone && result.task.done){
       playTodoCheckSound();
       refreshUI('today',{celebrateTree:completedList.length>0});
@@ -5285,12 +5427,13 @@
     const suggestedSubject = tag ? tag.name : '';
     const result = await askMinutes('Bu görev için bir odak oturumu başlat',25,true,true,'session',suggestedSubject);
     if(!result) return;
-    startWorking(result.subject, result.minutes, task.text);
-    const active = findSession(data.activeSessionId);
-    if(active && active.todos && active.todos[0]) active.todos[0].linkedTaskId = task.id;
+    startWorking(result.subject,result.minutes,task.text,task.id);
+    const active=findSession(data.activeSessionId);
+    if(active) TaskFocusService.linkSession(active,task,{now:Date.now()});
     saveData();
+    renderTaskList();
     document.querySelector('.tab-btn[data-tab="work"]')?.click();
-    showToast('Görev odak oturumuna eklendi.', true);
+    showToast('Görev odak oturumuna bağlandı.', true);
   }
 
 
@@ -7528,6 +7671,7 @@
       equal(Boolean(window.ProductivityRecurrenceService),true);
       equal(Boolean(window.ProductivitySessionService),true);
       equal(Boolean(window.ProductivityTaskService),true);
+      equal(Boolean(window.ProductivityTaskFocusService),true);
       equal(Boolean(window.ProductivityEventService),true);
     });
 
