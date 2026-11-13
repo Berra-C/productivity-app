@@ -153,3 +153,14 @@ The headless Chromium gate explicitly binds CDP to `127.0.0.1` and enables the D
 The Chromium release gate discovers Chrome's assigned debugging port from `DevToolsActivePort`, connects to the browser-level DevTools websocket on `127.0.0.1`, and attaches to the page using flattened `Target.attachToTarget`. This avoids fixed-port collisions and page-websocket startup races while preserving a real Chromium DOM/runtime test.
 
 The CDP WebSocket client is readyState-aware and creates its open promise during construction, so fast loopback connections cannot lose the `open` event.
+
+
+## Task → Focus integration
+
+Task-linked focus sessions use `session.linkedTaskId` plus `session.linkedTaskText` as the durable relationship. `linkedTaskText` is a historical snapshot so session history remains understandable if the task is later deleted, while current task text is preferred whenever the task still exists.
+
+`tasks/task-focus-service.js` is the single integration boundary for legacy link inference, session/task linking, linked-todo mirroring, per-task focus totals and task-focus analytics breakdowns. Focus time is derived from session history rather than duplicated onto task records, avoiding a second mutable source of truth.
+
+A linked session todo mirrors the global task and does not independently grant todo XP. Completing the task therefore produces one task completion reward, not a session-todo reward plus a task reward. Session todo mutations update `session.updatedAt` so cloud LWW merge can observe them.
+
+Midnight session continuation preserves the linked task relationship. At session finish, an open linked task can be completed or deliberately left open. The stats panel derives “Görevlere Göre Odak” from linked sessions for the selected period.
