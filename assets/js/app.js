@@ -1,8 +1,8 @@
 /*
  * GENERATED FILE — DO NOT EDIT assets/js/app.js DIRECTLY.
- * Edit modules/*.js or assets/js/app-main.js, then run: npm run build
+ * Edit assets/js/modules/** or assets/js/app-main.js, then run: npm run build
  */
-/* ===== assets/js/modules/ui-helpers.js ===== */
+/* ===== assets/js/modules/ui/ui-helpers.js ===== */
 (() => {
   'use strict';
 
@@ -30,7 +30,7 @@
   };
 })();
 
-/* ===== assets/js/modules/state-merge.js ===== */
+/* ===== assets/js/modules/state/state-merge.js ===== */
 (() => {
   'use strict';
 
@@ -262,7 +262,7 @@
   };
 })();
 
-/* ===== assets/js/modules/state-persistence.js ===== */
+/* ===== assets/js/modules/state/state-persistence.js ===== */
 (() => {
   'use strict';
 
@@ -412,7 +412,7 @@
   };
 })();
 
-/* ===== assets/js/modules/state-writer.js ===== */
+/* ===== assets/js/modules/state/state-writer.js ===== */
 (() => {
   'use strict';
 
@@ -542,7 +542,7 @@
   window.ProductivityStateWriter={create};
 })();
 
-/* ===== assets/js/modules/state-migration.js ===== */
+/* ===== assets/js/modules/state/state-migration.js ===== */
 (() => {
   'use strict';
 
@@ -831,7 +831,7 @@
   window.ProductivityStateMigration={create};
 })();
 
-/* ===== assets/js/modules/recovery-store.js ===== */
+/* ===== assets/js/modules/state/recovery-store.js ===== */
 (() => {
   'use strict';
 
@@ -974,7 +974,7 @@
   window.ProductivityRecoveryStore={create};
 })();
 
-/* ===== assets/js/modules/state-recovery-service.js ===== */
+/* ===== assets/js/modules/state/state-recovery-service.js ===== */
 (() => {
   'use strict';
 
@@ -1033,7 +1033,7 @@
   window.ProductivityStateRecoveryService={create};
 })();
 
-/* ===== assets/js/modules/destructive-sync-guard.js ===== */
+/* ===== assets/js/modules/sync/destructive-sync-guard.js ===== */
 (() => {
   'use strict';
 
@@ -1071,7 +1071,7 @@
   window.ProductivityDestructiveSyncGuard={counts,risk};
 })();
 
-/* ===== assets/js/modules/external-state-service.js ===== */
+/* ===== assets/js/modules/sync/external-state-service.js ===== */
 (() => {
   'use strict';
 
@@ -1151,7 +1151,7 @@
   };
 })();
 
-/* ===== assets/js/modules/sync-controller.js ===== */
+/* ===== assets/js/modules/sync/sync-controller.js ===== */
 (() => {
   'use strict';
 
@@ -1324,7 +1324,7 @@
   };
 })();
 
-/* ===== assets/js/modules/runtime-error-service.js ===== */
+/* ===== assets/js/modules/app/runtime-error-service.js ===== */
 (() => {
   'use strict';
 
@@ -1381,7 +1381,7 @@
   window.ProductivityRuntimeErrorService={bind};
 })();
 
-/* ===== assets/js/modules/view-coordinator.js ===== */
+/* ===== assets/js/modules/app/view-coordinator.js ===== */
 (() => {
   'use strict';
 
@@ -1459,7 +1459,7 @@
   window.ProductivityViewCoordinator={create};
 })();
 
-/* ===== assets/js/modules/startup-controller.js ===== */
+/* ===== assets/js/modules/app/startup-controller.js ===== */
 (() => {
   'use strict';
 
@@ -1513,7 +1513,7 @@
   window.ProductivityStartupController={create};
 })();
 
-/* ===== assets/js/modules/timer-core.js ===== */
+/* ===== assets/js/modules/timer/timer-core.js ===== */
 (() => {
   'use strict';
 
@@ -1600,7 +1600,7 @@
   };
 })();
 
-/* ===== assets/js/modules/timer-service.js ===== */
+/* ===== assets/js/modules/timer/timer-service.js ===== */
 (() => {
   'use strict';
 
@@ -1722,7 +1722,7 @@
   };
 })();
 
-/* ===== assets/js/modules/timer-controller.js ===== */
+/* ===== assets/js/modules/timer/timer-controller.js ===== */
 (() => {
   'use strict';
 
@@ -1868,7 +1868,7 @@
   window.ProductivityTimerController={create};
 })();
 
-/* ===== assets/js/modules/session-repository.js ===== */
+/* ===== assets/js/modules/sessions/session-repository.js ===== */
 (() => {
   'use strict';
 
@@ -1959,7 +1959,7 @@
   window.ProductivitySessionRepository={create};
 })();
 
-/* ===== assets/js/modules/task-repository.js ===== */
+/* ===== assets/js/modules/tasks/task-repository.js ===== */
 (() => {
   'use strict';
 
@@ -2029,7 +2029,7 @@
   window.ProductivityTaskRepository={create};
 })();
 
-/* ===== assets/js/modules/event-repository.js ===== */
+/* ===== assets/js/modules/calendar/event-repository.js ===== */
 (() => {
   'use strict';
 
@@ -2088,7 +2088,7 @@
   window.ProductivityEventRepository={create};
 })();
 
-/* ===== assets/js/modules/recurrence-service.js ===== */
+/* ===== assets/js/modules/shared/recurrence-service.js ===== */
 (() => {
   'use strict';
 
@@ -2253,7 +2253,7 @@
   window.ProductivityRecurrenceService={create,normalizeDays};
 })();
 
-/* ===== assets/js/modules/session-service.js ===== */
+/* ===== assets/js/modules/sessions/session-service.js ===== */
 (() => {
   'use strict';
 
@@ -2457,7 +2457,7 @@
   window.ProductivitySessionService={create};
 })();
 
-/* ===== assets/js/modules/task-service.js ===== */
+/* ===== assets/js/modules/tasks/task-service.js ===== */
 (() => {
   'use strict';
 
@@ -2700,7 +2700,7 @@
   window.ProductivityTaskService={create};
 })();
 
-/* ===== assets/js/modules/event-service.js ===== */
+/* ===== assets/js/modules/calendar/event-service.js ===== */
 (() => {
   'use strict';
 
@@ -2972,7 +2972,7 @@
   window.ProductivityEventService={create};
 })();
 
-/* ===== assets/js/modules/gamification-core.js ===== */
+/* ===== assets/js/modules/gamification/gamification-core.js ===== */
 (() => {
   'use strict';
 
@@ -3250,7 +3250,7 @@
   };
 })();
 
-/* ===== assets/js/modules/tree-service.js ===== */
+/* ===== assets/js/modules/gamification/tree-service.js ===== */
 (() => {
   'use strict';
 
@@ -3359,7 +3359,7 @@
   };
 })();
 
-/* ===== assets/js/modules/analytics-core.js ===== */
+/* ===== assets/js/modules/analytics/analytics-core.js ===== */
 (() => {
   'use strict';
 
@@ -3867,7 +3867,7 @@
   };
 })();
 
-/* ===== assets/js/modules/calendar-core.js ===== */
+/* ===== assets/js/modules/calendar/calendar-core.js ===== */
 (() => {
   'use strict';
 
@@ -3947,7 +3947,7 @@
   };
 })();
 
-/* ===== assets/js/modules/view-formatters.js ===== */
+/* ===== assets/js/modules/ui/view-formatters.js ===== */
 (() => {
   'use strict';
 
@@ -4062,7 +4062,7 @@
   };
 })();
 
-/* ===== assets/js/modules/summary-view.js ===== */
+/* ===== assets/js/modules/analytics/summary-view.js ===== */
 (() => {
   'use strict';
 
@@ -4309,7 +4309,7 @@
   window.ProductivitySummaryView={build};
 })();
 
-/* ===== assets/js/modules/calendar-view.js ===== */
+/* ===== assets/js/modules/calendar/calendar-view.js ===== */
 (() => {
   'use strict';
 
@@ -5016,7 +5016,7 @@
   };
 })();
 
-/* ===== assets/js/modules/stats-view.js ===== */
+/* ===== assets/js/modules/analytics/stats-view.js ===== */
 (() => {
   'use strict';
 
@@ -5379,7 +5379,7 @@
   };
 })();
 
-/* ===== assets/js/modules/task-view.js ===== */
+/* ===== assets/js/modules/tasks/task-view.js ===== */
 (() => {
   'use strict';
 
@@ -5547,7 +5547,7 @@
   };
 })();
 
-/* ===== assets/js/modules/collection-view.js ===== */
+/* ===== assets/js/modules/gamification/collection-view.js ===== */
 (() => {
   'use strict';
 
@@ -5619,7 +5619,7 @@
   window.ProductivityCollectionView={build};
 })();
 
-/* ===== assets/js/modules/session-view.js ===== */
+/* ===== assets/js/modules/sessions/session-view.js ===== */
 (() => {
   'use strict';
 
@@ -5854,7 +5854,7 @@
   };
 })();
 
-/* ===== assets/js/modules/focus-view.js ===== */
+/* ===== assets/js/modules/ui/focus-view.js ===== */
 (() => {
   'use strict';
 
@@ -5937,7 +5937,7 @@
   window.ProductivityFocusView={buildModel};
 })();
 
-/* ===== assets/js/modules/work-controls-view.js ===== */
+/* ===== assets/js/modules/ui/work-controls-view.js ===== */
 (() => {
   'use strict';
 
@@ -5968,7 +5968,7 @@
   window.ProductivityWorkControlsView={build};
 })();
 
-/* ===== assets/js/modules/modal-service.js ===== */
+/* ===== assets/js/modules/ui/modal-service.js ===== */
 (() => {
   'use strict';
 
