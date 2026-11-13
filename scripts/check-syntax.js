@@ -1,67 +1,45 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const {
+  PRODUCTION_RUNTIME_FILES
+} = require('./module-manifest');
 
 const root = path.resolve(__dirname, '..');
+
+const scriptFiles = fs
+  .readdirSync(path.join(root, 'scripts'), {
+    withFileTypes: true
+  })
+  .filter(entry =>
+    entry.isFile() &&
+    entry.name.endsWith('.js')
+  )
+  .map(entry => `scripts/${entry.name}`);
+
 const files = [
-  'assets/js/app-main.js',
-  'assets/js/modules/ui-helpers.js',
-  'assets/js/modules/state-merge.js',
-  'assets/js/modules/state-persistence.js',
-  'assets/js/modules/state-writer.js',
-  'assets/js/modules/state-migration.js',
-  'assets/js/modules/recovery-store.js',
-  'assets/js/modules/state-recovery-service.js',
-  'assets/js/modules/destructive-sync-guard.js',
-  'assets/js/modules/external-state-service.js',
-  'assets/js/modules/sync-controller.js',
-  'assets/js/modules/runtime-error-service.js',
-  'assets/js/modules/view-coordinator.js',
-  'assets/js/modules/startup-controller.js',
-  'assets/js/modules/timer-core.js',
-  'assets/js/modules/timer-service.js',
-  'assets/js/modules/timer-controller.js',
-  'assets/js/modules/session-repository.js',
-  'assets/js/modules/task-repository.js',
-  'assets/js/modules/event-repository.js',
-  'assets/js/modules/recurrence-service.js',
-  'assets/js/modules/session-service.js',
-  'assets/js/modules/task-service.js',
-  'assets/js/modules/event-service.js',
-  'assets/js/modules/gamification-core.js',
-  'assets/js/modules/tree-service.js',
-  'assets/js/modules/analytics-core.js',
-  'assets/js/modules/calendar-core.js',
-  'assets/js/modules/view-formatters.js',
-  'assets/js/modules/summary-view.js',
-  'assets/js/modules/calendar-view.js',
-  'assets/js/modules/stats-view.js',
-  'assets/js/modules/task-view.js',
-  'assets/js/modules/collection-view.js',
-  'assets/js/modules/session-view.js',
-  'assets/js/modules/focus-view.js',
-  'assets/js/modules/work-controls-view.js',
-  'assets/js/modules/modal-service.js',
-  'assets/js/cloud-config.js',
-  'assets/js/cloud-sync.js',
-  'assets/js/pwa-register.js',
-  'sw.js',
-  'scripts/build-app.js'
+  ...new Set([
+    ...PRODUCTION_RUNTIME_FILES,
+    ...scriptFiles
+  ])
 ];
 
 let failed = false;
 
 for (const relativePath of files) {
   const fullPath = path.join(root, relativePath);
+
   if (!fs.existsSync(fullPath)) {
     console.error(`missing: ${relativePath}`);
     failed = true;
     continue;
   }
 
-  const result = spawnSync(process.execPath, ['--check', fullPath], {
-    encoding: 'utf8'
-  });
+  const result = spawnSync(
+    process.execPath,
+    ['--check', fullPath],
+    { encoding: 'utf8' }
+  );
 
   if (result.status !== 0) {
     failed = true;
@@ -71,4 +49,7 @@ for (const relativePath of files) {
 }
 
 if (failed) process.exit(1);
-console.log('syntax checks passed');
+
+console.log(
+  `syntax checks passed (${files.length} files)`
+);
