@@ -653,6 +653,206 @@ function browserStubs(){
       throw new Error('deleted task remained in primary storage');
     }
 
+
+    // TASK → FOCUS integration: create task, start its focus session through the
+    // real task button, finish the session, then complete the linked task.
+    await cdp.evaluate(`
+      (()=>{
+        const input=document.getElementById('taskInput');
+        const button=document.getElementById('taskAddBtn');
+        if(!input || !button) throw new Error('task controls missing for focus flow');
+        input.value='Browser focus task';
+        button.click();
+        return true;
+      })()
+    `);
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        window.__APP_CLOUD_BRIDGE__
+          .exportState()
+          .tasks
+          .some(task=>task.text==='Browser focus task')
+      `)
+    );
+
+    const focusTaskId=await cdp.evaluate(`
+      window.__APP_CLOUD_BRIDGE__
+        .exportState()
+        .tasks
+        .find(task=>task.text==='Browser focus task')
+        ?.id || null
+    `);
+
+    if(!focusTaskId){
+      throw new Error('focus task id missing');
+    }
+
+    await cdp.evaluate(`
+      (()=>{
+        const card=document.querySelector(
+          '[data-task-id="${focusTaskId}"]'
+        );
+        const button=card?.querySelector('[data-action="focus-task"]');
+        if(!button) throw new Error('task focus button missing');
+        button.click();
+        return true;
+      })()
+    `);
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        document
+          .getElementById('goalBackdrop')
+          ?.classList
+          .contains('show')
+      `)
+    );
+
+    await cdp.evaluate(`
+      (()=>{
+        const input=document.getElementById('goalMinutesDisplay');
+        const start=document.getElementById('goalStart');
+        input.value='1';
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+        start.click();
+        return true;
+      })()
+    `);
+
+    const focusSessionId=await waitFor(async()=>{
+      const state=await cdp.evaluate(`
+        window.__APP_CLOUD_BRIDGE__.exportState()
+      `);
+      if(!state?.isWorking || !state.activeSessionId) return null;
+      const session=Object.values(state.sessionLog||{})
+        .flat()
+        .find(item=>item.id===state.activeSessionId);
+      return session?.linkedTaskId===focusTaskId
+        ? state.activeSessionId
+        : null;
+    });
+
+    const focusedCardState=await cdp.evaluate(`
+      (()=>{
+        const card=document.querySelector('[data-task-id="${focusTaskId}"]');
+        return {
+          focused:card?.classList.contains('task-focused') || false,
+          live:card?.textContent?.includes('Odakta') || false,
+          redundantButton:Boolean(card?.querySelector('[data-action="focus-task"]'))
+        };
+      })()
+    `);
+
+    if(
+      !focusedCardState.focused ||
+      !focusedCardState.live ||
+      focusedCardState.redundantButton
+    ){
+      throw new Error('focused task card state is incorrect');
+    }
+
+    const linkedSessionVisible=await cdp.evaluate(`
+      document.getElementById('sessionList')
+        ?.textContent
+        ?.includes('Browser focus task') || false
+    `);
+
+    if(!linkedSessionVisible){
+      throw new Error('linked task is not visible on session card');
+    }
+
+    // Pause once so the derived task focus duration is non-zero and the card
+    // displays the paused linked-session state.
+    await cdp.evaluate(`document.getElementById('workToggle').click()`);
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        window.__APP_CLOUD_BRIDGE__.exportState().isWorking===false
+      `)
+    );
+
+    const pausedTaskCard=await cdp.evaluate(`
+      document.querySelector('[data-task-id="${focusTaskId}"]')
+        ?.textContent
+        ?.includes('Oturum açık') || false
+    `);
+
+    if(!pausedTaskCard){
+      throw new Error('paused task-focus state missing from task card');
+    }
+
+    await cdp.evaluate(`document.getElementById('workFinishBtn').click()`);
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        document
+          .getElementById('confirmBackdrop')
+          ?.classList
+          .contains('show') &&
+        document.getElementById('confirmText')
+          ?.textContent
+          ?.includes('Browser focus task')
+      `)
+    );
+
+    await cdp.evaluate(`document.getElementById('confirmOk').click()`);
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        (()=>{
+          const state=window.__APP_CLOUD_BRIDGE__.exportState();
+          const task=state.tasks.find(item=>item.id===${JSON.stringify(focusTaskId)});
+          const session=Object.values(state.sessionLog||{})
+            .flat()
+            .find(item=>item.id===${JSON.stringify(focusSessionId)});
+          return Boolean(
+            task?.done &&
+            session?.endedAt &&
+            session?.linkedTaskId===${JSON.stringify(focusTaskId)} &&
+            state.activeSessionId===null &&
+            state.breakState
+          );
+        })()
+      `)
+    );
+
+    const persistedFocusState=JSON.parse(
+      await cdp.evaluate(`localStorage.getItem('direncAgaci_v2')`)
+    );
+    const persistedFocusTask=persistedFocusState.tasks.find(
+      task=>task.id===focusTaskId
+    );
+    const persistedFocusSession=Object.values(
+      persistedFocusState.sessionLog||{}
+    )
+      .flat()
+      .find(session=>session.id===focusSessionId);
+
+    if(
+      !persistedFocusTask?.done ||
+      persistedFocusSession?.linkedTaskId!==focusTaskId
+    ){
+      throw new Error('task-focus relationship was not persisted');
+    }
+
+    // Stats must expose the task-linked work relationship.
+    await cdp.evaluate(`
+      (()=>{
+        document.querySelector('.tab-btn[data-tab="stats"]')?.click();
+        return true;
+      })()
+    `);
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        document
+          .getElementById('taskFocusBreakdownBody')
+          ?.textContent
+          ?.includes('Browser focus task') || false
+      `)
+    );
+
     // Browser runtime banner must remain hidden.
     const runtimeBannerVisible=await cdp.evaluate(`
       document
