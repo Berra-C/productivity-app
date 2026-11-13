@@ -97,3 +97,13 @@ Session, task, event and recurrence mutation rules live in dedicated services. `
 State migration, IndexedDB recovery storage, startup recovery sequencing, destructive-sync risk calculation and device-local timer preservation are independent reliability modules.
 
 The composition layer supplies UI callbacks; reliability modules own deterministic data rules. `npm run reliability:check` independently verifies migration, recovery sequencing, destructive-sync thresholds and active-timer preservation.
+
+## Cloud synchronization boundary
+
+`sync-controller.js` owns synchronization decisions: initial merge/adoption, remote-newer handling, dirty-local pushes, 409 conflict recovery and destructive-replacement confirmation.
+
+`cloud-sync.js` now owns transport/account/UI concerns around that controller: authentication, API calls, device management, status rendering and persistence of sync metadata.
+
+Critical invariant: when the user chooses to keep this device's data after a destructive-sync warning, the local state remains dirty and the base revision is not advanced. This prevents a protected local state from being silently marked as synchronized.
+
+`npm run sync:check` verifies the controller decision matrix. `npm run deployment:check` verifies production script ordering, asset-version alignment and the protected-local integration contract.
