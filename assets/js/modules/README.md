@@ -12,7 +12,7 @@ modules/
 ├── shared/        cross-domain deterministic helpers such as recurrence
 ├── state/         merge, persistence, writer, migration and recovery
 ├── sync/          sync controller, destructive guard and external-state rules
-├── tasks/         task repository, mutation service and view
+├── tasks/         task repository, mutation/focus integration services and view
 ├── timer/         timer core, service and controller
 └── ui/            generic UI helpers, formatters, modal/focus/work controls
 ```
