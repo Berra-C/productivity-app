@@ -4,7 +4,7 @@
 
 `assets/js/app.js` is a generated production bundle. Do not edit it directly.
 
-Edit source files under `assets/js/modules/` or `assets/js/app-main.js`, then run:
+Edit source files under `assets/js/modules/<responsibility>/` or `assets/js/app-main.js`, then run:
 
 ```bash
 npm run build
@@ -13,38 +13,44 @@ npm run check
 
 The generated `app.js` is committed so GitHub Pages can serve the application without a Node runtime.
 
-## Runtime layers
+## Runtime organization
 
-1. **UI helpers** — presentation-only utilities.
-2. **State merge** — deterministic local/cloud merge rules and tombstones.
-3. **State persistence** — local primary/backup storage and storage metadata helpers.
-4. **State writer** — semantic change detection, revision generation and commit orchestration.
-5. **Timer core** — timer modes, transitions and pure time calculations.
-6. **Timer service** — session/interval lifecycle mutation.
-7. **Timer controller** — start/pause/resume/finish orchestration.
-8. **Session repository** — session lookup and date-bucket access.
-9. **Task repository** — task lookup, collection mutation and task-specific queries.
-10. **Event repository** — event lookup, collection mutation and event-specific queries.
-11. **Recurrence service** — shared daily/weekly/monthly scheduling, exceptions and series scopes.
-12. **Session service** — session subject/todo/group/timing mutations.
-13. **Task service** — task creation, completion, recurrence spawning, edit/delete and undo mutations.
-14. **Event service** — event creation, recurrence generation, edit/delete and undo mutations.
-15. **Gamification core** — XP, levels, badges and streak/freeze calculations.
-16. **Tree service** — tree growth, completion and rollback mutations.
-17. **Analytics core** — focus, planning, productive-hour and weekly review calculations.
-18. **Calendar core** — calendar time-window and work-interval projection rules.
-19. **View formatters** — shared display formatting and trend markup.
-20. **Summary view** — pure weekly/monthly summary HTML builder.
-21. **Calendar view** — pure month/year/week/agenda HTML builders and overlap layout.
-22. **Stats view** — chart, heatmap, subject and session analytics markup.
-23. **Task view** — task filtering, grouping and task-card markup.
-24. **Collection view** — tree progress and collection-grid markup.
-25. **Session view** — session cards, todos, target progress and hidden/history markup.
-26. **Focus view** — Focus Mode presentation model derived from active-session state.
-27. **Work controls view** — timer/break control-button markup.
-28. **Modal service** — modal stack/focus management plus reusable confirm, prompt, time, subject and duration dialog flows.
-29. **App main** — composition root, DOM binding and remaining feature orchestration.
-30. **Cloud sync** — optional cloud transport and account synchronization.
+Source modules are grouped by responsibility rather than kept in one flat directory:
+
+```text
+assets/js/modules/
+├── analytics/
+├── app/
+├── calendar/
+├── gamification/
+├── sessions/
+├── shared/
+├── state/
+├── sync/
+├── tasks/
+├── timer/
+└── ui/
+```
+
+The canonical build order lives only in `scripts/module-manifest.js`. Both the production bundle and validation scripts consume this manifest.
+
+High-level dependency direction:
+
+```text
+state / shared
+      ↓
+repositories + domain services
+      ↓
+timer / sync / analytics / calendar / gamification
+      ↓
+deterministic views + UI infrastructure
+      ↓
+app-main.js composition root
+      ↓
+cloud-sync.js transport/account UI
+```
+
+`assets/js/app.js` remains one generated self-contained production bundle for GitHub Pages.
 
 ## Dependency direction
 
@@ -60,9 +66,17 @@ Domain modules must not depend on DOM rendering or page-specific UI.
 - The previous local snapshot is preserved as backup before primary replacement.
 - Cloud merge uses record timestamps and tombstones.
 
-## Next refactor targets
+## Architecture freeze
 
-- Extract state migration/recovery and cloud sync orchestration from the main composition file.
+As of v92, the major modular-refactor phase is frozen. New source modules must:
+- live in an approved responsibility folder,
+- be registered in `scripts/module-manifest.js`,
+- respect the dependency direction,
+- pass `modules:check` and the full release gate.
+
+Further module extraction should happen only when a concrete feature or reliability boundary benefits from it; reducing `app-main.js` line count is no longer a goal by itself.
+
+The next phase is product/UX work, starting with the Task → Focus productivity loop and rule-based insights.
 
 ## Change log organization
 
@@ -124,3 +138,18 @@ This is a genuine browser DOM/runtime regression test, but it does not validate 
 
 
 The browser regression gate also validates that mutations travel through the real application persistence path by checking the serialized primary state after task/session actions. The Storage object is memory-backed only to bypass the execution environment's navigation policy; StateWriter and StatePersistence are the production implementations.
+
+## Module manifest invariant
+
+`scripts/module-manifest.js` is the single source of truth for module files and bundle order. `npm run modules:check` rejects unlisted files, missing files, duplicate entries, root-level module JavaScript and bundle-order drift. Historical `changes/Vxx-CHANGES.txt` files retain the paths that were correct for their releases and are intentionally not rewritten.
+
+The Chromium gate uses Chrome-assigned remote-debugging ports via `DevToolsActivePort`, avoiding fixed-port collisions and making the release gate deterministic across repeated runs.
+
+The Chromium runner normalizes page WebSocket endpoints to `127.0.0.1` and retries CDP attachment, avoiding localhost IPv4/IPv6 races during headless startup.
+
+The headless Chromium gate explicitly binds CDP to `127.0.0.1` and enables the DevTools WebSocket origin required by modern Chromium (`--remote-allow-origins=*`).
+
+
+The Chromium release gate discovers Chrome's assigned debugging port from `DevToolsActivePort`, connects to the browser-level DevTools websocket on `127.0.0.1`, and attaches to the page using flattened `Target.attachToTarget`. This avoids fixed-port collisions and page-websocket startup races while preserving a real Chromium DOM/runtime test.
+
+The CDP WebSocket client is readyState-aware and creates its open promise during construction, so fast loopback connections cannot lose the `open` event.
