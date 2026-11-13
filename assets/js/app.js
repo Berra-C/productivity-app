@@ -779,6 +779,27 @@
             legacyApprox:!!interval?.legacyApprox
           })).filter(interval=>interval.start);
         }
+        if(session.linkedTaskId === undefined || session.linkedTaskId === null){
+          const linkedTodo=Array.isArray(session.todos)
+            ? session.todos.find(todo=>String(todo?.linkedTaskId||'').trim())
+            : null;
+          session.linkedTaskId=linkedTodo?.linkedTaskId
+            ? String(linkedTodo.linkedTaskId)
+            : null;
+        }else{
+          session.linkedTaskId=String(session.linkedTaskId||'').trim() || null;
+        }
+        if(session.linkedTaskText === undefined || session.linkedTaskText === null){
+          const linkedTodo=Array.isArray(session.todos)
+            ? session.todos.find(todo=>String(todo?.linkedTaskId||'').trim()===String(session.linkedTaskId||''))
+            : null;
+          const linkedTask=Array.isArray(raw.tasks)
+            ? raw.tasks.find(task=>String(task?.id||'')===String(session.linkedTaskId||''))
+            : null;
+          session.linkedTaskText=String(linkedTask?.text||linkedTodo?.text||'').trim().slice(0,120) || null;
+        }else{
+          session.linkedTaskText=String(session.linkedTaskText||'').trim().slice(0,120) || null;
+        }
         if(session.hidden === undefined) session.hidden = false;
         if(session.createdAt===undefined) session.createdAt=Number(session.startedAt)||null;
         if(!Number.isFinite(Number(session.updatedAt))){
@@ -1616,7 +1637,9 @@
     name='Oturum',
     subject='Genel',
     targetSeconds=null,
-    seedTodoText=null
+    seedTodoText=null,
+    linkedTaskId=null,
+    linkedTaskText=null
   }={}){
     return {
       id:makeId('s',now),
@@ -1630,8 +1653,17 @@
       duration:0,
       distractions:0,
       distractionCategories:{},
+      linkedTaskId:linkedTaskId ? String(linkedTaskId) : null,
+      linkedTaskText:linkedTaskText
+        ? String(linkedTaskText).trim().slice(0,120)
+        : (seedTodoText ? String(seedTodoText).trim().slice(0,120) : null),
       todos:seedTodoText
-        ? [{id:'t'+now+'seed',text:String(seedTodoText).trim().slice(0,80),done:false,linkedTaskId:null}]
+        ? [{
+            id:'t'+now+'seed',
+            text:String(seedTodoText).trim().slice(0,80),
+            done:false,
+            linkedTaskId:linkedTaskId ? String(linkedTaskId) : null
+          }]
         : [],
       targetSeconds:Number(targetSeconds)>0 ? Number(targetSeconds) : null,
       targetReached:false,
@@ -1704,7 +1736,9 @@
       now:startMs,
       name:previous?.name || 'Oturum',
       subject:previous?.subject || 'Genel',
-      targetSeconds:previous?.targetSeconds || null
+      targetSeconds:previous?.targetSeconds || null,
+      linkedTaskId:previous?.linkedTaskId || null,
+      linkedTaskText:previous?.linkedTaskText || null
     });
     session.continuedFromMidnight=true;
     return session;
@@ -1751,7 +1785,7 @@
     const transitionMode=requireFn(deps,'transitionMode');
     const persist=requireFn(deps,'persist');
 
-    function start({subject='',targetMinutes=null,seedTodoText=null}={}){
+    function start({subject='',targetMinutes=null,seedTodoText=null,linkedTaskId=null,linkedTaskText=null}={}){
       deps.ensureReady?.();
       if(deps.isBreakActive?.()) deps.stopBreak?.();
 
@@ -1764,7 +1798,9 @@
         name:'Oturum ' + (Number(getTodaySessionCount())+1),
         subject:cleanSubject || 'Genel',
         targetSeconds:Number(targetMinutes)>0 ? Number(targetMinutes)*60 : null,
-        seedTodoText
+        seedTodoText,
+        linkedTaskId,
+        linkedTaskText
       });
 
       const sessionDate=todayKey();
@@ -2341,6 +2377,7 @@
     function setHidden(session,hidden){
       if(!session || typeof session!=='object') return false;
       session.hidden=Boolean(hidden);
+      session.updatedAt=now();
       return true;
     }
 
@@ -2351,10 +2388,11 @@
       if(!Array.isArray(session.todos)) session.todos=[];
       const todo={id:idFactory(),text:clean,done:false};
       session.todos.push(todo);
+      session.updatedAt=now();
       return todo;
     }
 
-    function toggleTodo(session,todoId){
+    function toggleTodo(session,todoId,options={}){
       if(!session || !Array.isArray(session.todos)) return null;
       const todo=session.todos.find(item=>item?.id===todoId);
       if(!todo) return null;
@@ -2362,9 +2400,12 @@
       const value=state();
       const wasDone=Boolean(todo.done);
       todo.done=!wasDone;
+      session.updatedAt=now();
       let newlyRewarded=false;
 
-      if(!wasDone && todo.done && !todo.xpCounted){
+      const reward=options.reward!==false;
+
+      if(reward && !wasDone && todo.done && !todo.xpCounted){
         todo.xpCounted=true;
         value.totalTodosCompleted=(Number(value.totalTodosCompleted)||0)+1;
         newlyRewarded=true;
@@ -2382,7 +2423,9 @@
       if(!session || !Array.isArray(session.todos)) return null;
       const index=session.todos.findIndex(item=>item?.id===todoId);
       if(index<0) return null;
-      return session.todos.splice(index,1)[0] || null;
+      const removed=session.todos.splice(index,1)[0] || null;
+      if(removed) session.updatedAt=now();
+      return removed;
     }
 
     function editHistoricalTiming(session,{newStart,newEnd,existingIntervals=[],mergeGapMs=1000}={}){
@@ -2698,6 +2741,187 @@
   }
 
   window.ProductivityTaskService={create};
+})();
+
+/* ===== assets/js/modules/tasks/task-focus-service.js ===== */
+(() => {
+  'use strict';
+
+  function normalizeId(value){
+    const text=String(value||'').trim();
+    return text || null;
+  }
+
+  function sessionTaskId(session){
+    if(!session || typeof session!=='object') return null;
+    const direct=normalizeId(session.linkedTaskId);
+    if(direct) return direct;
+
+    const todos=Array.isArray(session.todos)?session.todos:[];
+    const legacy=todos.find(todo=>normalizeId(todo?.linkedTaskId));
+    return legacy ? normalizeId(legacy.linkedTaskId) : null;
+  }
+
+  function sessionTaskText(session){
+    if(!session || typeof session!=='object') return '';
+    const direct=String(session.linkedTaskText||'').trim();
+    if(direct) return direct;
+
+    const taskId=sessionTaskId(session);
+    const todos=Array.isArray(session.todos)?session.todos:[];
+    const legacy=todos.find(todo=>
+      normalizeId(todo?.linkedTaskId)===taskId
+    );
+    return String(legacy?.text||'').trim();
+  }
+
+  function linkSession(session,task,{now=Date.now()}={}){
+    if(!session || !task?.id) return null;
+    const taskId=normalizeId(task.id);
+    const text=String(task.text||'').trim().slice(0,120);
+
+    session.linkedTaskId=taskId;
+    session.linkedTaskText=text || null;
+    session.updatedAt=Number(now)||Date.now();
+
+    if(!Array.isArray(session.todos)) session.todos=[];
+
+    let linkedTodo=session.todos.find(todo=>
+      normalizeId(todo?.linkedTaskId)===taskId
+    );
+
+    if(!linkedTodo && text){
+      linkedTodo=session.todos.find(todo=>
+        !todo?.linkedTaskId &&
+        String(todo?.text||'').trim()===text
+      );
+    }
+
+    if(linkedTodo){
+      linkedTodo.linkedTaskId=taskId;
+    }
+
+    return {
+      taskId,
+      text,
+      todo:linkedTodo || null
+    };
+  }
+
+  function linkedTaskInfo(session,tasks=[]){
+    const taskId=sessionTaskId(session);
+    if(!taskId) return null;
+
+    const task=(Array.isArray(tasks)?tasks:[])
+      .find(item=>normalizeId(item?.id)===taskId) || null;
+
+    const snapshot=sessionTaskText(session);
+
+    return {
+      taskId,
+      text:String(task?.text||snapshot||'Bağlı görev').trim(),
+      done:Boolean(task?.done),
+      missing:!task,
+      task
+    };
+  }
+
+  function syncLinkedTodo(session,done,{now=Date.now()}={}){
+    const taskId=sessionTaskId(session);
+    if(!taskId || !Array.isArray(session?.todos)) return false;
+
+    const todo=session.todos.find(item=>
+      normalizeId(item?.linkedTaskId)===taskId
+    );
+
+    if(!todo || Boolean(todo.done)===Boolean(done)) return false;
+    todo.done=Boolean(done);
+    session.updatedAt=Number(now)||Date.now();
+    return true;
+  }
+
+  function normalizeEntry(entry){
+    if(entry?.session) return entry.session;
+    return entry;
+  }
+
+  function summarizeTask(taskId,entries=[],sessionSeconds=()=>0,options={}){
+    const wanted=normalizeId(taskId);
+    if(!wanted){
+      return {seconds:0,sessions:0,active:false,activeState:null};
+    }
+
+    let seconds=0;
+    let sessions=0;
+    let active=false;
+    let activeState=null;
+
+    (Array.isArray(entries)?entries:[]).forEach(entry=>{
+      const session=normalizeEntry(entry);
+      if(sessionTaskId(session)!==wanted) return;
+
+      sessions+=1;
+      seconds+=Math.max(0,Number(sessionSeconds(session,entry))||0);
+
+      if(session?.id && session.id===options.activeSessionId){
+        active=true;
+        activeState=options.isWorking ? 'working' : 'paused';
+      }
+    });
+
+    return {
+      seconds:Math.round(seconds),
+      sessions,
+      active,
+      activeState
+    };
+  }
+
+  function breakdown(entries=[],tasks=[],sessionSeconds=()=>0){
+    const taskMap=new Map(
+      (Array.isArray(tasks)?tasks:[])
+        .filter(task=>task?.id)
+        .map(task=>[normalizeId(task.id),task])
+    );
+    const rows=new Map();
+
+    (Array.isArray(entries)?entries:[]).forEach(entry=>{
+      const session=normalizeEntry(entry);
+      const taskId=sessionTaskId(session);
+      if(!taskId) return;
+
+      const task=taskMap.get(taskId) || null;
+      const row=rows.get(taskId) || {
+        taskId,
+        text:String(task?.text||sessionTaskText(session)||'Silinmiş görev').trim(),
+        seconds:0,
+        sessions:0,
+        done:Boolean(task?.done),
+        missing:!task
+      };
+
+      if(task?.text) row.text=String(task.text).trim();
+      row.done=Boolean(task?.done);
+      row.missing=!task;
+      row.seconds+=Math.max(0,Number(sessionSeconds(session,entry))||0);
+      row.sessions+=1;
+      rows.set(taskId,row);
+    });
+
+    return [...rows.values()]
+      .map(row=>({...row,seconds:Math.round(row.seconds)}))
+      .sort((a,b)=>b.seconds-a.seconds || b.sessions-a.sessions || a.text.localeCompare(b.text,'tr'));
+  }
+
+  window.ProductivityTaskFocusService={
+    sessionTaskId,
+    sessionTaskText,
+    linkSession,
+    linkedTaskInfo,
+    syncLinkedTodo,
+    summarizeTask,
+    breakdown
+  };
 })();
 
 /* ===== assets/js/modules/calendar/event-service.js ===== */
@@ -5370,11 +5594,42 @@
     };
   }
 
+
+  function buildTaskFocusBreakdown(rows=[],{
+    escapeHtml=value=>String(value),
+    formatDurationLabel=value=>String(value)
+  }={}){
+    if(!rows.length){
+      return '<div class="todo-empty">Bu dönemde göreve bağlı odak oturumu yok.</div>';
+    }
+
+    const max=Math.max(1,Number(rows[0]?.seconds)||0);
+
+    return rows.map(row=>{
+      const percent=Math.max(4,Math.round((Number(row.seconds)||0)/max*100));
+      const state=row.missing
+        ? 'görev silinmiş'
+        : row.done
+          ? 'tamamlandı'
+          : 'açık';
+
+      return '<div class="subject-row task-focus-analysis-row">'
+        +'<div class="subject-row-top"><span>'+escapeHtml(row.text)
+        +'</span><span>'+formatDurationLabel(row.seconds)+'</span></div>'
+        +'<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+percent+'%"></div></div>'
+        +'<div class="subject-row-meta">'
+        +'<span>'+row.sessions+' oturum</span>'
+        +'<span>'+state+'</span>'
+        +'</div></div>';
+    }).join('');
+  }
+
   window.ProductivityStatsView={
     buildMetricChart,
     buildSubjectChart,
     buildSessionAnalytics,
     buildSubjectBreakdown,
+    buildTaskFocusBreakdown,
     buildHeatmap
   };
 })();
@@ -5461,7 +5716,9 @@
       safeTagColor=color=>color,
       escapeHtml=value=>String(value),
       taskDueBadge=()=> '',
-      repeatTaskLabel=()=> ''
+      repeatTaskLabel=()=> '',
+      focusSummary=()=>null,
+      formatDurationLabel=value=>String(value)
     }=options;
 
     const tag=tagById(normalizedTaskTagId(task));
@@ -5480,7 +5737,23 @@
         +repeatTaskLabel(task.repeat,task.repeatDays)+'</span>'
       : '';
 
-    return '<div class="task-card'+(task.done?' completed':'')
+    const focus=focusSummary(task);
+    const focusMeta=focus && (focus.sessions>0 || focus.active)
+      ? '<div class="task-focus-meta">'
+        +(focus.active
+          ? '<span class="task-focus-live '+(focus.activeState==='paused'?'paused':'')+'">'
+            +(focus.activeState==='paused'?'⏸ Oturum açık':'● Odakta')+'</span>'
+          : '')
+        +(focus.seconds>0
+          ? '<span>⏱ '+formatDurationLabel(focus.seconds)+'</span>'
+          : '')
+        +(focus.sessions>0
+          ? '<span>'+focus.sessions+' oturum</span>'
+          : '')
+        +'</div>'
+      : '';
+
+    return '<div class="task-card'+(task.done?' completed':'')+(focus?.active?' task-focused':'')
       +'" draggable="true" data-task-id="'+task.id+'"'+borderStyle+'>'
       +'<span class="task-drag-handle" title="Sürükleyerek sırala">☰</span>'
       +'<button class="task-check'+(task.done?' done':'')
@@ -5488,11 +5761,11 @@
       +(task.done?'✓':'')+'</button>'
       +'<div class="task-card-body">'
       +'<div class="task-text'+(task.done?' done':'')+'">'
-      +escapeHtml(task.text)+'</div>'+tagHtml+'</div>'
+      +escapeHtml(task.text)+'</div>'+tagHtml+focusMeta+'</div>'
       +((dueHtml||repeatHtml)
         ? '<div class="task-right-meta">'+dueHtml+repeatHtml+'</div>'
         : '')
-      +(!task.done
+      +(!task.done && !focus?.active
         ? '<button class="task-focus-btn" data-action="focus-task" data-id="'
           +task.id+'" title="Bu görev için çalışma oturumu başlat">▶ Odaklan</button>'
         : '')
@@ -5698,7 +5971,8 @@
       escapeHtml=value=>String(value),
       formatDurationLabel=value=>String(value),
       displayClockTime=()=> '',
-      sessionFocusScore=()=>0
+      sessionFocusScore=()=>0,
+      linkedTaskInfo=()=>null
     }=options;
 
     const allSessions=Array.isArray(sessions)?sessions:[];
@@ -5771,6 +6045,18 @@
       const todosHtml=buildTodos(session,escapeHtml);
       const targetHtml=buildTarget(session,liveDuration,formatDurationLabel);
       const timeRange=displayTimeRange(session,displayClockTime);
+      const linkedTask=linkedTaskInfo(session);
+      const linkedTaskHtml=linkedTask
+        ? '<div class="session-linked-task'+(linkedTask.done?' done':'')+(linkedTask.missing?' missing':'')+'">'
+          +'<span class="session-linked-task-label">🎯 Bağlı görev</span>'
+          +'<span class="session-linked-task-text">'+escapeHtml(linkedTask.text)+'</span>'
+          +(linkedTask.done
+            ? '<span class="session-linked-task-state">✓ Tamamlandı</span>'
+            : linkedTask.missing
+              ? '<span class="session-linked-task-state">Görev silinmiş</span>'
+              : '')
+          +'</div>'
+        : '';
 
       html+='<div class="session-card'
         +(isTicking?' active':'')
@@ -5822,6 +6108,7 @@
         +((subjectTag||subjectEdit)
           ? '<div class="session-subject-row">'+subjectTag+subjectEdit+'</div>'
           : '')
+        +linkedTaskHtml
 
         +'<div class="session-pct">'+percentLabel+'</div>'
         +targetHtml
@@ -6808,7 +7095,7 @@
   const STORAGE_KEY = 'direncAgaci_v2';
   const BACKUP_KEY = STORAGE_KEY + '_backup';
   const OLD_KEY = 'direncAgaci_v1';
-  const SCHEMA_VERSION = 46;
+  const SCHEMA_VERSION = 47;
 
   // Runtime modules must be initialized before repositories/state consume them.
   // Startup-order checks enforce this invariant.
@@ -6823,6 +7110,7 @@
   const RecurrenceServiceFactory=window.ProductivityRecurrenceService;
   const SessionDomainServiceFactory=window.ProductivitySessionService;
   const TaskDomainServiceFactory=window.ProductivityTaskService;
+  const TaskFocusService=window.ProductivityTaskFocusService;
   const EventDomainServiceFactory=window.ProductivityEventService;
   const GamificationCore=window.ProductivityGamificationCore;
   const TreeService=window.ProductivityTreeService;
@@ -6847,7 +7135,7 @@
   const ViewCoordinatorFactory=window.ProductivityViewCoordinator;
   const StartupControllerFactory=window.ProductivityStartupController;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -6874,6 +7162,7 @@
       !RecurrenceServiceFactory ? 'RecurrenceService' : null,
       !SessionDomainServiceFactory ? 'SessionService' : null,
       !TaskDomainServiceFactory ? 'TaskService' : null,
+      !TaskFocusService ? 'TaskFocusService' : null,
       !EventDomainServiceFactory ? 'EventService' : null,
       !StateMigrationFactory ? 'StateMigration' : null,
       !RecoveryStoreFactory ? 'RecoveryStore' : null,
@@ -8768,6 +9057,7 @@
     chartSvg: document.getElementById('chartSvg'),
     chartLegend: document.getElementById('chartLegend'),
     subjectBreakdownBody: document.getElementById('subjectBreakdownBody'),
+    taskFocusBreakdownBody: document.getElementById('taskFocusBreakdownBody'),
     sessionAnalyticsBody: document.getElementById('sessionAnalyticsBody'),
 
     collectionContent: document.getElementById('collectionContent'),
@@ -8864,11 +9154,28 @@
   // Aktif oturumun to-do listesindeki ilk tamamlanmamış görevi bul
   function getCurrentTodoTask(){
     if(!data.activeSessionId) return null;
-    const s = findSession(data.activeSessionId);
-    if(!s || !s.todos || s.todos.length===0) return null;
-    const todo = s.todos.find(t=>!t.done);
-    if(!todo) return null;
-    return { session:s, todo };
+    const s=findSession(data.activeSessionId);
+    if(!s) return null;
+
+    const todos=Array.isArray(s.todos)?s.todos:[];
+    const todo=todos.find(item=>!item.done);
+    if(todo) return {session:s,todo};
+
+    const linked=TaskFocusService.linkedTaskInfo(s,TaskRepository.all());
+    if(linked && !linked.done){
+      return {
+        session:s,
+        todo:{
+          id:'linked-task-display',
+          text:linked.text,
+          done:false,
+          linkedTaskId:linked.taskId,
+          displayOnly:true
+        }
+      };
+    }
+
+    return null;
   }
 
   function updateIntentDisplay(){
@@ -10037,8 +10344,14 @@
   }
 
   // Yeni bir oturum başlatır (sadece aktif/duraklatılmış oturum yokken çağrılır)
-  function startWorking(subject, targetMinutes, seedTodoText=null){
-    const result=timerController.start({subject,targetMinutes,seedTodoText});
+  function startWorking(subject,targetMinutes,seedTodoText=null,linkedTaskId=null){
+    const result=timerController.start({
+      subject,
+      targetMinutes,
+      seedTodoText,
+      linkedTaskId,
+      linkedTaskText:seedTodoText
+    });
     const newSession=result.session;
 
     expandedSessions.add(newSession.id);
@@ -10063,6 +10376,7 @@
     el.workTimer.textContent=formatRingTime(pausedSession ? pausedSession.duration : 0);
     renderToday(completedList.length > 0);
     renderSessionList();
+    renderTaskList();
     updateIntentDisplay();
     celebrateTreeCompletions(completedList);
     showToast('Duraklatıldı. "Devam Et" ile kaldığın yerden sürdürebilirsin.', true);
@@ -10079,6 +10393,7 @@
     ensureTimerScheduler();
     renderToday(false);
     renderSessionList();
+    renderTaskList();
     playNote(660,0,0.12);
   }
 
@@ -10285,24 +10600,54 @@
   el.focusFinishBtn.addEventListener('click', async ()=>{
     const ok = await askConfirm('Bu odak oturumunu bitirmek istediğine emin misin?');
     if(!ok) return;
-    endSession();
+    await endSession();
   });
 
   // Oturumu bitirir; sayaç hedef sürede kendiliğinden durmaz, bitirme kararı kullanıcıdadır.
-  function endSession(){
+  async function endSession(){
     // Oturum hangi arayüzden bitirilirse bitirilsin Focus Mode kapalı kalmalı.
     closeFocusMode();
     const beforeBadges=getUnlockedBadgeMap();
     const beforeLevel=getLevelInfo().level;
     const result=timerController.finish();
-    const completedList=result.completedList || [];
+    const completedTrees=[...(result.completedList || [])];
+    const linked=TaskFocusService.linkedTaskInfo(
+      result.session,
+      TaskRepository.all()
+    );
+    let linkedTaskCompleted=false;
 
-    celebrateTreeCompletions(completedList);
+    if(linked?.task && !linked.task.done){
+      const choice=await askLinkedTaskFinishChoice(linked.text);
+      if(choice==='complete'){
+        const taskResult=TaskDomainService.toggleDone(linked.taskId);
+        if(taskResult && !taskResult.wasDone && taskResult.task.done){
+          TaskFocusService.syncLinkedTodo(result.session,true,{now:Date.now()});
+          if(taskResult.newlyRewarded){
+            completedTrees.push(...addTreeGrowth(GROWTH_PER_TODO));
+          }
+          spawnNextRecurringTask(taskResult.task);
+          linkedTaskCompleted=true;
+        }
+      }
+    }
+
+    saveData();
+    refreshUI(['tasks','calendar']);
+    renderToday(completedTrees.length>0);
+    celebrateTreeCompletions(completedTrees);
     renderSessionList();
     updateIntentDisplay();
+    renderStats();
     reportProgress(beforeLevel,beforeBadges);
-    showToast('Oturum bitirildi. Şimdi kısa bir mola zamanı ☕', true);
+    showToast(
+      linkedTaskCompleted
+        ? 'Oturum bitirildi ve bağlı görev tamamlandı. Şimdi kısa bir mola zamanı ☕'
+        : 'Oturum bitirildi. Şimdi kısa bir mola zamanı ☕',
+      true
+    );
     startBreak(5);
+    return {session:result.session,linkedTaskCompleted};
   }
 
   async function skipBreakAndStartNewSession(){
@@ -10327,7 +10672,7 @@
     } else if(btn.id === 'workResumeBtn'){
       resumeWorking();
     } else if(btn.id === 'workFinishBtn'){
-      endSession();
+      await endSession();
     } else if(btn.id === 'breakAdjustBtn'){
       const currentMinutes = Math.max(GOAL_MIN, Math.round((data.breakState && data.breakState.targetSeconds || 300)/60));
       const result = await askMinutes('Mola süresini ayarla', currentMinutes, false, false, 'break');
@@ -10414,7 +10759,11 @@
       escapeHtml,
       formatDurationLabel,
       displayClockTime,
-      sessionFocusScore
+      sessionFocusScore,
+      linkedTaskInfo:session=>TaskFocusService.linkedTaskInfo(
+        session,
+        TaskRepository.all()
+      )
     });
 
     el.sessionList.innerHTML=view.html;
@@ -10530,18 +10879,41 @@
       const session=findSession(sid);
       const beforeBadges=getUnlockedBadgeMap();
       const beforeLevel=getLevelInfo().level;
-      const result=session && SessionDomainService.toggleTodo(session,target.dataset.todo);
+      const todo=session?.todos?.find(item=>item?.id===target.dataset.todo) || null;
+      const linkedTask=todo?.linkedTaskId
+        ? TaskDomainService.byId(todo.linkedTaskId)
+        : null;
+      const result=session && SessionDomainService.toggleTodo(
+        session,
+        target.dataset.todo,
+        {reward:!linkedTask}
+      );
       if(result){
-        const completedList=result.newlyRewarded ? addTreeGrowth(GROWTH_PER_TODO) : [];
+        let completedList=result.newlyRewarded ? addTreeGrowth(GROWTH_PER_TODO) : [];
+
+        if(linkedTask && sid===data.activeSessionId && linkedTask.done!==result.todo.done){
+          const taskResult=TaskDomainService.toggleDone(linkedTask.id);
+          if(taskResult && !taskResult.wasDone && taskResult.task.done){
+            if(taskResult.newlyRewarded){
+              completedList=[...completedList,...addTreeGrowth(GROWTH_PER_TODO)];
+            }
+            spawnNextRecurringTask(taskResult.task);
+          }
+        }
+
         saveData();
+        refreshUI(['tasks','calendar']);
         renderSessionList();
         updateIntentDisplay();
+        if(el.focusOverlay.classList.contains('show')) renderFocusOverlay();
         if(!result.wasDone && result.todo.done){
           playTodoCheckSound();
           renderToday(completedList.length>0);
           celebrateTreeCompletions(completedList);
           reportProgress(beforeLevel,beforeBadges);
           if(result.allDone) showToast('Bu oturumun tüm görevleri tamamlandı! 🎉');
+        }else{
+          renderToday(false);
         }
       }
     } else if(action === 'delete-todo'){
@@ -10602,6 +10974,26 @@
       cancelValue:false,
       showCancel:true,
       focus:'cancel'
+    });
+  }
+
+  function askLinkedTaskFinishChoice(taskText){
+    return ModalService.choice({
+      controller:modalController,
+      backdrop:el.confirmBackdrop,
+      textElement:el.confirmText,
+      okButton:el.confirmOk,
+      altButton:el.confirmAlt,
+      cancelButton:el.confirmCancel,
+      message:'“'+taskText+'” görevi için odak oturumu bitti. Görevi de tamamlandı olarak işaretlemek ister misin?',
+      okLabel:'Görevi Tamamla',
+      okValue:'complete',
+      okDanger:false,
+      showAlt:false,
+      cancelLabel:'Açık Bırak',
+      cancelValue:'keep',
+      showCancel:true,
+      focus:'ok'
     });
   }
 
@@ -11083,6 +11475,21 @@
     );
   }
 
+  function renderTaskFocusBreakdown(){
+    if(!el.taskFocusBreakdownBody) return;
+
+    const rows=TaskFocusService.breakdown(
+      sessionsForKeys(getPeriodKeys(currentPeriod)),
+      TaskRepository.all(),
+      session=>sessionSecondsForAnalytics(session)
+    );
+
+    el.taskFocusBreakdownBody.innerHTML=StatsView.buildTaskFocusBreakdown(
+      rows,
+      {escapeHtml,formatDurationLabel}
+    );
+  }
+
   const WEEKDAY_SHORT = ['Paz','Pzt','Sal','Çar','Per','Cum','Cmt'];
   const MONTH_SHORT = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
   const MONTH_FULL = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
@@ -11267,6 +11674,7 @@
     renderChartDispatch();
     renderSessionAnalytics();
     renderSubjectBreakdown();
+    renderTaskFocusBreakdown();
     renderHeatmap();
   }
 
@@ -11768,7 +12176,17 @@
       safeTagColor,
       escapeHtml,
       taskDueBadge,
-      repeatTaskLabel
+      repeatTaskLabel,
+      formatDurationLabel,
+      focusSummary:item=>TaskFocusService.summarizeTask(
+        item.id,
+        sessionsForKeys(Object.keys(data.sessionLog||{})),
+        session=>sessionSecondsForAnalytics(session),
+        {
+          activeSessionId:data.activeSessionId,
+          isWorking:data.isWorking
+        }
+      )
     });
   }
 
@@ -11854,8 +12272,19 @@
     }
     if(!result.wasDone && result.task.done) spawnNextRecurringTask(result.task);
 
+    const activeSession=data.activeSessionId ? findSession(data.activeSessionId) : null;
+    if(
+      activeSession &&
+      TaskFocusService.sessionTaskId(activeSession)===result.task.id
+    ){
+      TaskFocusService.syncLinkedTodo(activeSession,result.task.done,{now:Date.now()});
+    }
+
     saveData();
     refreshUI(['tasks','calendar']);
+    renderSessionList();
+    updateIntentDisplay();
+    if(el.focusOverlay.classList.contains('show')) renderFocusOverlay();
     if(!result.wasDone && result.task.done){
       playTodoCheckSound();
       refreshUI('today',{celebrateTree:completedList.length>0});
@@ -12091,12 +12520,13 @@
     const suggestedSubject = tag ? tag.name : '';
     const result = await askMinutes('Bu görev için bir odak oturumu başlat',25,true,true,'session',suggestedSubject);
     if(!result) return;
-    startWorking(result.subject, result.minutes, task.text);
-    const active = findSession(data.activeSessionId);
-    if(active && active.todos && active.todos[0]) active.todos[0].linkedTaskId = task.id;
+    startWorking(result.subject,result.minutes,task.text,task.id);
+    const active=findSession(data.activeSessionId);
+    if(active) TaskFocusService.linkSession(active,task,{now:Date.now()});
     saveData();
+    renderTaskList();
     document.querySelector('.tab-btn[data-tab="work"]')?.click();
-    showToast('Görev odak oturumuna eklendi.', true);
+    showToast('Görev odak oturumuna bağlandı.', true);
   }
 
 
@@ -14334,6 +14764,7 @@
       equal(Boolean(window.ProductivityRecurrenceService),true);
       equal(Boolean(window.ProductivitySessionService),true);
       equal(Boolean(window.ProductivityTaskService),true);
+      equal(Boolean(window.ProductivityTaskFocusService),true);
       equal(Boolean(window.ProductivityEventService),true);
     });
 
