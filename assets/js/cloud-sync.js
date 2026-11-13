@@ -2,6 +2,7 @@
   'use strict';
 
   const cfg=window.CLOUD_CONFIG||{};
+  const SyncControllerFactory=window.ProductivitySyncController;
   const LS={
     token:'test_cloud_session',
     username:'test_cloud_username',
@@ -56,8 +57,7 @@
   }
   function bridge(){ return window.__APP_CLOUD_BRIDGE__||null; }
   function hasMeaningfulData(state){
-    if(!state) return false;
-    return (state.tasks?.length||0)+(state.events?.length||0)+(state.collection?.length||0)+Object.values(state.sessionLog||{}).reduce((n,x)=>n+(Array.isArray(x)?x.length:0),0)>0;
+    return SyncControllerFactory?.hasMeaningfulData(state) || false;
   }
   function mergeStates(remote,local){
     const merger=window.ProductivityStateMerge?.mergeStates;
@@ -96,96 +96,119 @@
   async function allowRemoteReplacement(localState,remoteState,b){
     const risk=b.cloudStateRisk?.(localState,remoteState);
     if(!risk?.risky) return true;
-
-    const allow=await b.confirmDestructiveCloudReplace?.(risk);
-    if(allow) return true;
-
-    localStorage.setItem(LS.dirty,'1');
-    setStatus('pending','Bu cihazdaki veri korundu');
-    return false;
+    return Boolean(await b.confirmDestructiveCloudReplace?.(risk));
   }
 
   async function syncNow({silent=false,initial=false}={}){
-    const b=bridge(); if(!b || !getToken() || syncing || !configured()) return false;
-    syncing=true; setStatus('syncing','Senkronize ediliyor…');
-    try{
-      const remote=await pull();
-      account={id:remote.accountId,username:remote.username};
-      localStorage.setItem(LS.accountId,remote.accountId||'');
-      localStorage.setItem(LS.username,remote.username||'');
-      let base=Number(localStorage.getItem(LS.baseRevision)||0);
-      const dirty=localStorage.getItem(LS.dirty)==='1';
-      const local=b.exportState();
-      const remoteState=remote.state||null;
-      let finalState=local;
+    const b=bridge();
 
-      if(!remoteState){
-        const saved=await push(local,Number(remote.revision)||0);
-        base=saved.revision;
-      }else if(initial && base===0){
-        if(hasMeaningfulData(local)){
-          finalState=mergeStates(remoteState,local);
-          const saved=await push(finalState,Number(remote.revision)||0);
-          base=saved.revision;
-          suppressDirty=true; b.replaceState(finalState); suppressDirty=false;
-        }else{
-          const allowRemote=await allowRemoteReplacement(local,remoteState,b);
-          if(allowRemote){
-            suppressDirty=true; b.replaceState(remoteState); suppressDirty=false;
-            base=Number(remote.revision)||0;
-          }else{
-            finalState=local;
+    if(
+      !b ||
+      !getToken() ||
+      syncing ||
+      !configured() ||
+      !SyncControllerFactory
+    ){
+      return false;
+    }
+
+    syncing=true;
+    setStatus('syncing','Senkronize ediliyor…');
+
+    try{
+      const controller=SyncControllerFactory.create({
+        pull,
+        push,
+        exportState:()=>b.exportState(),
+        replaceState:state=>{
+          suppressDirty=true;
+          try{
+            b.replaceState(state);
+          }finally{
+            suppressDirty=false;
           }
+        },
+        mergeStates,
+        stateRisk:(localState,remoteState)=>
+          b.cloudStateRisk?.(localState,remoteState)
+          || {risky:false},
+        confirmDestructive:risk=>
+          b.confirmDestructiveCloudReplace?.(risk),
+        onRemote:remote=>{
+          account={
+            id:remote.accountId,
+            username:remote.username
+          };
+
+          localStorage.setItem(
+            LS.accountId,
+            remote.accountId||''
+          );
+          localStorage.setItem(
+            LS.username,
+            remote.username||''
+          );
         }
-      }else if(Number(remote.revision)>base){
-        if(dirty){
-          finalState=mergeStates(remoteState,local);
-          const saved=await push(finalState,Number(remote.revision)||0);
-          base=saved.revision;
-          suppressDirty=true; b.replaceState(finalState); suppressDirty=false;
-        }else{
-          const allowRemote=await allowRemoteReplacement(local,remoteState,b);
-          if(allowRemote){
-            suppressDirty=true; b.replaceState(remoteState); suppressDirty=false;
-            base=Number(remote.revision)||0;
-          }else{
-            finalState=local;
-          }
-        }
-      }else if(dirty){
-        try{
-          const saved=await push(local,Number(remote.revision)||base);
-          base=saved.revision;
-        }catch(err){
-          if(err.status===409 && err.body?.state){
-            finalState=mergeStates(err.body.state,local);
-            const mergedRisk=b.cloudStateRisk?.(local,finalState);
-            if(mergedRisk?.risky){
-              const allowMerged=await b.confirmDestructiveCloudReplace?.(mergedRisk);
-              if(!allowMerged){
-                localStorage.setItem(LS.dirty,'1');
-                setStatus('pending','Bu cihazdaki veri korundu');
-                return false;
-              }
-            }
-            const saved=await push(finalState,Number(err.body.revision)||0);
-            base=saved.revision;
-            suppressDirty=true; b.replaceState(finalState); suppressDirty=false;
-          }else throw err;
-        }
+      });
+
+      const result=await controller.run({
+        initial,
+        baseRevision:Number(
+          localStorage.getItem(LS.baseRevision)||0
+        ),
+        dirty:localStorage.getItem(LS.dirty)==='1'
+      });
+
+      if(result.protectedLocal){
+        // Critical invariant: choosing "keep this device" must remain dirty
+        // so the protected local data is not silently considered synced.
+        localStorage.setItem(LS.dirty,'1');
+        setStatus('pending','Bu cihazdaki veri korundu');
+        updateUI();
+        return false;
       }
-      localStorage.setItem(LS.baseRevision,String(base));
+
+      localStorage.setItem(
+        LS.baseRevision,
+        String(result.baseRevision)
+      );
       localStorage.removeItem(LS.dirty);
-      localStorage.setItem(LS.lastSync,String(Date.now()));
-      setStatus('ok','Senkronize'); updateUI();
-      if(!silent) toast('Bulut verileri senkronize edildi.','success');
+      localStorage.setItem(
+        LS.lastSync,
+        String(Date.now())
+      );
+
+      setStatus('ok','Senkronize');
+      updateUI();
+
+      if(!silent){
+        toast(
+          'Bulut verileri senkronize edildi.',
+          'success'
+        );
+      }
+
       return true;
     }catch(err){
-      if(err.status===401){ clearAuth(); updateUI(); openLogin(); }
+      if(err.status===401){
+        clearAuth();
+        updateUI();
+        openLogin();
+      }
+
       setStatus('error','Senkronizasyon hatası');
-      if(!silent) toast(err.message||'Senkronizasyon başarısız.','error');
+
+      if(!silent){
+        toast(
+          err.message||'Senkronizasyon başarısız.',
+          'error'
+        );
+      }
+
       return false;
-    }finally{ syncing=false; }
+    }finally{
+      syncing=false;
+    }
   }
 
   function toast(message,type='calm'){
