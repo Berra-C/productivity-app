@@ -1,11 +1,11 @@
 const path = require('path');
 
 global.window=global;
-require(path.resolve(__dirname,'../assets/js/modules/state-migration.js'));
-require(path.resolve(__dirname,'../assets/js/modules/recovery-store.js'));
-require(path.resolve(__dirname,'../assets/js/modules/state-recovery-service.js'));
-require(path.resolve(__dirname,'../assets/js/modules/destructive-sync-guard.js'));
-require(path.resolve(__dirname,'../assets/js/modules/external-state-service.js'));
+require(path.resolve(__dirname,'../assets/js/modules/state/state-migration.js'));
+require(path.resolve(__dirname,'../assets/js/modules/state/recovery-store.js'));
+require(path.resolve(__dirname,'../assets/js/modules/state/state-recovery-service.js'));
+require(path.resolve(__dirname,'../assets/js/modules/sync/destructive-sync-guard.js'));
+require(path.resolve(__dirname,'../assets/js/modules/sync/external-state-service.js'));
 
 function assert(condition,message){
   if(!condition) throw new Error(message);
@@ -25,7 +25,7 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
 
 (async()=>{
   const migration=global.ProductivityStateMigration.create({
-    schemaVersion:46,
+    schemaVersion:47,
     closedIntervalSeconds,
     logger:{error:()=>{}}
   });
@@ -39,7 +39,8 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
       duration:600,
       startedAt:1000,
       endedAt:601000,
-      distractions:0
+      distractions:0,
+      todos:[{id:'todo1',text:'Monthly',done:false,linkedTaskId:'t1'}]
     }]},
     tasks:[{id:'t1',text:'Monthly',dueDate:'2026-01-31',repeat:'monthly'}],
     events:[{id:'e1',title:'Monthly event',date:'2026-01-31',repeat:'monthly'}],
@@ -48,20 +49,22 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
 
   assert(migration.validate(legacy),'legacy state should validate');
   const migrated=migration.migrate(JSON.parse(JSON.stringify(legacy)));
-  assert(migrated.schemaVersion===46,'schema version');
+  assert(migrated.schemaVersion===47,'schema version');
   assert(migrated.tasks[0].repeatAnchorDay===31,'task monthly anchor');
   assert(migrated.events[0].repeatAnchorDay===31,'event monthly anchor');
   assert(Array.isArray(migrated.sessionLog['2026-01-01'][0].workIntervals),'work interval migration');
   assert(migrated.sessionLog['2026-01-01'][0].duration===600,'duration preserved');
   assert(migrated.timerState?.mode==='idle','timer state migration');
+  assert(migrated.sessionLog['2026-01-01'][0].linkedTaskId==='t1','legacy linked task promoted');
+  assert(migrated.sessionLog['2026-01-01'][0].linkedTaskText==='Monthly','legacy linked task text promoted');
   assert(!migration.validate({treeProgress:0,days:{}}),'invalid state rejected');
 
   const store=global.ProductivityRecoveryStore.create({
     indexedDBProvider:()=>null,
-    schemaVersion:46,
+    schemaVersion:47,
     logger:{warn:()=>{}}
   });
-  assert(store.parse({payload:JSON.stringify(migrated)},value=>migration.validate(value))?.schemaVersion===46,'valid recovery parse');
+  assert(store.parse({payload:JSON.stringify(migrated)},value=>migration.validate(value))?.schemaVersion===47,'valid recovery parse');
   assert(store.parse({payload:'{broken'},()=>true)===null,'invalid JSON rejected');
   assert(await store.readRaw()===null,'missing IDB read');
   assert(await store.clear()===false,'missing IDB clear');
