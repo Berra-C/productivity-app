@@ -76,7 +76,8 @@
       escapeHtml=value=>String(value),
       formatDurationLabel=value=>String(value),
       displayClockTime=()=> '',
-      sessionFocusScore=()=>0
+      sessionFocusScore=()=>0,
+      linkedTaskInfo=()=>null
     }=options;
 
     const allSessions=Array.isArray(sessions)?sessions:[];
@@ -149,6 +150,18 @@
       const todosHtml=buildTodos(session,escapeHtml);
       const targetHtml=buildTarget(session,liveDuration,formatDurationLabel);
       const timeRange=displayTimeRange(session,displayClockTime);
+      const linkedTask=linkedTaskInfo(session);
+      const linkedTaskHtml=linkedTask
+        ? '<div class="session-linked-task'+(linkedTask.done?' done':'')+(linkedTask.missing?' missing':'')+'">'
+          +'<span class="session-linked-task-label">🎯 Bağlı görev</span>'
+          +'<span class="session-linked-task-text">'+escapeHtml(linkedTask.text)+'</span>'
+          +(linkedTask.done
+            ? '<span class="session-linked-task-state">✓ Tamamlandı</span>'
+            : linkedTask.missing
+              ? '<span class="session-linked-task-state">Görev silinmiş</span>'
+              : '')
+          +'</div>'
+        : '';
 
       html+='<div class="session-card'
         +(isTicking?' active':'')
@@ -200,6 +213,7 @@
         +((subjectTag||subjectEdit)
           ? '<div class="session-subject-row">'+subjectTag+subjectEdit+'</div>'
           : '')
+        +linkedTaskHtml
 
         +'<div class="session-pct">'+percentLabel+'</div>'
         +targetHtml
