@@ -14,7 +14,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-fraunces@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-sans@4.0.0/index.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fontsource-ibm-plex-mono@4.0.0/index.css">
-<link rel="stylesheet" href="assets/css/app.css?v=93">
+<link rel="stylesheet" href="assets/css/app.css?v=94">
 </head>
 <body>
 
@@ -334,10 +334,66 @@
       <button type="button" id="statsWeekNext" aria-label="Sonraki hafta">›</button>
     </div>
 
-    <div class="stat-grid">
-      <div class="stat-card work"><div class="lbl">Çalışma Süresi</div><div class="val" id="periodWork">0 dk</div></div>
-      <div class="stat-card"><div class="lbl">Oturum Sayısı</div><div class="val" id="periodSessions">0</div><div class="stat-sub" id="periodAvgSession"></div></div>
-      <div class="stat-card distract"><div class="lbl">Dikkat Dağınıklığı</div><div class="val" id="periodDistract">0</div></div>
+    <div class="stat-grid analytics-stat-grid">
+      <div class="stat-card work">
+        <div class="lbl">Odak Süresi</div>
+        <div class="val" id="periodWork">0 dk</div>
+        <div class="stat-sub"><span id="periodSessions">0</span> oturum · <span id="periodAvgSession">henüz oturum yok</span></div>
+      </div>
+      <div class="stat-card analytics-rating-card">
+        <div class="lbl">Verim Puanı</div>
+        <div class="val" id="periodRating">—</div>
+        <div class="stat-sub" id="periodRatingCoverage">puanlanan oturum yok</div>
+      </div>
+      <div class="stat-card analytics-target-card">
+        <div class="lbl">Hedef Uyumu</div>
+        <div class="val" id="periodTarget">—</div>
+        <div class="stat-sub" id="periodTargetCoverage">hedefli oturum yok</div>
+      </div>
+      <div class="stat-card distract">
+        <div class="lbl">Dikkat / Saat</div>
+        <div class="val" id="periodDistractRate">—</div>
+        <div class="stat-sub"><span id="periodDistract">0</span> kayıt</div>
+      </div>
+    </div>
+
+    <div class="chart-card analytics-insights-card">
+      <div class="analytics-section-head">
+        <div>
+          <div class="chart-title">Son 30 günde senden öğrendiklerimiz</div>
+          <div class="analytics-section-sub">Yalnızca yeterli veri olduğunda örüntü ve öneri gösterilir.</div>
+        </div>
+      </div>
+      <div id="analyticsInsightsBody" class="analytics-insights-grid"></div>
+    </div>
+
+    <div class="chart-card hourly-analytics-card">
+      <div class="analytics-section-head">
+        <div>
+          <div class="chart-title">24 Saatlik Kişisel Ritim</div>
+          <div class="analytics-section-sub">Son 30 gündeki gerçek work interval'ları saatlere bölünür.</div>
+        </div>
+        <div class="hour-metric-pills" id="hourMetricPills">
+          <button type="button" class="metric-pill active" data-hour-metric="rating">Verimlilik</button>
+          <button type="button" class="metric-pill" data-hour-metric="focus">Odak</button>
+          <button type="button" class="metric-pill" data-hour-metric="distraction">Dikkat</button>
+          <button type="button" class="metric-pill" data-hour-metric="target">Hedef</button>
+        </div>
+      </div>
+      <div class="hour-heatmap-scroll">
+        <div id="hourlyHeatmapBody" class="hour-heatmap-grid"></div>
+      </div>
+      <div class="analytics-section-sub" id="hourlyHeatmapNote">Saat yorumları örneklem büyüklüğüne göre güven seviyesi taşır.</div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title" style="margin-bottom:10px;">Ders Profilleri · Son 30 Gün</div>
+      <div id="subjectProfileBody"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title" style="margin-bottom:10px;">Oturum Uzunluğu · Son 30 Gün</div>
+      <div id="durationProfileBody"></div>
     </div>
 
     <div class="chart-card">
@@ -691,7 +747,7 @@
       </div>
       <div class="help-section">
         <h4>📊 İstatistikler</h4>
-        <p>Gün/Hafta/Ay/Yıl sekmelerinde çalışma süresi ve dikkat dağınıklığı trendini çubuk ya da çizgi grafikte, isteğe bağlı derslere göre renklendirilmiş halde görebilirsin. En altta yıllık aktivite ısı haritası var.</p>
+        <p>Oturum bittiğinde istersen verimini <b>1–5</b> arasında puanlayabilirsin. İstatistikler; gerçek çalışma aralıklarını saatlere bölerek 24 saatlik kişisel ritmini, ders profillerini, oturum uzunluğu örüntülerini, hedef uyumunu ve dikkat/saat oranını gösterir. Uygulama az veriden kesin sonuç çıkarmaz; yeterli örnek oluştuğunda en fazla üç kişisel insight ve öneri gösterir.</p>
       </div>
       <div class="help-section">
         <h4>🌲 Koleksiyon</h4>
@@ -722,10 +778,10 @@
     <div class="badge-modal-body" id="badgeModalBody"></div>
   </div>
 </div>
-<script src="assets/js/app.js?v=93" defer></script>
-<script src="assets/js/cloud-config.js?v=93" defer></script>
-<script src="assets/js/cloud-sync.js?v=93" defer></script>
-<script src="assets/js/pwa-register.js?v=93" defer></script>
+<script src="assets/js/app.js?v=94" defer></script>
+<script src="assets/js/cloud-config.js?v=94" defer></script>
+<script src="assets/js/cloud-sync.js?v=94" defer></script>
+<script src="assets/js/pwa-register.js?v=94" defer></script>
 
 
 </body>
