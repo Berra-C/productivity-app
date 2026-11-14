@@ -151,6 +151,17 @@
       const targetHtml=buildTarget(session,liveDuration,formatDurationLabel);
       const timeRange=displayTimeRange(session,displayClockTime);
       const linkedTask=linkedTaskInfo(session);
+      const productivityRating=Number(session.productivityRating);
+      const hasProductivityRating=Number.isInteger(productivityRating) && productivityRating>=1 && productivityRating<=5;
+      const canRate=!isCurrent && liveDuration>=300;
+      const productivityRatingHtml=canRate
+        ? '<button class="session-productivity-rating'+(hasProductivityRating?' rated':'')+'" data-action="rate-session" data-id="'
+          +session.id+'" data-tooltip="Bu oturuma verdiğin kişisel verim puanını '+(hasProductivityRating?'değiştir':'ekle')+'">'
+          +(hasProductivityRating?'⭐ '+productivityRating+'/5':'☆ Puanla')+'</button>'
+        : (hasProductivityRating
+          ? '<span class="session-productivity-rating rated">⭐ '+productivityRating+'/5</span>'
+          : '');
+
       const linkedTaskHtml=linkedTask
         ? '<div class="session-linked-task'+(linkedTask.done?' done':'')+(linkedTask.missing?' missing':'')+'">'
           +'<span class="session-linked-task-label">🎯 Bağlı görev</span>'
@@ -208,6 +219,7 @@
         +Number(session.distractions||0)+'</span>'
         +'<span class="meta-focus metric-help" tabindex="0" data-tooltip="Odak puanı (0–100): dikkat dağınıklığı ve kesintiler puanı düşürür; hedefe ulaşmak ve oturum görevlerini tamamlamak puanı artırabilir.">🧠 '
         +sessionFocusScore(session)+'</span>'
+        +productivityRatingHtml
         +'</span></div>'
 
         +((subjectTag||subjectEdit)
