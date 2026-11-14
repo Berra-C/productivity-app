@@ -89,6 +89,20 @@
       return true;
     }
 
+    function setProductivityRating(session,rating){
+      if(!session || typeof session!=='object') return null;
+
+      const numeric=Number(rating);
+      const normalized=Number.isInteger(numeric) && numeric>=1 && numeric<=5
+        ? numeric
+        : null;
+
+      session.productivityRating=normalized;
+      session.ratedAt=normalized===null ? null : now();
+      session.updatedAt=now();
+      return normalized;
+    }
+
     function addTodo(session,text){
       if(!session || typeof session!=='object') return null;
       const clean=String(text||'').trim().slice(0,80);
@@ -198,6 +212,7 @@
       rememberSubject,
       setSubject,
       setHidden,
+      setProductivityRating,
       addTodo,
       toggleTodo,
       deleteTodo,
