@@ -761,6 +761,67 @@
     });
   }
 
+  function rating(options={}){
+    const {
+      controller,
+      document:doc=document,
+      title='Bu oturum ne kadar verimli geçti?',
+      description='1 çok düşük, 5 çok yüksek verim anlamına gelir.',
+      currentRating=null,
+      skipLabel='Atla'
+    }=options;
+
+    if(!controller) throw new Error('ModalService.rating controller gerekli');
+
+    return new Promise(resolve=>{
+      const backdrop=doc.createElement('div');
+      backdrop.className='modal-backdrop session-rating-backdrop';
+      backdrop.setAttribute('aria-hidden','true');
+      backdrop.innerHTML=`
+        <div class="modal-box session-rating-modal" role="dialog" aria-modal="true" aria-labelledby="sessionRatingTitle">
+          <div class="session-rating-kicker">OTURUM DEĞERLENDİRMESİ</div>
+          <h3 id="sessionRatingTitle">${title}</h3>
+          <p class="session-rating-description">${description}</p>
+          <div class="session-rating-scale" role="group" aria-label="Verim puanı">
+            ${[1,2,3,4,5].map(value=>`
+              <button type="button" class="session-rating-option${Number(currentRating)===value?' selected':''}" data-rating="${value}" aria-label="${value} üzerinden 5">
+                <span class="session-rating-number">${value}</span>
+                <span class="session-rating-emoji">${['😞','😕','😐','🙂','🔥'][value-1]}</span>
+              </button>`).join('')}
+          </div>
+          <div class="session-rating-labels"><span>Çok düşük</span><span>Çok yüksek</span></div>
+          <button type="button" class="btn-secondary session-rating-skip" data-action="skip-rating">${skipLabel}</button>
+        </div>`;
+
+      doc.body.appendChild(backdrop);
+      let settled=false;
+
+      function finish(value){
+        if(settled) return;
+        settled=true;
+        controller.close(backdrop);
+        backdrop.remove();
+        resolve(value);
+      }
+
+      backdrop.querySelectorAll('[data-rating]').forEach(button=>{
+        button.addEventListener('click',()=>finish(Number(button.dataset.rating)));
+      });
+
+      backdrop.querySelector('[data-action="skip-rating"]')
+        ?.addEventListener('click',()=>finish(null));
+
+      controller.open(backdrop,{
+        onCancel:()=>finish(null),
+        focus:backdrop.querySelector(
+          Number(currentRating)>=1 && Number(currentRating)<=5
+            ? `[data-rating="${Number(currentRating)}"]`
+            : '[data-rating="4"]'
+        )
+      });
+    });
+  }
+
   function destructiveRisk(options={}){
     const {
       document:doc=document,
@@ -828,6 +889,7 @@
     timeRange,
     subject,
     minutes,
+    rating,
     destructiveRisk
   };
 })();
