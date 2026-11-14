@@ -381,12 +381,163 @@
     }).join('');
   }
 
+
+  function buildInsights(insights=[],{
+    escapeHtml=value=>String(value)
+  }={}){
+    const rows=Array.isArray(insights)?insights:[];
+    if(!rows.length){
+      return '<div class="analytics-learning-empty">Henüz gösterilecek kişisel örüntü yok.</div>';
+    }
+
+    const icons={
+      'best-hour':'🧠',
+      'session-length':'⏱',
+      'subject':'📘',
+      'rating-trend':'📈',
+      'distraction-trend':'📵',
+      'learning':'🌱'
+    };
+
+    return rows.map(insight=>{
+      const confidence=insight.confidence || {};
+      return '<article class="analytics-insight-card confidence-'+Number(confidence.level||0)+'">'
+        +'<div class="analytics-insight-head">'
+        +'<span class="analytics-insight-icon">'+(icons[insight.type]||'✦')+'</span>'
+        +'<div><strong>'+escapeHtml(insight.title||'')+'</strong>'
+        +'<div class="analytics-confidence">Güven: '+escapeHtml(confidence.label||'')
+        +(confidence.evidence?' · '+escapeHtml(confidence.evidence):'')+'</div></div></div>'
+        +'<p>'+escapeHtml(insight.detail||'')+'</p>'
+        +(insight.recommendation
+          ? '<div class="analytics-recommendation">→ '+escapeHtml(insight.recommendation)+'</div>'
+          : '')
+        +'</article>';
+    }).join('');
+  }
+
+  function buildHourlyHeatmap(hours=[],{
+    metric='rating',
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(hours)?hours:[];
+    const numeric=rows.map(hour=>{
+      if(metric==='focus') return Number(hour.focusSeconds)||0;
+      if(metric==='distraction') return hour.distractionsPerHour===null?null:Number(hour.distractionsPerHour);
+      if(metric==='target') return hour.avgTargetCompletion===null?null:Number(hour.avgTargetCompletion);
+      return hour.avgProductivityRating===null?null:Number(hour.avgProductivityRating);
+    }).filter(value=>value!==null && Number.isFinite(value));
+    const max=Math.max(...numeric,1);
+
+    return rows.map(hour=>{
+      let value=null;
+      let ratio=0;
+      let label='—';
+      let detail='Yeterli veri yok';
+
+      if(metric==='focus'){
+        value=Number(hour.focusSeconds)||0;
+        ratio=max>0?value/max:0;
+        label=value>0?formatDurationLabel(value):'—';
+        detail=`${hour.sessionCount} oturum · ${hour.uniqueDays} gün`;
+      }else if(metric==='distraction'){
+        value=hour.distractionsPerHour===null?null:Number(hour.distractionsPerHour);
+        ratio=value===null?0:Math.min(1,value/max);
+        label=value===null?'—':value.toFixed(1)+'/s';
+        detail=value===null
+          ? 'Saatlik dikkat kaydı v94 verisi bekliyor'
+          : `${hour.timedDistractions} kayıt · ${formatDurationLabel(hour.distractionTrackedSeconds)} izlenen odak`;
+      }else if(metric==='target'){
+        value=hour.avgTargetCompletion===null?null:Number(hour.avgTargetCompletion);
+        ratio=value===null?0:Math.min(1,value);
+        label=value===null?'—':Math.round(value*100)+'%';
+        detail=`${hour.targetSessions} hedefli oturum`;
+      }else{
+        value=hour.avgProductivityRating===null?null:Number(hour.avgProductivityRating);
+        ratio=value===null?0:Math.min(1,value/5);
+        label=value===null?'—':value.toFixed(1);
+        detail=`${hour.ratedSessionCount} puanlanan oturum · ${formatDurationLabel(hour.ratedFocusSeconds)}`;
+      }
+
+      const level=value===null?0:Math.max(1,Math.min(4,Math.ceil(ratio*4)));
+      const next=(hour.hour+1)%24;
+      const title=`${String(hour.hour).padStart(2,'0')}:00–${String(next).padStart(2,'0')}:00 · ${label} · ${detail}`;
+      const confidence=hour.confidence?.label || 'Az veri';
+
+      return '<div class="hour-heatmap-cell metric-'+metric+' level-'+level+' confidence-'+Number(hour.confidence?.level||0)+'"'
+        +' data-hour="'+hour.hour+'" title="'+title+'">'
+        +'<span class="hour-label">'+String(hour.hour).padStart(2,'0')+'</span>'
+        +'<strong>'+label+'</strong>'
+        +'<span class="hour-confidence">'+confidence+'</span>'
+        +'</div>';
+    }).join('');
+  }
+
+  function buildSubjectProfiles(subjects=[],{
+    escapeHtml=value=>String(value),
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(subjects)?subjects:[];
+    if(!rows.length){
+      return '<div class="todo-empty">Son 30 günde ders/konu verisi yok.</div>';
+    }
+
+    return rows.slice(0,8).map(subject=>{
+      const rating=subject.avgProductivityRating===null
+        ? '—'
+        : subject.avgProductivityRating.toFixed(1)+'/5';
+      const distraction=subject.distractionsPerHour===null
+        ? '—'
+        : subject.distractionsPerHour.toFixed(1)+'/saat';
+      const target=subject.avgTargetCompletion===null
+        ? '—'
+        : Math.round(subject.avgTargetCompletion*100)+'%';
+      const bestHour=subject.bestHour===null
+        ? 'öğreniliyor'
+        : String(subject.bestHour).padStart(2,'0')+':00';
+
+      return '<div class="subject-profile-row">'
+        +'<div class="subject-profile-head"><strong>'+escapeHtml(subject.subject)+'</strong>'
+        +'<span>'+formatDurationLabel(subject.focusSeconds)+'</span></div>'
+        +'<div class="subject-profile-metrics">'
+        +'<span>⭐ '+rating+'</span>'
+        +'<span>📵 '+distraction+'</span>'
+        +'<span>🎯 '+target+'</span>'
+        +'<span>🕒 '+bestHour+'</span>'
+        +'</div>'
+        +'<div class="subject-profile-evidence">'+subject.sessions+' oturum · '+subject.activeDays+' gün'
+        +(subject.insightEligible?'':' · veri birikiyor')+'</div>'
+        +'</div>';
+    }).join('');
+  }
+
+  function buildDurationProfile(buckets=[],{
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(buckets)?buckets:[];
+    return '<div class="duration-profile-grid">'+rows.map(bucket=>{
+      const rating=bucket.avgProductivityRating===null?'—':bucket.avgProductivityRating.toFixed(1)+'/5';
+      const distraction=bucket.distractionsPerHour===null?'—':bucket.distractionsPerHour.toFixed(1)+'/s';
+      const target=bucket.avgTargetCompletion===null?'—':Math.round(bucket.avgTargetCompletion*100)+'%';
+      return '<div class="duration-profile-card'+(bucket.insightEligible?' eligible':'')+'">'
+        +'<strong>'+bucket.label+'</strong>'
+        +'<span>⭐ '+rating+'</span>'
+        +'<span>📵 '+distraction+'</span>'
+        +'<span>🎯 '+target+'</span>'
+        +'<small>'+bucket.sessionCount+' oturum · '+bucket.activeDays+' gün</small>'
+        +'</div>';
+    }).join('')+'</div>';
+  }
+
   window.ProductivityStatsView={
     buildMetricChart,
     buildSubjectChart,
     buildSessionAnalytics,
     buildSubjectBreakdown,
     buildTaskFocusBreakdown,
+    buildInsights,
+    buildHourlyHeatmap,
+    buildSubjectProfiles,
+    buildDurationProfile,
     buildHeatmap
   };
 })();
