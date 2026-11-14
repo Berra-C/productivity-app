@@ -800,6 +800,29 @@
         }else{
           session.linkedTaskText=String(session.linkedTaskText||'').trim().slice(0,120) || null;
         }
+        const productivityRating=Number(session.productivityRating);
+        session.productivityRating=(
+          Number.isInteger(productivityRating) &&
+          productivityRating>=1 &&
+          productivityRating<=5
+        ) ? productivityRating : null;
+        session.ratedAt=session.productivityRating===null
+          ? null
+          : (Number.isFinite(Number(session.ratedAt)) ? Number(session.ratedAt) : Number(session.endedAt)||Number(session.updatedAt)||null);
+
+        const trackingVersion=Number(session.distractionTrackingVersion);
+        session.distractionTrackingVersion=(trackingVersion>=1) ? 1 : 0;
+        session.distractionTrackingStartedAt=session.distractionTrackingVersion>=1
+          ? (Number.isFinite(Number(session.distractionTrackingStartedAt))
+            ? Number(session.distractionTrackingStartedAt)
+            : (Number(session.startedAt)||null))
+          : null;
+        session.distractionEvents=(Array.isArray(session.distractionEvents)?session.distractionEvents:[])
+          .map(event=>({
+            at:Number(event?.at)||null,
+            category:String(event?.category||'').trim().slice(0,40) || null
+          }))
+          .filter(event=>Number.isFinite(event.at));
         if(session.hidden === undefined) session.hidden = false;
         if(session.createdAt===undefined) session.createdAt=Number(session.startedAt)||null;
         if(!Number.isFinite(Number(session.updatedAt))){
@@ -1653,6 +1676,11 @@
       duration:0,
       distractions:0,
       distractionCategories:{},
+      distractionEvents:[],
+      distractionTrackingVersion:1,
+      distractionTrackingStartedAt:now,
+      productivityRating:null,
+      ratedAt:null,
       linkedTaskId:linkedTaskId ? String(linkedTaskId) : null,
       linkedTaskText:linkedTaskText
         ? String(linkedTaskText).trim().slice(0,120)
@@ -2381,6 +2409,20 @@
       return true;
     }
 
+    function setProductivityRating(session,rating){
+      if(!session || typeof session!=='object') return null;
+
+      const numeric=Number(rating);
+      const normalized=Number.isInteger(numeric) && numeric>=1 && numeric<=5
+        ? numeric
+        : null;
+
+      session.productivityRating=normalized;
+      session.ratedAt=normalized===null ? null : now();
+      session.updatedAt=now();
+      return normalized;
+    }
+
     function addTodo(session,text){
       if(!session || typeof session!=='object') return null;
       const clean=String(text||'').trim().slice(0,80);
@@ -2490,6 +2532,7 @@
       rememberSubject,
       setSubject,
       setHidden,
+      setProductivityRating,
       addTodo,
       toggleTodo,
       deleteTodo,
@@ -4091,6 +4134,760 @@
   };
 })();
 
+/* ===== assets/js/modules/analytics/productivity-analytics.js ===== */
+(() => {
+  'use strict';
+
+  const HOUR_THRESHOLDS=Object.freeze({
+    visibleFocusSeconds:30*60,
+    usableFocusSeconds:90*60,
+    strongFocusSeconds:240*60,
+    usableSessions:3,
+    strongSessions:6,
+    usableDays:2,
+    strongDays:4,
+    ratedSessions:3
+  });
+
+  const DURATION_BUCKETS=Object.freeze([
+    {id:'5-24',label:'5–24 dk',min:5*60,max:25*60},
+    {id:'25-44',label:'25–44 dk',min:25*60,max:45*60},
+    {id:'45-59',label:'45–59 dk',min:45*60,max:60*60},
+    {id:'60-89',label:'60–89 dk',min:60*60,max:90*60},
+    {id:'90+',label:'90+ dk',min:90*60,max:Infinity}
+  ]);
+
+  function finite(value,fallback=0){
+    const number=Number(value);
+    return Number.isFinite(number)?number:fallback;
+  }
+
+  function normalizeRating(value){
+    const rating=Number(value);
+    return Number.isInteger(rating) && rating>=1 && rating<=5
+      ? rating
+      : null;
+  }
+
+  function normalizedEntry(entry){
+    return entry?.session
+      ? {key:entry.key||null,session:entry.session}
+      : {key:null,session:entry};
+  }
+
+  function sessionDuration(session,options={}){
+    const fn=options.sessionSeconds;
+    return Math.max(
+      0,
+      finite(
+        typeof fn==='function'
+          ? fn(session)
+          : session?.duration,
+        0
+      )
+    );
+  }
+
+  function targetCompletion(session,seconds){
+    const target=finite(session?.targetSeconds,0);
+    if(target<=0) return null;
+    return Math.max(0,Math.min(1,seconds/target));
+  }
+
+  function localDateKey(ms){
+    const date=new Date(ms);
+    if(Number.isNaN(date.getTime())) return null;
+    const pad=value=>String(value).padStart(2,'0');
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`;
+  }
+
+  function dateKeyFor(ms,options={}){
+    const fn=options.dateKey;
+    const date=new Date(ms);
+    if(Number.isNaN(date.getTime())) return null;
+    return typeof fn==='function' ? fn(date) : localDateKey(ms);
+  }
+
+  function intervalsFor(session,options={}){
+    const now=finite(options.now,Date.now());
+    const raw=typeof options.sessionIntervals==='function'
+      ? options.sessionIntervals(session)
+      : session?.workIntervals;
+
+    const intervals=(Array.isArray(raw)?raw:[])
+      .map(interval=>({
+        start:finite(interval?.start,NaN),
+        end:interval?.end==null
+          ? (options.includeOpen===false?NaN:now)
+          : finite(interval.end,NaN)
+      }))
+      .filter(interval=>
+        Number.isFinite(interval.start) &&
+        Number.isFinite(interval.end) &&
+        interval.end>interval.start
+      );
+
+    if(intervals.length) return intervals;
+
+    const start=finite(session?.startedAt,NaN);
+    const seconds=sessionDuration(session,options);
+    if(Number.isFinite(start) && seconds>0){
+      return [{start,end:start+seconds*1000,approximate:true}];
+    }
+
+    return [];
+  }
+
+  function splitByHour(start,end,callback){
+    let cursor=Number(start);
+    const stop=Number(end);
+    if(!Number.isFinite(cursor) || !Number.isFinite(stop) || stop<=cursor) return;
+
+    while(cursor<stop){
+      const date=new Date(cursor);
+      const nextHour=new Date(date);
+      nextHour.setMinutes(60,0,0);
+      let next=nextHour.getTime();
+      if(!Number.isFinite(next) || next<=cursor) next=cursor+60*60*1000;
+      const segmentEnd=Math.min(stop,next);
+      callback({
+        hour:date.getHours(),
+        start:cursor,
+        end:segmentEnd,
+        seconds:(segmentEnd-cursor)/1000,
+        date
+      });
+      cursor=segmentEnd;
+    }
+  }
+
+  function emptyHour(hour){
+    return {
+      hour,
+      focusSeconds:0,
+      sessions:new Set(),
+      days:new Set(),
+      ratedSessions:new Set(),
+      ratedFocusSeconds:0,
+      ratingWeightedSeconds:0,
+      timedDistractions:0,
+      distractionTrackedSeconds:0,
+      targetSessions:0,
+      targetCompletionTotal:0
+    };
+  }
+
+  function hourConfidence(bucket){
+    const focus=finite(bucket?.focusSeconds,0);
+    const sessions=finite(bucket?.sessionCount,bucket?.sessions?.size||0);
+    const days=finite(bucket?.uniqueDays,bucket?.days?.size||0);
+
+    if(
+      sessions>=HOUR_THRESHOLDS.strongSessions &&
+      focus>=HOUR_THRESHOLDS.strongFocusSeconds &&
+      days>=HOUR_THRESHOLDS.strongDays
+    ) return {level:3,label:'Yüksek',usable:true,strong:true};
+
+    if(
+      sessions>=HOUR_THRESHOLDS.usableSessions &&
+      focus>=HOUR_THRESHOLDS.usableFocusSeconds &&
+      days>=HOUR_THRESHOLDS.usableDays
+    ) return {level:2,label:'Kullanılabilir',usable:true,strong:false};
+
+    if(focus>=HOUR_THRESHOLDS.visibleFocusSeconds){
+      return {level:1,label:'Öğreniliyor',usable:false,strong:false};
+    }
+
+    return {level:0,label:'Az veri',usable:false,strong:false};
+  }
+
+  function hourlyProfile(entries=[],options={}){
+    const keys=Array.isArray(options.keys)?new Set(options.keys):null;
+    const buckets=Array.from({length:24},(_,hour)=>emptyHour(hour));
+
+    (Array.isArray(entries)?entries:[]).forEach(rawEntry=>{
+      const {session}=normalizedEntry(rawEntry);
+      if(!session) return;
+
+      const sessionId=String(session.id||'');
+      const rating=normalizeRating(session.productivityRating);
+      const tracked=Number(session.distractionTrackingVersion)>=1;
+      const trackingStartedAt=tracked
+        ? finite(session.distractionTrackingStartedAt,finite(session.startedAt,NaN))
+        : NaN;
+      const seconds=sessionDuration(session,options);
+      const completion=targetCompletion(session,seconds);
+      const intervals=intervalsFor(session,options);
+
+      intervals.forEach(interval=>{
+        splitByHour(interval.start,interval.end,segment=>{
+          const key=dateKeyFor(segment.start,options);
+          if(keys && !keys.has(key)) return;
+
+          const bucket=buckets[segment.hour];
+          bucket.focusSeconds+=segment.seconds;
+          if(sessionId) bucket.sessions.add(sessionId);
+          if(key) bucket.days.add(key);
+
+          if(rating!==null){
+            if(sessionId) bucket.ratedSessions.add(sessionId);
+            bucket.ratedFocusSeconds+=segment.seconds;
+            bucket.ratingWeightedSeconds+=rating*segment.seconds;
+          }
+
+          if(tracked && Number.isFinite(trackingStartedAt)){
+            const trackedStart=Math.max(segment.start,trackingStartedAt);
+            if(segment.end>trackedStart){
+              bucket.distractionTrackedSeconds+=(segment.end-trackedStart)/1000;
+            }
+          }
+        });
+      });
+
+      const startedAt=finite(session.startedAt,NaN);
+      if(
+        Number.isFinite(startedAt) &&
+        completion!==null
+      ){
+        const key=dateKeyFor(startedAt,options);
+        if(!keys || keys.has(key)){
+          const bucket=buckets[new Date(startedAt).getHours()];
+          bucket.targetSessions+=1;
+          bucket.targetCompletionTotal+=completion;
+        }
+      }
+
+      if(tracked){
+        (Array.isArray(session.distractionEvents)?session.distractionEvents:[])
+          .forEach(event=>{
+            const at=finite(event?.at,NaN);
+            if(!Number.isFinite(at)) return;
+            const key=dateKeyFor(at,options);
+            if(keys && !keys.has(key)) return;
+            buckets[new Date(at).getHours()].timedDistractions+=1;
+          });
+      }
+    });
+
+    return buckets.map(bucket=>{
+      const sessionCount=bucket.sessions.size;
+      const uniqueDays=bucket.days.size;
+      const ratedSessionCount=bucket.ratedSessions.size;
+      const avgProductivityRating=bucket.ratedFocusSeconds>0
+        ? bucket.ratingWeightedSeconds/bucket.ratedFocusSeconds
+        : null;
+      const distractionsPerHour=bucket.distractionTrackedSeconds>0
+        ? bucket.timedDistractions/(bucket.distractionTrackedSeconds/3600)
+        : null;
+      const avgTargetCompletion=bucket.targetSessions>0
+        ? bucket.targetCompletionTotal/bucket.targetSessions
+        : null;
+
+      const row={
+        hour:bucket.hour,
+        focusSeconds:Math.round(bucket.focusSeconds),
+        sessionCount,
+        uniqueDays,
+        ratedSessionCount,
+        ratedFocusSeconds:Math.round(bucket.ratedFocusSeconds),
+        avgProductivityRating,
+        timedDistractions:bucket.timedDistractions,
+        distractionTrackedSeconds:Math.round(bucket.distractionTrackedSeconds),
+        distractionsPerHour,
+        targetSessions:bucket.targetSessions,
+        avgTargetCompletion
+      };
+
+      row.confidence=hourConfidence(row);
+      return row;
+    });
+  }
+
+  function periodSummary(entries=[],options={}){
+    let focusSeconds=0;
+    let distractions=0;
+    let ratingWeightedSeconds=0;
+    let ratedFocusSeconds=0;
+    let ratedSessions=0;
+    let targetSessions=0;
+    let targetCompletionTotal=0;
+    let sessions=0;
+    let timedDistractions=0;
+    let distractionTrackedSeconds=0;
+
+    (Array.isArray(entries)?entries:[]).forEach(rawEntry=>{
+      const {session}=normalizedEntry(rawEntry);
+      if(!session) return;
+      const seconds=sessionDuration(session,options);
+      if(seconds<=0) return;
+
+      sessions+=1;
+      focusSeconds+=seconds;
+      distractions+=Math.max(0,finite(session.distractions,0));
+
+      if(Number(session.distractionTrackingVersion)>=1){
+        const trackingStart=finite(
+          session.distractionTrackingStartedAt,
+          finite(session.startedAt,NaN)
+        );
+        if(Number.isFinite(trackingStart)){
+          intervalsFor(session,options).forEach(interval=>{
+            const start=Math.max(interval.start,trackingStart);
+            if(interval.end>start){
+              distractionTrackedSeconds+=(interval.end-start)/1000;
+            }
+          });
+          timedDistractions+=(Array.isArray(session.distractionEvents)?session.distractionEvents:[])
+            .filter(event=>Number.isFinite(Number(event?.at)) && Number(event.at)>=trackingStart)
+            .length;
+        }
+      }
+
+      const rating=normalizeRating(session.productivityRating);
+      if(rating!==null){
+        ratedSessions+=1;
+        ratedFocusSeconds+=seconds;
+        ratingWeightedSeconds+=rating*seconds;
+      }
+
+      const completion=targetCompletion(session,seconds);
+      if(completion!==null){
+        targetSessions+=1;
+        targetCompletionTotal+=completion;
+      }
+    });
+
+    return {
+      focusSeconds:Math.round(focusSeconds),
+      sessions,
+      distractions,
+      distractionsPerHour:focusSeconds>0
+        ? distractions/(focusSeconds/3600)
+        : null,
+      timedDistractions,
+      distractionTrackedSeconds:Math.round(distractionTrackedSeconds),
+      timedDistractionsPerHour:distractionTrackedSeconds>0
+        ? timedDistractions/(distractionTrackedSeconds/3600)
+        : null,
+      ratedSessions,
+      ratedFocusSeconds:Math.round(ratedFocusSeconds),
+      avgProductivityRating:ratedFocusSeconds>0
+        ? ratingWeightedSeconds/ratedFocusSeconds
+        : null,
+      targetSessions,
+      avgTargetCompletion:targetSessions
+        ? targetCompletionTotal/targetSessions
+        : null
+    };
+  }
+
+  function bestRatedHour(entries,options={}){
+    const hours=hourlyProfile(entries,options)
+      .filter(hour=>
+        hour.confidence.usable &&
+        hour.ratedSessionCount>=HOUR_THRESHOLDS.ratedSessions &&
+        hour.avgProductivityRating!==null
+      )
+      .sort((a,b)=>
+        b.avgProductivityRating-a.avgProductivityRating ||
+        b.ratedFocusSeconds-a.ratedFocusSeconds
+      );
+    return hours[0] || null;
+  }
+
+  function subjectProfiles(entries=[],options={}){
+    const bySubject=new Map();
+
+    (Array.isArray(entries)?entries:[]).forEach(rawEntry=>{
+      const normalized=normalizedEntry(rawEntry);
+      const session=normalized.session;
+      if(!session) return;
+      const subject=String(session.subject||'Genel').trim() || 'Genel';
+      if(!bySubject.has(subject)) bySubject.set(subject,[]);
+      bySubject.get(subject).push(normalized);
+    });
+
+    return [...bySubject.entries()].map(([subject,subjectEntries])=>{
+      const summary=periodSummary(subjectEntries,options);
+      const days=new Set(
+        subjectEntries
+          .map(entry=>entry.key || dateKeyFor(entry.session?.startedAt,options))
+          .filter(Boolean)
+      );
+      const bestHour=bestRatedHour(subjectEntries,{
+        ...options,
+        keys:options.keys
+      });
+
+      return {
+        subject,
+        ...summary,
+        activeDays:days.size,
+        bestHour:bestHour?.hour ?? null,
+        bestHourRating:bestHour?.avgProductivityRating ?? null,
+        insightEligible:
+          summary.sessions>=5 &&
+          summary.focusSeconds>=180*60 &&
+          days.size>=3,
+        ratingEligible:summary.ratedSessions>=4
+      };
+    }).sort((a,b)=>b.focusSeconds-a.focusSeconds || a.subject.localeCompare(b.subject,'tr'));
+  }
+
+  function durationBucketFor(seconds){
+    return DURATION_BUCKETS.find(bucket=>seconds>=bucket.min && seconds<bucket.max) || null;
+  }
+
+  function durationBuckets(entries=[],options={}){
+    const buckets=DURATION_BUCKETS.map(bucket=>({
+      ...bucket,
+      sessionCount:0,
+      ratedSessionCount:0,
+      ratingTotal:0,
+      distractions:0,
+      focusSeconds:0,
+      targetSessions:0,
+      targetCompletionTotal:0,
+      days:new Set()
+    }));
+
+    (Array.isArray(entries)?entries:[]).forEach(rawEntry=>{
+      const {session,key}=normalizedEntry(rawEntry);
+      if(!session) return;
+      const seconds=sessionDuration(session,options);
+      const definition=durationBucketFor(seconds);
+      if(!definition) return;
+      const bucket=buckets.find(item=>item.id===definition.id);
+      bucket.sessionCount+=1;
+      bucket.focusSeconds+=seconds;
+      bucket.distractions+=Math.max(0,finite(session.distractions,0));
+      const day=key || dateKeyFor(session.startedAt,options);
+      if(day) bucket.days.add(day);
+
+      const rating=normalizeRating(session.productivityRating);
+      if(rating!==null){
+        bucket.ratedSessionCount+=1;
+        bucket.ratingTotal+=rating;
+      }
+
+      const completion=targetCompletion(session,seconds);
+      if(completion!==null){
+        bucket.targetSessions+=1;
+        bucket.targetCompletionTotal+=completion;
+      }
+    });
+
+    return buckets.map(bucket=>({
+      id:bucket.id,
+      label:bucket.label,
+      sessionCount:bucket.sessionCount,
+      ratedSessionCount:bucket.ratedSessionCount,
+      activeDays:bucket.days.size,
+      focusSeconds:Math.round(bucket.focusSeconds),
+      avgProductivityRating:bucket.ratedSessionCount
+        ? bucket.ratingTotal/bucket.ratedSessionCount
+        : null,
+      distractions:bucket.distractions,
+      distractionsPerHour:bucket.focusSeconds>0
+        ? bucket.distractions/(bucket.focusSeconds/3600)
+        : null,
+      targetSessions:bucket.targetSessions,
+      avgTargetCompletion:bucket.targetSessions
+        ? bucket.targetCompletionTotal/bucket.targetSessions
+        : null,
+      insightEligible:
+        bucket.sessionCount>=5 &&
+        bucket.days.size>=3
+    }));
+  }
+
+  window.ProductivityLearningAnalytics={
+    HOUR_THRESHOLDS,
+    DURATION_BUCKETS,
+    normalizeRating,
+    intervalsFor,
+    splitByHour,
+    hourConfidence,
+    hourlyProfile,
+    periodSummary,
+    subjectProfiles,
+    durationBuckets
+  };
+})();
+
+/* ===== assets/js/modules/analytics/insight-engine.js ===== */
+(() => {
+  'use strict';
+
+  function finite(value,fallback=0){
+    const number=Number(value);
+    return Number.isFinite(number)?number:fallback;
+  }
+
+  function confidence(level,evidence=''){
+    const normalized=Math.max(0,Math.min(3,Number(level)||0));
+    const labels=['Az veri','Erken bulgu','Orta','Yüksek'];
+    return {level:normalized,label:labels[normalized],evidence};
+  }
+
+  function bestHourInsight(hours=[],summary={}){
+    const eligible=(Array.isArray(hours)?hours:[])
+      .filter(hour=>
+        hour?.confidence?.usable &&
+        hour.ratedSessionCount>=3 &&
+        hour.avgProductivityRating!==null
+      );
+
+    if(!eligible.length || summary.avgProductivityRating===null) return null;
+
+    const best=[...eligible].sort((a,b)=>
+      b.avgProductivityRating-a.avgProductivityRating ||
+      b.ratedFocusSeconds-a.ratedFocusSeconds
+    )[0];
+
+    const ratingLift=best.avgProductivityRating-summary.avgProductivityRating;
+    const distractionSupport=
+      best.distractionsPerHour!==null &&
+      summary.timedDistractionsPerHour!==null &&
+      best.distractionTrackedSeconds>=90*60 &&
+      summary.distractionTrackedSeconds>=90*60 &&
+      best.distractionsPerHour<=summary.timedDistractionsPerHour*0.85;
+    const targetSupport=
+      best.targetSessions>=3 &&
+      best.avgTargetCompletion!==null &&
+      summary.avgTargetCompletion!==null &&
+      best.avgTargetCompletion>=summary.avgTargetCompletion+0.08;
+
+    const supportCount=(ratingLift>=0.35?1:0)+(distractionSupport?1:0)+(targetSupport?1:0);
+    if(supportCount<2) return null;
+
+    const next=(best.hour+1)%24;
+    const details=[
+      `Verim puanın ${best.avgProductivityRating.toFixed(1)}/5`
+    ];
+    if(distractionSupport){
+      details.push('dikkat dağılman genel ortalamanın altında');
+    }else if(targetSupport){
+      details.push('hedef uyumun genel ortalamanın üzerinde');
+    }
+
+    return {
+      type:'best-hour',
+      title:`${String(best.hour).padStart(2,'0')}:00–${String(next).padStart(2,'0')}:00 güçlü bir çalışma saatin.`,
+      detail:details.join(' ve ')+'.',
+      recommendation:'Zor veya yüksek öncelikli işleri mümkün olduğunda bu saate yakın planlamayı deneyebilirsin.',
+      confidence:confidence(
+        best.confidence.level,
+        `${best.sessionCount} oturum · ${best.uniqueDays} farklı gün`
+      ),
+      impact:3,
+      actionable:true
+    };
+  }
+
+  function durationInsight(buckets=[]){
+    const eligible=(Array.isArray(buckets)?buckets:[])
+      .filter(bucket=>
+        bucket.insightEligible &&
+        bucket.ratedSessionCount>=3 &&
+        bucket.avgProductivityRating!==null
+      );
+    if(eligible.length<2) return null;
+
+    const best=[...eligible].sort((a,b)=>
+      b.avgProductivityRating-a.avgProductivityRating ||
+      b.sessionCount-a.sessionCount
+    )[0];
+    const long=eligible.find(bucket=>bucket.id==='90+');
+
+    if(
+      long &&
+      best.id!=='90+' &&
+      best.avgProductivityRating-long.avgProductivityRating>=0.5
+    ){
+      const distractionSupport=
+        best.distractionsPerHour!==null &&
+        long.distractionsPerHour!==null &&
+        long.distractionsPerHour>=best.distractionsPerHour*1.25 &&
+        long.distractionsPerHour-best.distractionsPerHour>=0.3;
+
+      return {
+        type:'session-length',
+        title:`${best.label} oturumlar sende daha verimli görünüyor.`,
+        detail:`Bu aralıkta ortalama puanın ${best.avgProductivityRating.toFixed(1)}/5; 90+ dakikada ${long.avgProductivityRating.toFixed(1)}/5.`+
+          (distractionSupport?' Uzun oturumlarda dikkat dağılman da daha yüksek.':''),
+        recommendation:`Uzun çalışma bloklarını ${best.label} civarında parçalara bölmeyi deneyebilirsin.`,
+        confidence:confidence(
+          Math.min(3,best.sessionCount>=8 && long.sessionCount>=8?3:2),
+          `${best.sessionCount+long.sessionCount} karşılaştırılan oturum`
+        ),
+        impact:3,
+        actionable:true
+      };
+    }
+
+    const second=[...eligible]
+      .filter(bucket=>bucket.id!==best.id)
+      .sort((a,b)=>b.avgProductivityRating-a.avgProductivityRating)[0];
+
+    if(second && best.avgProductivityRating-second.avgProductivityRating>=0.6){
+      return {
+        type:'session-length',
+        title:`${best.label} oturumlar en yüksek verim puanına sahip.`,
+        detail:`Ortalama ${best.avgProductivityRating.toFixed(1)}/5; sonraki en iyi aralık ${second.avgProductivityRating.toFixed(1)}/5.`,
+        recommendation:'Bu süre aralığını bir çalışma şablonu olarak birkaç kez daha deneyebilirsin.',
+        confidence:confidence(2,`${best.sessionCount} oturum`),
+        impact:2,
+        actionable:true
+      };
+    }
+
+    return null;
+  }
+
+  function subjectInsight(subjects=[],summary={}){
+    const eligible=(Array.isArray(subjects)?subjects:[])
+      .filter(subject=>subject.insightEligible && subject.ratingEligible);
+    if(!eligible.length || summary.avgProductivityRating===null) return null;
+
+    const low=[...eligible]
+      .filter(subject=>subject.avgProductivityRating!==null)
+      .sort((a,b)=>a.avgProductivityRating-b.avgProductivityRating)[0];
+
+    if(
+      low &&
+      summary.avgProductivityRating-low.avgProductivityRating>=0.5
+    ){
+      return {
+        type:'subject',
+        title:`${low.subject} oturumlarında verim puanın daha düşük.`,
+        detail:`${low.subject}: ${low.avgProductivityRating.toFixed(1)}/5 · genel: ${summary.avgProductivityRating.toFixed(1)}/5.`,
+        recommendation:low.bestHour!==null
+          ? `${low.subject} için ${String(low.bestHour).padStart(2,'0')}:00 civarını daha sık denemeyi değerlendirebilirsin.`
+          : 'Bu derste daha kısa oturum veya farklı saatleri deneyip sonucu karşılaştırabilirsin.',
+        confidence:confidence(
+          low.sessions>=8 && low.activeDays>=5?3:2,
+          `${low.sessions} oturum · ${low.activeDays} gün`
+        ),
+        impact:2,
+        actionable:true
+      };
+    }
+
+    return null;
+  }
+
+  function trendInsight(current={},previous={}){
+    if(!previous || !current) return null;
+
+    if(
+      current.ratedSessions>=5 &&
+      previous.ratedSessions>=5 &&
+      current.avgProductivityRating!==null &&
+      previous.avgProductivityRating!==null
+    ){
+      const delta=current.avgProductivityRating-previous.avgProductivityRating;
+      if(Math.abs(delta)>=0.4){
+        const improved=delta>0;
+        return {
+          type:'rating-trend',
+          title:improved?'Son dönemde verim algın yükseliyor.':'Son dönemde verim algın düşmüş görünüyor.',
+          detail:`Son 30 gün ${current.avgProductivityRating.toFixed(1)}/5 · önceki 30 gün ${previous.avgProductivityRating.toFixed(1)}/5.`,
+          recommendation:improved
+            ? 'İyi giden saat ve oturum uzunluklarını korumaya çalış.'
+            : 'Son dönemde değişen çalışma saatlerini ve oturum uzunluklarını karşılaştırmak faydalı olabilir.',
+          confidence:confidence(2,`${current.ratedSessions+previous.ratedSessions} puanlanan oturum`),
+          impact:2,
+          actionable:true
+        };
+      }
+    }
+
+    if(
+      current.focusSeconds>=180*60 &&
+      previous.focusSeconds>=180*60 &&
+      current.distractionsPerHour!==null &&
+      previous.distractionsPerHour!==null
+    ){
+      const absolute=current.distractionsPerHour-previous.distractionsPerHour;
+      const relative=previous.distractionsPerHour>0
+        ? absolute/previous.distractionsPerHour
+        : 0;
+      if(Math.abs(relative)>=0.25 && Math.abs(absolute)>=0.3){
+        const improved=absolute<0;
+        return {
+          type:'distraction-trend',
+          title:improved?'Dikkat dağılma sıklığın azalıyor.':'Dikkat dağılma sıklığın artmış görünüyor.',
+          detail:`Şimdi ${current.distractionsPerHour.toFixed(1)}/saat · önce ${previous.distractionsPerHour.toFixed(1)}/saat.`,
+          recommendation:improved
+            ? 'Son dönemde işe yarayan çalışma düzenini korumaya çalış.'
+            : 'Saat ve oturum uzunluğu analizinde artışın nerede yoğunlaştığını kontrol edebilirsin.',
+          confidence:confidence(2,'İki 30 günlük dönem'),
+          impact:2,
+          actionable:true
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function learningInsight(summary={}){
+    const needed=[];
+    if(finite(summary.focusSeconds,0)<90*60) needed.push('biraz daha çalışma süresi');
+    if(finite(summary.ratedSessions,0)<3) needed.push('en az 3 puanlanan oturum');
+
+    return {
+      type:'learning',
+      title:'Çalışma ritmini öğreniyorum.',
+      detail:needed.length
+        ? `Daha güvenilir kişisel öneriler için ${needed.join(' ve ')} gerekiyor.`
+        : 'Veri birikiyor; güçlü bir örüntü oluştuğunda burada göstereceğim.',
+      recommendation:'Oturumları bitirirken 1–5 verim puanı vermen analizi belirgin biçimde güçlendirir.',
+      confidence:confidence(0,'Henüz yeterli örnek yok'),
+      impact:1,
+      actionable:true
+    };
+  }
+
+  function generate(options={}){
+    const summary=options.summary || {};
+    const candidates=[
+      bestHourInsight(options.hours,summary),
+      durationInsight(options.durationBuckets),
+      subjectInsight(options.subjects,summary),
+      trendInsight(summary,options.previousSummary)
+    ].filter(Boolean);
+
+    candidates.sort((a,b)=>
+      b.confidence.level-a.confidence.level ||
+      b.impact-a.impact ||
+      Number(b.actionable)-Number(a.actionable)
+    );
+
+    const types=new Set();
+    const selected=[];
+    for(const insight of candidates){
+      if(types.has(insight.type)) continue;
+      selected.push(insight);
+      types.add(insight.type);
+      if(selected.length>=3) break;
+    }
+
+    if(!selected.length) selected.push(learningInsight(summary));
+    return selected;
+  }
+
+  window.ProductivityInsightEngine={
+    confidence,
+    bestHourInsight,
+    durationInsight,
+    subjectInsight,
+    trendInsight,
+    generate
+  };
+})();
+
 /* ===== assets/js/modules/calendar/calendar-core.js ===== */
 (() => {
   'use strict';
@@ -5624,12 +6421,163 @@
     }).join('');
   }
 
+
+  function buildInsights(insights=[],{
+    escapeHtml=value=>String(value)
+  }={}){
+    const rows=Array.isArray(insights)?insights:[];
+    if(!rows.length){
+      return '<div class="analytics-learning-empty">Henüz gösterilecek kişisel örüntü yok.</div>';
+    }
+
+    const icons={
+      'best-hour':'🧠',
+      'session-length':'⏱',
+      'subject':'📘',
+      'rating-trend':'📈',
+      'distraction-trend':'📵',
+      'learning':'🌱'
+    };
+
+    return rows.map(insight=>{
+      const confidence=insight.confidence || {};
+      return '<article class="analytics-insight-card confidence-'+Number(confidence.level||0)+'">'
+        +'<div class="analytics-insight-head">'
+        +'<span class="analytics-insight-icon">'+(icons[insight.type]||'✦')+'</span>'
+        +'<div><strong>'+escapeHtml(insight.title||'')+'</strong>'
+        +'<div class="analytics-confidence">Güven: '+escapeHtml(confidence.label||'')
+        +(confidence.evidence?' · '+escapeHtml(confidence.evidence):'')+'</div></div></div>'
+        +'<p>'+escapeHtml(insight.detail||'')+'</p>'
+        +(insight.recommendation
+          ? '<div class="analytics-recommendation">→ '+escapeHtml(insight.recommendation)+'</div>'
+          : '')
+        +'</article>';
+    }).join('');
+  }
+
+  function buildHourlyHeatmap(hours=[],{
+    metric='rating',
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(hours)?hours:[];
+    const numeric=rows.map(hour=>{
+      if(metric==='focus') return Number(hour.focusSeconds)||0;
+      if(metric==='distraction') return hour.distractionsPerHour===null?null:Number(hour.distractionsPerHour);
+      if(metric==='target') return hour.avgTargetCompletion===null?null:Number(hour.avgTargetCompletion);
+      return hour.avgProductivityRating===null?null:Number(hour.avgProductivityRating);
+    }).filter(value=>value!==null && Number.isFinite(value));
+    const max=Math.max(...numeric,1);
+
+    return rows.map(hour=>{
+      let value=null;
+      let ratio=0;
+      let label='—';
+      let detail='Yeterli veri yok';
+
+      if(metric==='focus'){
+        value=Number(hour.focusSeconds)||0;
+        ratio=max>0?value/max:0;
+        label=value>0?formatDurationLabel(value):'—';
+        detail=`${hour.sessionCount} oturum · ${hour.uniqueDays} gün`;
+      }else if(metric==='distraction'){
+        value=hour.distractionsPerHour===null?null:Number(hour.distractionsPerHour);
+        ratio=value===null?0:Math.min(1,value/max);
+        label=value===null?'—':value.toFixed(1)+'/s';
+        detail=value===null
+          ? 'Saatlik dikkat kaydı v94 verisi bekliyor'
+          : `${hour.timedDistractions} kayıt · ${formatDurationLabel(hour.distractionTrackedSeconds)} izlenen odak`;
+      }else if(metric==='target'){
+        value=hour.avgTargetCompletion===null?null:Number(hour.avgTargetCompletion);
+        ratio=value===null?0:Math.min(1,value);
+        label=value===null?'—':Math.round(value*100)+'%';
+        detail=`${hour.targetSessions} hedefli oturum`;
+      }else{
+        value=hour.avgProductivityRating===null?null:Number(hour.avgProductivityRating);
+        ratio=value===null?0:Math.min(1,value/5);
+        label=value===null?'—':value.toFixed(1);
+        detail=`${hour.ratedSessionCount} puanlanan oturum · ${formatDurationLabel(hour.ratedFocusSeconds)}`;
+      }
+
+      const level=value===null?0:Math.max(1,Math.min(4,Math.ceil(ratio*4)));
+      const next=(hour.hour+1)%24;
+      const title=`${String(hour.hour).padStart(2,'0')}:00–${String(next).padStart(2,'0')}:00 · ${label} · ${detail}`;
+      const confidence=hour.confidence?.label || 'Az veri';
+
+      return '<div class="hour-heatmap-cell metric-'+metric+' level-'+level+' confidence-'+Number(hour.confidence?.level||0)+'"'
+        +' data-hour="'+hour.hour+'" title="'+title+'">'
+        +'<span class="hour-label">'+String(hour.hour).padStart(2,'0')+'</span>'
+        +'<strong>'+label+'</strong>'
+        +'<span class="hour-confidence">'+confidence+'</span>'
+        +'</div>';
+    }).join('');
+  }
+
+  function buildSubjectProfiles(subjects=[],{
+    escapeHtml=value=>String(value),
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(subjects)?subjects:[];
+    if(!rows.length){
+      return '<div class="todo-empty">Son 30 günde ders/konu verisi yok.</div>';
+    }
+
+    return rows.slice(0,8).map(subject=>{
+      const rating=subject.avgProductivityRating===null
+        ? '—'
+        : subject.avgProductivityRating.toFixed(1)+'/5';
+      const distraction=subject.distractionsPerHour===null
+        ? '—'
+        : subject.distractionsPerHour.toFixed(1)+'/saat';
+      const target=subject.avgTargetCompletion===null
+        ? '—'
+        : Math.round(subject.avgTargetCompletion*100)+'%';
+      const bestHour=subject.bestHour===null
+        ? 'öğreniliyor'
+        : String(subject.bestHour).padStart(2,'0')+':00';
+
+      return '<div class="subject-profile-row">'
+        +'<div class="subject-profile-head"><strong>'+escapeHtml(subject.subject)+'</strong>'
+        +'<span>'+formatDurationLabel(subject.focusSeconds)+'</span></div>'
+        +'<div class="subject-profile-metrics">'
+        +'<span>⭐ '+rating+'</span>'
+        +'<span>📵 '+distraction+'</span>'
+        +'<span>🎯 '+target+'</span>'
+        +'<span>🕒 '+bestHour+'</span>'
+        +'</div>'
+        +'<div class="subject-profile-evidence">'+subject.sessions+' oturum · '+subject.activeDays+' gün'
+        +(subject.insightEligible?'':' · veri birikiyor')+'</div>'
+        +'</div>';
+    }).join('');
+  }
+
+  function buildDurationProfile(buckets=[],{
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(buckets)?buckets:[];
+    return '<div class="duration-profile-grid">'+rows.map(bucket=>{
+      const rating=bucket.avgProductivityRating===null?'—':bucket.avgProductivityRating.toFixed(1)+'/5';
+      const distraction=bucket.distractionsPerHour===null?'—':bucket.distractionsPerHour.toFixed(1)+'/s';
+      const target=bucket.avgTargetCompletion===null?'—':Math.round(bucket.avgTargetCompletion*100)+'%';
+      return '<div class="duration-profile-card'+(bucket.insightEligible?' eligible':'')+'">'
+        +'<strong>'+bucket.label+'</strong>'
+        +'<span>⭐ '+rating+'</span>'
+        +'<span>📵 '+distraction+'</span>'
+        +'<span>🎯 '+target+'</span>'
+        +'<small>'+bucket.sessionCount+' oturum · '+bucket.activeDays+' gün</small>'
+        +'</div>';
+    }).join('')+'</div>';
+  }
+
   window.ProductivityStatsView={
     buildMetricChart,
     buildSubjectChart,
     buildSessionAnalytics,
     buildSubjectBreakdown,
     buildTaskFocusBreakdown,
+    buildInsights,
+    buildHourlyHeatmap,
+    buildSubjectProfiles,
+    buildDurationProfile,
     buildHeatmap
   };
 })();
@@ -6046,6 +6994,17 @@
       const targetHtml=buildTarget(session,liveDuration,formatDurationLabel);
       const timeRange=displayTimeRange(session,displayClockTime);
       const linkedTask=linkedTaskInfo(session);
+      const productivityRating=Number(session.productivityRating);
+      const hasProductivityRating=Number.isInteger(productivityRating) && productivityRating>=1 && productivityRating<=5;
+      const canRate=!isCurrent && liveDuration>=300;
+      const productivityRatingHtml=canRate
+        ? '<button class="session-productivity-rating'+(hasProductivityRating?' rated':'')+'" data-action="rate-session" data-id="'
+          +session.id+'" data-tooltip="Bu oturuma verdiğin kişisel verim puanını '+(hasProductivityRating?'değiştir':'ekle')+'">'
+          +(hasProductivityRating?'⭐ '+productivityRating+'/5':'☆ Puanla')+'</button>'
+        : (hasProductivityRating
+          ? '<span class="session-productivity-rating rated">⭐ '+productivityRating+'/5</span>'
+          : '');
+
       const linkedTaskHtml=linkedTask
         ? '<div class="session-linked-task'+(linkedTask.done?' done':'')+(linkedTask.missing?' missing':'')+'">'
           +'<span class="session-linked-task-label">🎯 Bağlı görev</span>'
@@ -6103,6 +7062,7 @@
         +Number(session.distractions||0)+'</span>'
         +'<span class="meta-focus metric-help" tabindex="0" data-tooltip="Odak puanı (0–100): dikkat dağınıklığı ve kesintiler puanı düşürür; hedefe ulaşmak ve oturum görevlerini tamamlamak puanı artırabilir.">🧠 '
         +sessionFocusScore(session)+'</span>'
+        +productivityRatingHtml
         +'</span></div>'
 
         +((subjectTag||subjectEdit)
@@ -7019,6 +7979,67 @@
     });
   }
 
+  function rating(options={}){
+    const {
+      controller,
+      document:doc=document,
+      title='Bu oturum ne kadar verimli geçti?',
+      description='1 çok düşük, 5 çok yüksek verim anlamına gelir.',
+      currentRating=null,
+      skipLabel='Atla'
+    }=options;
+
+    if(!controller) throw new Error('ModalService.rating controller gerekli');
+
+    return new Promise(resolve=>{
+      const backdrop=doc.createElement('div');
+      backdrop.className='modal-backdrop session-rating-backdrop';
+      backdrop.setAttribute('aria-hidden','true');
+      backdrop.innerHTML=`
+        <div class="modal-box session-rating-modal" role="dialog" aria-modal="true" aria-labelledby="sessionRatingTitle">
+          <div class="session-rating-kicker">OTURUM DEĞERLENDİRMESİ</div>
+          <h3 id="sessionRatingTitle">${title}</h3>
+          <p class="session-rating-description">${description}</p>
+          <div class="session-rating-scale" role="group" aria-label="Verim puanı">
+            ${[1,2,3,4,5].map(value=>`
+              <button type="button" class="session-rating-option${Number(currentRating)===value?' selected':''}" data-rating="${value}" aria-label="${value} üzerinden 5">
+                <span class="session-rating-number">${value}</span>
+                <span class="session-rating-emoji">${['😞','😕','😐','🙂','🔥'][value-1]}</span>
+              </button>`).join('')}
+          </div>
+          <div class="session-rating-labels"><span>Çok düşük</span><span>Çok yüksek</span></div>
+          <button type="button" class="btn-secondary session-rating-skip" data-action="skip-rating">${skipLabel}</button>
+        </div>`;
+
+      doc.body.appendChild(backdrop);
+      let settled=false;
+
+      function finish(value){
+        if(settled) return;
+        settled=true;
+        controller.close(backdrop);
+        backdrop.remove();
+        resolve(value);
+      }
+
+      backdrop.querySelectorAll('[data-rating]').forEach(button=>{
+        button.addEventListener('click',()=>finish(Number(button.dataset.rating)));
+      });
+
+      backdrop.querySelector('[data-action="skip-rating"]')
+        ?.addEventListener('click',()=>finish(null));
+
+      controller.open(backdrop,{
+        onCancel:()=>finish(null),
+        focus:backdrop.querySelector(
+          Number(currentRating)>=1 && Number(currentRating)<=5
+            ? `[data-rating="${Number(currentRating)}"]`
+            : '[data-rating="4"]'
+        )
+      });
+    });
+  }
+
   function destructiveRisk(options={}){
     const {
       document:doc=document,
@@ -7086,6 +8107,7 @@
     timeRange,
     subject,
     minutes,
+    rating,
     destructiveRisk
   };
 })();
@@ -7095,7 +8117,7 @@
   const STORAGE_KEY = 'direncAgaci_v2';
   const BACKUP_KEY = STORAGE_KEY + '_backup';
   const OLD_KEY = 'direncAgaci_v1';
-  const SCHEMA_VERSION = 47;
+  const SCHEMA_VERSION = 48;
 
   // Runtime modules must be initialized before repositories/state consume them.
   // Startup-order checks enforce this invariant.
@@ -7115,6 +8137,8 @@
   const GamificationCore=window.ProductivityGamificationCore;
   const TreeService=window.ProductivityTreeService;
   const AnalyticsCore=window.ProductivityAnalyticsCore;
+  const LearningAnalytics=window.ProductivityLearningAnalytics;
+  const InsightEngine=window.ProductivityInsightEngine;
   const CalendarCore=window.ProductivityCalendarCore;
   const ViewFormatters=window.ProductivityViewFormatters;
   const SummaryView=window.ProductivitySummaryView;
@@ -7135,7 +8159,7 @@
   const ViewCoordinatorFactory=window.ProductivityViewCoordinator;
   const StartupControllerFactory=window.ProductivityStartupController;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !LearningAnalytics || !InsightEngine || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -7148,6 +8172,8 @@
       !GamificationCore ? 'GamificationCore' : null,
       !TreeService ? 'TreeService' : null,
       !AnalyticsCore ? 'AnalyticsCore' : null,
+      !LearningAnalytics ? 'LearningAnalytics' : null,
+      !InsightEngine ? 'InsightEngine' : null,
       !CalendarCore ? 'CalendarCore' : null,
       !ViewFormatters ? 'ViewFormatters' : null,
       !SummaryView ? 'SummaryView' : null,
@@ -9049,6 +10075,17 @@
     periodSessions: document.getElementById('periodSessions'),
     periodAvgSession: document.getElementById('periodAvgSession'),
     periodDistract: document.getElementById('periodDistract'),
+    periodRating: document.getElementById('periodRating'),
+    periodRatingCoverage: document.getElementById('periodRatingCoverage'),
+    periodTarget: document.getElementById('periodTarget'),
+    periodTargetCoverage: document.getElementById('periodTargetCoverage'),
+    periodDistractRate: document.getElementById('periodDistractRate'),
+    analyticsInsightsBody: document.getElementById('analyticsInsightsBody'),
+    hourMetricPills: document.getElementById('hourMetricPills'),
+    hourlyHeatmapBody: document.getElementById('hourlyHeatmapBody'),
+    hourlyHeatmapNote: document.getElementById('hourlyHeatmapNote'),
+    subjectProfileBody: document.getElementById('subjectProfileBody'),
+    durationProfileBody: document.getElementById('durationProfileBody'),
     chartTitle: document.getElementById('chartTitle'),
     metricPills: document.querySelectorAll('.metric-pill'),
     typePills: document.querySelectorAll('.type-pill'),
@@ -9851,11 +10888,27 @@
           if(sessionCount===1) delete activeSession.distractionCategories[category];
           else activeSession.distractionCategories[category]=sessionCount-1;
           activeSession.distractions=Math.max(0,Number(activeSession.distractions||0)-1);
+          if(Array.isArray(activeSession.distractionEvents)){
+            const index=[...activeSession.distractionEvents]
+              .map((event,i)=>({event,i}))
+              .reverse()
+              .find(item=>String(item.event?.category||'')===String(category||''))?.i;
+            if(Number.isInteger(index)) activeSession.distractionEvents.splice(index,1);
+          }
+          activeSession.updatedAt=Date.now();
         }
       }else{
         const categorized=Object.values(activeSession.distractionCategories||{}).reduce((sum,count)=>sum+Number(count||0),0);
         if(Number(activeSession.distractions||0)-categorized>0){
           activeSession.distractions=Math.max(0,Number(activeSession.distractions||0)-1);
+          if(Array.isArray(activeSession.distractionEvents)){
+            const index=[...activeSession.distractionEvents]
+              .map((event,i)=>({event,i}))
+              .reverse()
+              .find(item=>!String(item.event?.category||'').trim())?.i;
+            if(Number.isInteger(index)) activeSession.distractionEvents.splice(index,1);
+          }
+          activeSession.updatedAt=Date.now();
         }
       }
     }
@@ -9897,11 +10950,22 @@
     if(data.isWorking && data.activeSessionId){
       const session = findSession(data.activeSessionId);
       if(session){
+        const eventAt=Date.now();
         session.distractions += 1;
         if(category){
           if(!session.distractionCategories || typeof session.distractionCategories!=='object') session.distractionCategories={};
           session.distractionCategories[category]=(Number(session.distractionCategories[category])||0)+1;
         }
+        if(!Array.isArray(session.distractionEvents)) session.distractionEvents=[];
+        if(Number(session.distractionTrackingVersion)<1){
+          session.distractionTrackingVersion=1;
+          session.distractionTrackingStartedAt=eventAt;
+        }
+        session.distractionEvents.push({
+          at:eventAt,
+          category:category ? String(category).slice(0,40) : null
+        });
+        session.updatedAt=eventAt;
       }
     }
     saveData();
@@ -10617,6 +11681,15 @@
     );
     let linkedTaskCompleted=false;
 
+    if(Number(result.session?.duration||0)>=5*60){
+      const rating=await askSessionProductivityRating(
+        result.session.productivityRating
+      );
+      if(rating!==null){
+        SessionDomainService.setProductivityRating(result.session,rating);
+      }
+    }
+
     if(linked?.task && !linked.task.done){
       const choice=await askLinkedTaskFinishChoice(linked.text);
       if(choice==='complete'){
@@ -10823,6 +11896,19 @@
       saveData();
       renderSessionList();
       showToast('Oturum tekrar geçmişte gösteriliyor.', true);
+    } else if(action === 'rate-session'){
+      const session=findSession(sid);
+      if(!session || sid===data.activeSessionId || Number(session.duration||0)<5*60) return;
+      const rating=await askSessionProductivityRating(
+        session.productivityRating,
+        {editing:true}
+      );
+      if(rating===null) return;
+      SessionDomainService.setProductivityRating(session,rating);
+      saveData({force:true});
+      renderSessionList();
+      renderStats();
+      showToast('Oturum verim puanı '+rating+'/5 olarak kaydedildi.',true);
     } else if(action === 'edit-session-time'){
       await editHistoricalSessionTiming(sid);
     } else if(action === 'delete-session'){
@@ -10974,6 +12060,15 @@
       cancelValue:false,
       showCancel:true,
       focus:'cancel'
+    });
+  }
+
+  function askSessionProductivityRating(currentRating=null,{editing=false}={}){
+    return ModalService.rating({
+      controller:modalController,
+      document,
+      currentRating,
+      skipLabel:editing?'Vazgeç':'Atla'
     });
   }
 
@@ -11367,6 +12462,7 @@
   let currentPeriod = 'day';
   let currentMetric = 'work';
   let currentChartType = 'bar';
+  let currentHourMetric = 'rating';
   let statsWeekOffset = 0;
 
   el.periodBtns.forEach(btn=>{
@@ -11435,6 +12531,104 @@
     return [];
   }
   function getPeriodTotals(period){ return sumEntries(getPeriodKeys(period)); }
+
+  function rollingDateKeys(days=30,offsetDays=0){
+    const now=new Date();
+    const keys=[];
+    for(let index=offsetDays+days-1;index>=offsetDays;index-=1){
+      keys.push(dateKey(addDays(now,-index)));
+    }
+    return keys;
+  }
+
+  function learningAnalyticsSnapshot(){
+    const keys=rollingDateKeys(30,0);
+    const previousKeys=rollingDateKeys(30,30);
+    const entries=sessionsForKeys(keys);
+    const analyticsOptions={
+      keys,
+      sessionSeconds:session=>sessionSecondsForAnalytics(session),
+      sessionIntervals:session=>sessionIntervals(session),
+      dateKey:date=>dateKey(date),
+      now:Date.now(),
+      includeOpen:true
+    };
+    const summary=LearningAnalytics.periodSummary(entries,analyticsOptions);
+    const hours=LearningAnalytics.hourlyProfile(entries,analyticsOptions);
+    const subjects=LearningAnalytics.subjectProfiles(entries,analyticsOptions);
+    const durationBuckets=LearningAnalytics.durationBuckets(entries,analyticsOptions);
+    const previousSummary=LearningAnalytics.periodSummary(
+      sessionsForKeys(previousKeys),
+      {
+        ...analyticsOptions,
+        keys:previousKeys,
+        includeOpen:false
+      }
+    );
+    const insights=InsightEngine.generate({
+      summary,
+      previousSummary,
+      hours,
+      subjects,
+      durationBuckets
+    });
+    return {
+      keys,
+      summary,
+      previousSummary,
+      hours,
+      subjects,
+      durationBuckets,
+      insights
+    };
+  }
+
+  function renderLearningAnalytics(snapshot=null){
+    const model=snapshot || learningAnalyticsSnapshot();
+
+    if(el.analyticsInsightsBody){
+      el.analyticsInsightsBody.innerHTML=StatsView.buildInsights(
+        model.insights,
+        {escapeHtml}
+      );
+    }
+
+    if(el.hourlyHeatmapBody){
+      el.hourlyHeatmapBody.innerHTML=StatsView.buildHourlyHeatmap(
+        model.hours,
+        {
+          metric:currentHourMetric,
+          formatDurationLabel
+        }
+      );
+    }
+
+    if(el.hourlyHeatmapNote){
+      const notes={
+        rating:'Verimlilik: 1–5 puan, o saatteki gerçek odak süresiyle ağırlıklandırılır.',
+        focus:'Odak: workIntervals saat sınırlarında bölünerek gerçek süre gösterilir.',
+        distraction:'Dikkat: yalnızca v94 ve sonrası zaman damgalı kayıtlar / izlenen odak saati.',
+        target:'Hedef: o saatte başlayan hedefli oturumların ortalama tamamlama oranı.'
+      };
+      el.hourlyHeatmapNote.textContent=notes[currentHourMetric] || '';
+    }
+
+    if(el.subjectProfileBody){
+      el.subjectProfileBody.innerHTML=StatsView.buildSubjectProfiles(
+        model.subjects,
+        {escapeHtml,formatDurationLabel}
+      );
+    }
+
+    if(el.durationProfileBody){
+      el.durationProfileBody.innerHTML=StatsView.buildDurationProfile(
+        model.durationBuckets,
+        {formatDurationLabel}
+      );
+    }
+
+    return model;
+  }
 
   function getSubjectBreakdown(keys){
     const totals = {};
@@ -11662,19 +12856,63 @@
   el.statsWeekPrev?.addEventListener('click',()=>{statsWeekOffset--;renderStats();});
   el.statsWeekNext?.addEventListener('click',()=>{if(statsWeekOffset<0){statsWeekOffset++;renderStats();}});
 
+  el.hourMetricPills?.addEventListener('click',event=>{
+    const button=event.target.closest('[data-hour-metric]');
+    if(!button) return;
+    currentHourMetric=button.dataset.hourMetric || 'rating';
+    el.hourMetricPills.querySelectorAll('[data-hour-metric]').forEach(item=>
+      item.classList.toggle('active',item===button)
+    );
+    renderLearningAnalytics();
+  });
+
   function renderStats(){
     renderStatsWeekNav();
+    const periodKeys=getPeriodKeys(currentPeriod);
     const totals = getPeriodTotals(currentPeriod);
+    const periodSummary=LearningAnalytics.periodSummary(
+      sessionsForKeys(periodKeys),
+      {sessionSeconds:session=>sessionSecondsForAnalytics(session)}
+    );
+
     el.periodWork.textContent = formatMinutes(totals.workSeconds);
     el.periodSessions.textContent = totals.sessions;
     el.periodAvgSession.textContent = totals.sessions > 0
       ? 'ort. ' + formatDurationLabel(Math.round(totals.workSeconds / totals.sessions))
       : 'henüz oturum yok';
-    el.periodDistract.textContent = totals.distraction;
+    el.periodDistract.textContent = periodSummary.distractions;
+
+    if(el.periodRating){
+      el.periodRating.textContent=periodSummary.avgProductivityRating===null
+        ? '—'
+        : periodSummary.avgProductivityRating.toFixed(1)+'/5';
+    }
+    if(el.periodRatingCoverage){
+      el.periodRatingCoverage.textContent=periodSummary.ratedSessions
+        ? periodSummary.ratedSessions+' puanlanan oturum'
+        : 'puanlanan oturum yok';
+    }
+    if(el.periodTarget){
+      el.periodTarget.textContent=periodSummary.avgTargetCompletion===null
+        ? '—'
+        : Math.round(periodSummary.avgTargetCompletion*100)+'%';
+    }
+    if(el.periodTargetCoverage){
+      el.periodTargetCoverage.textContent=periodSummary.targetSessions
+        ? periodSummary.targetSessions+' hedefli oturum'
+        : 'hedefli oturum yok';
+    }
+    if(el.periodDistractRate){
+      el.periodDistractRate.textContent=periodSummary.distractionsPerHour===null
+        ? '—'
+        : periodSummary.distractionsPerHour.toFixed(1)+'/s';
+    }
+
     renderChartDispatch();
     renderSessionAnalytics();
     renderSubjectBreakdown();
     renderTaskFocusBreakdown();
+    renderLearningAnalytics();
     renderHeatmap();
   }
 
@@ -14756,6 +15994,7 @@
       equal(Boolean(window.ProductivityModalService),true);
       equal(typeof window.ProductivityModalService.createController,'function');
       equal(typeof window.ProductivityModalService.choice,'function');
+      equal(typeof window.ProductivityModalService.rating,'function');
       equal(typeof window.ProductivityModalService.minutes,'function');
     });
 
