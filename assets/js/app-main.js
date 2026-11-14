@@ -2,7 +2,7 @@
   const STORAGE_KEY = 'direncAgaci_v2';
   const BACKUP_KEY = STORAGE_KEY + '_backup';
   const OLD_KEY = 'direncAgaci_v1';
-  const SCHEMA_VERSION = 47;
+  const SCHEMA_VERSION = 48;
 
   // Runtime modules must be initialized before repositories/state consume them.
   // Startup-order checks enforce this invariant.
@@ -22,6 +22,8 @@
   const GamificationCore=window.ProductivityGamificationCore;
   const TreeService=window.ProductivityTreeService;
   const AnalyticsCore=window.ProductivityAnalyticsCore;
+  const LearningAnalytics=window.ProductivityLearningAnalytics;
+  const InsightEngine=window.ProductivityInsightEngine;
   const CalendarCore=window.ProductivityCalendarCore;
   const ViewFormatters=window.ProductivityViewFormatters;
   const SummaryView=window.ProductivitySummaryView;
@@ -42,7 +44,7 @@
   const ViewCoordinatorFactory=window.ProductivityViewCoordinator;
   const StartupControllerFactory=window.ProductivityStartupController;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !LearningAnalytics || !InsightEngine || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -55,6 +57,8 @@
       !GamificationCore ? 'GamificationCore' : null,
       !TreeService ? 'TreeService' : null,
       !AnalyticsCore ? 'AnalyticsCore' : null,
+      !LearningAnalytics ? 'LearningAnalytics' : null,
+      !InsightEngine ? 'InsightEngine' : null,
       !CalendarCore ? 'CalendarCore' : null,
       !ViewFormatters ? 'ViewFormatters' : null,
       !SummaryView ? 'SummaryView' : null,
@@ -1956,6 +1960,17 @@
     periodSessions: document.getElementById('periodSessions'),
     periodAvgSession: document.getElementById('periodAvgSession'),
     periodDistract: document.getElementById('periodDistract'),
+    periodRating: document.getElementById('periodRating'),
+    periodRatingCoverage: document.getElementById('periodRatingCoverage'),
+    periodTarget: document.getElementById('periodTarget'),
+    periodTargetCoverage: document.getElementById('periodTargetCoverage'),
+    periodDistractRate: document.getElementById('periodDistractRate'),
+    analyticsInsightsBody: document.getElementById('analyticsInsightsBody'),
+    hourMetricPills: document.getElementById('hourMetricPills'),
+    hourlyHeatmapBody: document.getElementById('hourlyHeatmapBody'),
+    hourlyHeatmapNote: document.getElementById('hourlyHeatmapNote'),
+    subjectProfileBody: document.getElementById('subjectProfileBody'),
+    durationProfileBody: document.getElementById('durationProfileBody'),
     chartTitle: document.getElementById('chartTitle'),
     metricPills: document.querySelectorAll('.metric-pill'),
     typePills: document.querySelectorAll('.type-pill'),
@@ -2758,11 +2773,27 @@
           if(sessionCount===1) delete activeSession.distractionCategories[category];
           else activeSession.distractionCategories[category]=sessionCount-1;
           activeSession.distractions=Math.max(0,Number(activeSession.distractions||0)-1);
+          if(Array.isArray(activeSession.distractionEvents)){
+            const index=[...activeSession.distractionEvents]
+              .map((event,i)=>({event,i}))
+              .reverse()
+              .find(item=>String(item.event?.category||'')===String(category||''))?.i;
+            if(Number.isInteger(index)) activeSession.distractionEvents.splice(index,1);
+          }
+          activeSession.updatedAt=Date.now();
         }
       }else{
         const categorized=Object.values(activeSession.distractionCategories||{}).reduce((sum,count)=>sum+Number(count||0),0);
         if(Number(activeSession.distractions||0)-categorized>0){
           activeSession.distractions=Math.max(0,Number(activeSession.distractions||0)-1);
+          if(Array.isArray(activeSession.distractionEvents)){
+            const index=[...activeSession.distractionEvents]
+              .map((event,i)=>({event,i}))
+              .reverse()
+              .find(item=>!String(item.event?.category||'').trim())?.i;
+            if(Number.isInteger(index)) activeSession.distractionEvents.splice(index,1);
+          }
+          activeSession.updatedAt=Date.now();
         }
       }
     }
@@ -2804,11 +2835,22 @@
     if(data.isWorking && data.activeSessionId){
       const session = findSession(data.activeSessionId);
       if(session){
+        const eventAt=Date.now();
         session.distractions += 1;
         if(category){
           if(!session.distractionCategories || typeof session.distractionCategories!=='object') session.distractionCategories={};
           session.distractionCategories[category]=(Number(session.distractionCategories[category])||0)+1;
         }
+        if(!Array.isArray(session.distractionEvents)) session.distractionEvents=[];
+        if(Number(session.distractionTrackingVersion)<1){
+          session.distractionTrackingVersion=1;
+          session.distractionTrackingStartedAt=eventAt;
+        }
+        session.distractionEvents.push({
+          at:eventAt,
+          category:category ? String(category).slice(0,40) : null
+        });
+        session.updatedAt=eventAt;
       }
     }
     saveData();
@@ -3524,6 +3566,15 @@
     );
     let linkedTaskCompleted=false;
 
+    if(Number(result.session?.duration||0)>=5*60){
+      const rating=await askSessionProductivityRating(
+        result.session.productivityRating
+      );
+      if(rating!==null){
+        SessionDomainService.setProductivityRating(result.session,rating);
+      }
+    }
+
     if(linked?.task && !linked.task.done){
       const choice=await askLinkedTaskFinishChoice(linked.text);
       if(choice==='complete'){
@@ -3730,6 +3781,19 @@
       saveData();
       renderSessionList();
       showToast('Oturum tekrar geçmişte gösteriliyor.', true);
+    } else if(action === 'rate-session'){
+      const session=findSession(sid);
+      if(!session || sid===data.activeSessionId || Number(session.duration||0)<5*60) return;
+      const rating=await askSessionProductivityRating(
+        session.productivityRating,
+        {editing:true}
+      );
+      if(rating===null) return;
+      SessionDomainService.setProductivityRating(session,rating);
+      saveData({force:true});
+      renderSessionList();
+      renderStats();
+      showToast('Oturum verim puanı '+rating+'/5 olarak kaydedildi.',true);
     } else if(action === 'edit-session-time'){
       await editHistoricalSessionTiming(sid);
     } else if(action === 'delete-session'){
@@ -3881,6 +3945,15 @@
       cancelValue:false,
       showCancel:true,
       focus:'cancel'
+    });
+  }
+
+  function askSessionProductivityRating(currentRating=null,{editing=false}={}){
+    return ModalService.rating({
+      controller:modalController,
+      document,
+      currentRating,
+      skipLabel:editing?'Vazgeç':'Atla'
     });
   }
 
@@ -4274,6 +4347,7 @@
   let currentPeriod = 'day';
   let currentMetric = 'work';
   let currentChartType = 'bar';
+  let currentHourMetric = 'rating';
   let statsWeekOffset = 0;
 
   el.periodBtns.forEach(btn=>{
@@ -4342,6 +4416,104 @@
     return [];
   }
   function getPeriodTotals(period){ return sumEntries(getPeriodKeys(period)); }
+
+  function rollingDateKeys(days=30,offsetDays=0){
+    const now=new Date();
+    const keys=[];
+    for(let index=offsetDays+days-1;index>=offsetDays;index-=1){
+      keys.push(dateKey(addDays(now,-index)));
+    }
+    return keys;
+  }
+
+  function learningAnalyticsSnapshot(){
+    const keys=rollingDateKeys(30,0);
+    const previousKeys=rollingDateKeys(30,30);
+    const entries=sessionsForKeys(keys);
+    const analyticsOptions={
+      keys,
+      sessionSeconds:session=>sessionSecondsForAnalytics(session),
+      sessionIntervals:session=>sessionIntervals(session),
+      dateKey:date=>dateKey(date),
+      now:Date.now(),
+      includeOpen:true
+    };
+    const summary=LearningAnalytics.periodSummary(entries,analyticsOptions);
+    const hours=LearningAnalytics.hourlyProfile(entries,analyticsOptions);
+    const subjects=LearningAnalytics.subjectProfiles(entries,analyticsOptions);
+    const durationBuckets=LearningAnalytics.durationBuckets(entries,analyticsOptions);
+    const previousSummary=LearningAnalytics.periodSummary(
+      sessionsForKeys(previousKeys),
+      {
+        ...analyticsOptions,
+        keys:previousKeys,
+        includeOpen:false
+      }
+    );
+    const insights=InsightEngine.generate({
+      summary,
+      previousSummary,
+      hours,
+      subjects,
+      durationBuckets
+    });
+    return {
+      keys,
+      summary,
+      previousSummary,
+      hours,
+      subjects,
+      durationBuckets,
+      insights
+    };
+  }
+
+  function renderLearningAnalytics(snapshot=null){
+    const model=snapshot || learningAnalyticsSnapshot();
+
+    if(el.analyticsInsightsBody){
+      el.analyticsInsightsBody.innerHTML=StatsView.buildInsights(
+        model.insights,
+        {escapeHtml}
+      );
+    }
+
+    if(el.hourlyHeatmapBody){
+      el.hourlyHeatmapBody.innerHTML=StatsView.buildHourlyHeatmap(
+        model.hours,
+        {
+          metric:currentHourMetric,
+          formatDurationLabel
+        }
+      );
+    }
+
+    if(el.hourlyHeatmapNote){
+      const notes={
+        rating:'Verimlilik: 1–5 puan, o saatteki gerçek odak süresiyle ağırlıklandırılır.',
+        focus:'Odak: workIntervals saat sınırlarında bölünerek gerçek süre gösterilir.',
+        distraction:'Dikkat: yalnızca v94 ve sonrası zaman damgalı kayıtlar / izlenen odak saati.',
+        target:'Hedef: o saatte başlayan hedefli oturumların ortalama tamamlama oranı.'
+      };
+      el.hourlyHeatmapNote.textContent=notes[currentHourMetric] || '';
+    }
+
+    if(el.subjectProfileBody){
+      el.subjectProfileBody.innerHTML=StatsView.buildSubjectProfiles(
+        model.subjects,
+        {escapeHtml,formatDurationLabel}
+      );
+    }
+
+    if(el.durationProfileBody){
+      el.durationProfileBody.innerHTML=StatsView.buildDurationProfile(
+        model.durationBuckets,
+        {formatDurationLabel}
+      );
+    }
+
+    return model;
+  }
 
   function getSubjectBreakdown(keys){
     const totals = {};
@@ -4569,19 +4741,63 @@
   el.statsWeekPrev?.addEventListener('click',()=>{statsWeekOffset--;renderStats();});
   el.statsWeekNext?.addEventListener('click',()=>{if(statsWeekOffset<0){statsWeekOffset++;renderStats();}});
 
+  el.hourMetricPills?.addEventListener('click',event=>{
+    const button=event.target.closest('[data-hour-metric]');
+    if(!button) return;
+    currentHourMetric=button.dataset.hourMetric || 'rating';
+    el.hourMetricPills.querySelectorAll('[data-hour-metric]').forEach(item=>
+      item.classList.toggle('active',item===button)
+    );
+    renderLearningAnalytics();
+  });
+
   function renderStats(){
     renderStatsWeekNav();
+    const periodKeys=getPeriodKeys(currentPeriod);
     const totals = getPeriodTotals(currentPeriod);
+    const periodSummary=LearningAnalytics.periodSummary(
+      sessionsForKeys(periodKeys),
+      {sessionSeconds:session=>sessionSecondsForAnalytics(session)}
+    );
+
     el.periodWork.textContent = formatMinutes(totals.workSeconds);
     el.periodSessions.textContent = totals.sessions;
     el.periodAvgSession.textContent = totals.sessions > 0
       ? 'ort. ' + formatDurationLabel(Math.round(totals.workSeconds / totals.sessions))
       : 'henüz oturum yok';
-    el.periodDistract.textContent = totals.distraction;
+    el.periodDistract.textContent = periodSummary.distractions;
+
+    if(el.periodRating){
+      el.periodRating.textContent=periodSummary.avgProductivityRating===null
+        ? '—'
+        : periodSummary.avgProductivityRating.toFixed(1)+'/5';
+    }
+    if(el.periodRatingCoverage){
+      el.periodRatingCoverage.textContent=periodSummary.ratedSessions
+        ? periodSummary.ratedSessions+' puanlanan oturum'
+        : 'puanlanan oturum yok';
+    }
+    if(el.periodTarget){
+      el.periodTarget.textContent=periodSummary.avgTargetCompletion===null
+        ? '—'
+        : Math.round(periodSummary.avgTargetCompletion*100)+'%';
+    }
+    if(el.periodTargetCoverage){
+      el.periodTargetCoverage.textContent=periodSummary.targetSessions
+        ? periodSummary.targetSessions+' hedefli oturum'
+        : 'hedefli oturum yok';
+    }
+    if(el.periodDistractRate){
+      el.periodDistractRate.textContent=periodSummary.distractionsPerHour===null
+        ? '—'
+        : periodSummary.distractionsPerHour.toFixed(1)+'/s';
+    }
+
     renderChartDispatch();
     renderSessionAnalytics();
     renderSubjectBreakdown();
     renderTaskFocusBreakdown();
+    renderLearningAnalytics();
     renderHeatmap();
   }
 
@@ -7663,6 +7879,7 @@
       equal(Boolean(window.ProductivityModalService),true);
       equal(typeof window.ProductivityModalService.createController,'function');
       equal(typeof window.ProductivityModalService.choice,'function');
+      equal(typeof window.ProductivityModalService.rating,'function');
       equal(typeof window.ProductivityModalService.minutes,'function');
     });
 
