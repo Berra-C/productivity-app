@@ -68,6 +68,13 @@ function assert(value,message){
   assert(timing.ok===true,'historical timing edit failed');
   assert(session.startedAt===1000 && session.endedAt===10000,'historical bounds mismatch');
   assert(session.duration===9,'historical duration mismatch');
+
+  const ratingSession={productivityRating:null,ratedAt:null,updatedAt:0};
+  const rating=service.setProductivityRating(ratingSession,4);
+  assert(rating===4 && ratingSession.productivityRating===4,'session rating saved');
+  assert(Number.isFinite(ratingSession.ratedAt),'session rating timestamp saved');
+  assert(service.setProductivityRating(ratingSession,9)===null,'invalid rating clears safely');
+  assert(ratingSession.productivityRating===null && ratingSession.ratedAt===null,'invalid rating is not retained');
 }
 
 // Task: completion/reward, recurrence spawning, scoped deletion and undo.
