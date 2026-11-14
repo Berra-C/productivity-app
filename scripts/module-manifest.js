@@ -26,6 +26,8 @@ const MODULE_SOURCES = Object.freeze([
   "assets/js/modules/gamification/gamification-core.js",
   "assets/js/modules/gamification/tree-service.js",
   "assets/js/modules/analytics/analytics-core.js",
+  "assets/js/modules/analytics/productivity-analytics.js",
+  "assets/js/modules/analytics/insight-engine.js",
   "assets/js/modules/calendar/calendar-core.js",
   "assets/js/modules/ui/view-formatters.js",
   "assets/js/modules/analytics/summary-view.js",
