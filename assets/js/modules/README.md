@@ -4,7 +4,7 @@ All source modules live under a responsibility folder. `app.js` is generated; ne
 
 ```text
 modules/
-├── analytics/     analytics calculations and analytics/summary views
+├── analytics/     learning datasets, confidence/insight rules and analytics/summary views
 ├── app/           startup, runtime-error and cross-view composition
 ├── calendar/      calendar/event repository, service, core and view
 ├── gamification/  XP/tree rules and collection view
