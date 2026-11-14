@@ -29,6 +29,11 @@
       duration:0,
       distractions:0,
       distractionCategories:{},
+      distractionEvents:[],
+      distractionTrackingVersion:1,
+      distractionTrackingStartedAt:now,
+      productivityRating:null,
+      ratedAt:null,
       linkedTaskId:linkedTaskId ? String(linkedTaskId) : null,
       linkedTaskText:linkedTaskText
         ? String(linkedTaskText).trim().slice(0,120)
