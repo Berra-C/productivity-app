@@ -690,6 +690,15 @@ function browserStubs(){
 
     await cdp.evaluate(`
       (()=>{
+        window.__browserTestRealDateNow=Date.now.bind(Date);
+        window.__browserTestNow=Date.now();
+        Date.now=()=>window.__browserTestNow;
+        return true;
+      })()
+    `);
+
+    await cdp.evaluate(`
+      (()=>{
         const card=document.querySelector(
           '[data-task-id="${focusTaskId}"]'
         );
@@ -762,8 +771,17 @@ function browserStubs(){
       throw new Error('linked task is not visible on session card');
     }
 
-    // Pause once so the derived task focus duration is non-zero and the card
-    // displays the paused linked-session state.
+    // Advance the browser clock by six minutes so the finished session is
+    // eligible for the v94 1–5 productivity rating prompt. Record one timed
+    // distraction through the real UI before pausing.
+    await cdp.evaluate(`
+      (()=>{
+        window.__browserTestNow+=6*60*1000;
+        document.getElementById('distractBtn')?.click();
+        return true;
+      })()
+    `);
+
     await cdp.evaluate(`document.getElementById('workToggle').click()`);
 
     await waitFor(()=>
@@ -783,6 +801,21 @@ function browserStubs(){
     }
 
     await cdp.evaluate(`document.getElementById('workFinishBtn').click()`);
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        document
+          .querySelector('.session-rating-backdrop')
+          ?.classList
+          .contains('show') || false
+      `)
+    );
+
+    await cdp.evaluate(`
+      document
+        .querySelector('.session-rating-backdrop [data-rating="4"]')
+        ?.click()
+    `);
 
     await waitFor(()=>
       cdp.evaluate(`
@@ -831,9 +864,14 @@ function browserStubs(){
 
     if(
       !persistedFocusTask?.done ||
-      persistedFocusSession?.linkedTaskId!==focusTaskId
+      persistedFocusSession?.linkedTaskId!==focusTaskId ||
+      persistedFocusSession?.productivityRating!==4 ||
+      !Number.isFinite(Number(persistedFocusSession?.ratedAt)) ||
+      persistedFocusSession?.distractionTrackingVersion!==1 ||
+      !Array.isArray(persistedFocusSession?.distractionEvents) ||
+      persistedFocusSession.distractionEvents.length!==1
     ){
-      throw new Error('task-focus relationship was not persisted');
+      throw new Error('task-focus/rating analytics state was not persisted');
     }
 
     // Stats must expose the task-linked work relationship.
@@ -852,6 +890,41 @@ function browserStubs(){
           ?.includes('Browser focus task') || false
       `)
     );
+
+    await waitFor(()=>
+      cdp.evaluate(`
+        document
+          .getElementById('periodRating')
+          ?.textContent
+          ?.includes('4.0/5') || false
+      `)
+    );
+
+    const learningAnalyticsState=await cdp.evaluate(`
+      (()=>{
+        const cells=[...document.querySelectorAll('#hourlyHeatmapBody .hour-heatmap-cell')];
+        return {
+          hourCells:cells.length,
+          hasRatedHour:cells.some(cell=>cell.textContent?.includes('4.0')),
+          hasLearningInsight:document
+            .getElementById('analyticsInsightsBody')
+            ?.textContent
+            ?.includes('öğreniyorum') || false,
+          durationCards:document
+            .querySelectorAll('#durationProfileBody .duration-profile-card')
+            .length
+        };
+      })()
+    `);
+
+    if(
+      learningAnalyticsState.hourCells!==24 ||
+      !learningAnalyticsState.hasRatedHour ||
+      !learningAnalyticsState.hasLearningInsight ||
+      learningAnalyticsState.durationCards!==5
+    ){
+      throw new Error('v94 learning analytics DOM is incomplete');
+    }
 
     // Browser runtime banner must remain hidden.
     const runtimeBannerVisible=await cdp.evaluate(`
