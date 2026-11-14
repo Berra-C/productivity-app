@@ -164,3 +164,30 @@ Task-linked focus sessions use `session.linkedTaskId` plus `session.linkedTaskTe
 A linked session todo mirrors the global task and does not independently grant todo XP. Completing the task therefore produces one task completion reward, not a session-todo reward plus a task reward. Session todo mutations update `session.updatedAt` so cloud LWW merge can observe them.
 
 Midnight session continuation preserves the linked task relationship. At session finish, an open linked task can be completed or deliberately left open. The stats panel derives “Görevlere Göre Odak” from linked sessions for the selected period.
+
+
+## Learning analytics (v94)
+
+The analytics layer separates three kinds of evidence:
+
+- **Objective:** focus duration, work intervals, target completion, distractions and task/session outcomes.
+- **Subjective:** optional 1–5 `session.productivityRating` recorded after sessions of at least five minutes.
+- **Context:** local hour, day, subject, task and session length.
+
+`analytics/productivity-analytics.js` derives datasets without duplicating mutable totals. Hourly focus is calculated from `workIntervals` by splitting intervals at exact local-hour boundaries. A session's productivity rating is weighted by the amount of rated focus time that overlaps each hour.
+
+Hourly distraction analysis is deliberately forward-only. v94 sessions store exact `distractionEvents` timestamps plus a tracking start timestamp. Legacy sessions retain their total distraction count for subject/session-level rates, but the application does **not** invent timestamps for them and therefore does not treat legacy hours as zero-distraction hours.
+
+`analytics/insight-engine.js` may return at most three insights. It uses explicit evidence thresholds and confidence labels. A usable hourly pattern requires at least 3 sessions, 90 minutes and 2 different days; a strong hour requires at least 6 sessions, 240 minutes and 4 days. Rating-based hourly claims additionally require at least 3 rated sessions. Strong "best hour" language requires support from at least two independent signals (rating, exact timed-distraction rate, or target completion).
+
+The primary learning window is a rolling 30 days, with the previous 30 days available for trend comparison. Insufficient data produces a transparent "learning" state rather than a fabricated recommendation. There is no opaque global productivity score in v94.
+
+Schema version 48 adds:
+
+- `session.productivityRating` (`1..5 | null`)
+- `session.ratedAt`
+- `session.distractionEvents[]`
+- `session.distractionTrackingVersion`
+- `session.distractionTrackingStartedAt`
+
+Session rating changes update `session.updatedAt`, so existing record-level cloud merge semantics remain authoritative.
