@@ -255,6 +255,29 @@
         }else{
           session.linkedTaskText=String(session.linkedTaskText||'').trim().slice(0,120) || null;
         }
+        const productivityRating=Number(session.productivityRating);
+        session.productivityRating=(
+          Number.isInteger(productivityRating) &&
+          productivityRating>=1 &&
+          productivityRating<=5
+        ) ? productivityRating : null;
+        session.ratedAt=session.productivityRating===null
+          ? null
+          : (Number.isFinite(Number(session.ratedAt)) ? Number(session.ratedAt) : Number(session.endedAt)||Number(session.updatedAt)||null);
+
+        const trackingVersion=Number(session.distractionTrackingVersion);
+        session.distractionTrackingVersion=(trackingVersion>=1) ? 1 : 0;
+        session.distractionTrackingStartedAt=session.distractionTrackingVersion>=1
+          ? (Number.isFinite(Number(session.distractionTrackingStartedAt))
+            ? Number(session.distractionTrackingStartedAt)
+            : (Number(session.startedAt)||null))
+          : null;
+        session.distractionEvents=(Array.isArray(session.distractionEvents)?session.distractionEvents:[])
+          .map(event=>({
+            at:Number(event?.at)||null,
+            category:String(event?.category||'').trim().slice(0,40) || null
+          }))
+          .filter(event=>Number.isFinite(event.at));
         if(session.hidden === undefined) session.hidden = false;
         if(session.createdAt===undefined) session.createdAt=Number(session.startedAt)||null;
         if(!Number.isFinite(Number(session.updatedAt))){
