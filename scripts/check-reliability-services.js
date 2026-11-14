@@ -25,7 +25,7 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
 
 (async()=>{
   const migration=global.ProductivityStateMigration.create({
-    schemaVersion:47,
+    schemaVersion:48,
     closedIntervalSeconds,
     logger:{error:()=>{}}
   });
@@ -49,7 +49,7 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
 
   assert(migration.validate(legacy),'legacy state should validate');
   const migrated=migration.migrate(JSON.parse(JSON.stringify(legacy)));
-  assert(migrated.schemaVersion===47,'schema version');
+  assert(migrated.schemaVersion===48,'schema version');
   assert(migrated.tasks[0].repeatAnchorDay===31,'task monthly anchor');
   assert(migrated.events[0].repeatAnchorDay===31,'event monthly anchor');
   assert(Array.isArray(migrated.sessionLog['2026-01-01'][0].workIntervals),'work interval migration');
@@ -57,14 +57,17 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
   assert(migrated.timerState?.mode==='idle','timer state migration');
   assert(migrated.sessionLog['2026-01-01'][0].linkedTaskId==='t1','legacy linked task promoted');
   assert(migrated.sessionLog['2026-01-01'][0].linkedTaskText==='Monthly','legacy linked task text promoted');
+  assert(migrated.sessionLog['2026-01-01'][0].productivityRating===null,'legacy rating remains unknown');
+  assert(migrated.sessionLog['2026-01-01'][0].distractionTrackingVersion===0,'legacy timed distraction tracking is not invented');
+  assert(Array.isArray(migrated.sessionLog['2026-01-01'][0].distractionEvents),'legacy distraction event array initialized');
   assert(!migration.validate({treeProgress:0,days:{}}),'invalid state rejected');
 
   const store=global.ProductivityRecoveryStore.create({
     indexedDBProvider:()=>null,
-    schemaVersion:47,
+    schemaVersion:48,
     logger:{warn:()=>{}}
   });
-  assert(store.parse({payload:JSON.stringify(migrated)},value=>migration.validate(value))?.schemaVersion===47,'valid recovery parse');
+  assert(store.parse({payload:JSON.stringify(migrated)},value=>migration.validate(value))?.schemaVersion===48,'valid recovery parse');
   assert(store.parse({payload:'{broken'},()=>true)===null,'invalid JSON rejected');
   assert(await store.readRaw()===null,'missing IDB read');
   assert(await store.clear()===false,'missing IDB clear');
