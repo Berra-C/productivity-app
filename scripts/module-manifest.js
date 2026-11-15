@@ -28,6 +28,7 @@ const MODULE_SOURCES = Object.freeze([
   "assets/js/modules/analytics/analytics-core.js",
   "assets/js/modules/analytics/productivity-analytics.js",
   "assets/js/modules/analytics/insight-engine.js",
+  "assets/js/modules/analytics/product-telemetry.js",
   "assets/js/modules/calendar/calendar-core.js",
   "assets/js/modules/ui/view-formatters.js",
   "assets/js/modules/analytics/summary-view.js",
@@ -53,6 +54,7 @@ const PRODUCTION_RUNTIME_FILES = Object.freeze([
   'assets/js/cloud-config.js',
   'assets/js/cloud-sync.js',
   'assets/js/pwa-register.js',
+  'assets/js/admin.js',
   'sw.js'
 ]);
 
