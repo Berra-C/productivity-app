@@ -265,7 +265,8 @@
 
   function buildSubjectBreakdown(breakdown=[],{
     escapeHtml=value=>String(value),
-    formatDurationLabel=value=>String(value)
+    formatDurationLabel=value=>String(value),
+    subjectColor=()=> '#74d99f'
   }={}){
     if(!breakdown.length){
       return '<div class="todo-empty">Bu dönemde henüz çalışma kaydı yok.</div>';
@@ -285,15 +286,16 @@
         ? Math.round(stats.reachedTargets/stats.targetSessions*100)+'% hedef'
         : 'hedef verisi yok';
 
+      const color=subjectColor(subject);
       return '<div class="subject-row">'
-        +'<div class="subject-row-top"><span>'+escapeHtml(subject)
+        +'<div class="subject-row-top"><span class="subject-row-name"><i style="background:'+color+'"></i>'+escapeHtml(subject)
         +'</span><span>'+formatDurationLabel(stats.seconds)+'</span></div>'
-        +'<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+percent+'%"></div></div>'
+        +'<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+percent+'%;background:'+color+'"></div></div>'
         +'<div class="subject-row-meta">'
         +'<span>'+stats.sessions+' oturum</span>'
         +'<span>ort. '+formatDurationLabel(average)+'</span>'
-        +'<span>😕 '+avgDistraction+'/oturum</span>'
-        +'<span>🎯 '+targetRate+'</span>'
+        +'<span>'+avgDistraction+' dikkat/oturum</span>'
+        +'<span>'+targetRate+'</span>'
         +'</div></div>';
     }).join('');
   }
@@ -413,6 +415,78 @@
           : '')
         +'</article>';
     }).join('');
+  }
+
+  function buildHourlyChart(hours=[],{
+    metric='focus',
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(hours)?hours:[];
+    const width=720, height=240;
+    const left=42, right=12, top=14, bottom=34;
+    const plotW=width-left-right, plotH=height-top-bottom;
+    const step=plotW/24;
+
+    const valueFor=hour=>{
+      if(metric==='rating') return hour.avgProductivityRating===null?null:Number(hour.avgProductivityRating);
+      if(metric==='distraction') return hour.distractionsPerHour===null?null:Number(hour.distractionsPerHour);
+      if(metric==='target') return hour.avgTargetCompletion===null?null:Number(hour.avgTargetCompletion)*100;
+      return Number(hour.focusSeconds||0)/60;
+    };
+    const values=rows.map(valueFor).filter(value=>value!==null && Number.isFinite(value));
+    let max=metric==='rating'?5:metric==='target'?100:Math.max(...values,1);
+    if(metric==='focus') max=Math.max(15,Math.ceil(max/15)*15);
+    if(metric==='distraction') max=Math.max(1,Math.ceil(max*2)/2);
+    const min=metric==='rating'?1:0;
+    const range=Math.max(0.001,max-min);
+    const y=value=>top+plotH-(Math.max(min,Math.min(max,value))-min)/range*plotH;
+    const x=hour=>left+step*hour+step/2;
+    const fmt=value=>{
+      if(metric==='focus') return Math.round(value)+' dk';
+      if(metric==='rating') return value.toFixed(1)+'/5';
+      if(metric==='target') return Math.round(value)+'%';
+      return value.toFixed(1)+'/saat';
+    };
+
+    let svg='';
+    [0,.5,1].forEach(frac=>{
+      const yy=top+plotH*(1-frac);
+      const value=min+range*frac;
+      svg+='<line class="hour-chart-grid" x1="'+left+'" y1="'+yy+'" x2="'+(width-right)+'" y2="'+yy+'"></line>';
+      svg+='<text class="hour-chart-y-label" x="'+(left-7)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(value)+'</text>';
+    });
+    rows.forEach(hour=>{
+      if(hour.hour%2===0){
+        svg+='<text class="hour-chart-x-label" x="'+x(hour.hour)+'" y="'+(height-10)+'" text-anchor="middle">'+String(hour.hour).padStart(2,'0')+'</text>';
+      }
+    });
+
+    if(metric==='focus'){
+      rows.forEach(hour=>{
+        const value=valueFor(hour);
+        if(!Number.isFinite(value) || value<=0) return;
+        const xx=left+step*hour.hour+step*.18;
+        const yy=y(value);
+        const barH=top+plotH-yy;
+        svg+='<rect class="hour-chart-bar" x="'+xx+'" y="'+yy+'" width="'+(step*.64)+'" height="'+barH+'" rx="3"><title>'
+          +String(hour.hour).padStart(2,'0')+':00–'+String((hour.hour+1)%24).padStart(2,'0')+':00 · '+formatDurationLabel(hour.focusSeconds)
+          +'</title></rect>';
+      });
+    }else{
+      let previous=null;
+      rows.forEach(hour=>{
+        const value=valueFor(hour);
+        if(value===null || !Number.isFinite(value)){ previous=null; return; }
+        const point={x:x(hour.hour),y:y(value),hour:hour.hour,value};
+        if(previous && hour.hour===previous.hour+1){
+          svg+='<line class="hour-chart-line" x1="'+previous.x+'" y1="'+previous.y+'" x2="'+point.x+'" y2="'+point.y+'"></line>';
+        }
+        svg+='<circle class="hour-chart-point" cx="'+point.x+'" cy="'+point.y+'" r="4"><title>'
+          +String(hour.hour).padStart(2,'0')+':00 · '+fmt(value)+'</title></circle>';
+        previous=point;
+      });
+    }
+    return svg;
   }
 
   function buildHourlyHeatmap(hours=[],{
@@ -535,6 +609,7 @@
     buildSubjectBreakdown,
     buildTaskFocusBreakdown,
     buildInsights,
+    buildHourlyChart,
     buildHourlyHeatmap,
     buildSubjectProfiles,
     buildDurationProfile,
