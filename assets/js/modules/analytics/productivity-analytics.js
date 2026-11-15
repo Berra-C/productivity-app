@@ -277,9 +277,10 @@
     let sessions=0;
     let timedDistractions=0;
     let distractionTrackedSeconds=0;
+    const activeDays=new Set();
 
     (Array.isArray(entries)?entries:[]).forEach(rawEntry=>{
-      const {session}=normalizedEntry(rawEntry);
+      const {key,session}=normalizedEntry(rawEntry);
       if(!session) return;
       const seconds=sessionDuration(session,options);
       if(seconds<=0) return;
@@ -287,6 +288,8 @@
       sessions+=1;
       focusSeconds+=seconds;
       distractions+=Math.max(0,finite(session.distractions,0));
+      const activeDay=key || dateKeyFor(session.startedAt,options);
+      if(activeDay) activeDays.add(activeDay);
 
       if(Number(session.distractionTrackingVersion)>=1){
         const trackingStart=finite(
@@ -323,6 +326,7 @@
     return {
       focusSeconds:Math.round(focusSeconds),
       sessions,
+      activeDays:activeDays.size,
       distractions,
       distractionsPerHour:focusSeconds>0
         ? distractions/(focusSeconds/3600)
@@ -341,6 +345,23 @@
       avgTargetCompletion:targetSessions
         ? targetCompletionTotal/targetSessions
         : null
+    };
+  }
+
+  function learningReadiness(summary={}){
+    const sessions=Math.max(0,finite(summary.sessions,0));
+    const focusSeconds=Math.max(0,finite(summary.focusSeconds,0));
+    const activeDays=Math.max(0,finite(summary.activeDays,0));
+    const ready=sessions>=3 && focusSeconds>=90*60 && activeDays>=2;
+    return {ready,sessions,focusSeconds,activeDays};
+  }
+
+  function hourlyMetricAvailability(summary={}){
+    return {
+      focus:finite(summary.focusSeconds,0)>=90*60,
+      rating:finite(summary.ratedSessions,0)>=3,
+      distraction:finite(summary.distractionTrackedSeconds,0)>=90*60,
+      target:finite(summary.targetSessions,0)>=3
     };
   }
 
@@ -473,6 +494,8 @@
     hourConfidence,
     hourlyProfile,
     periodSummary,
+    learningReadiness,
+    hourlyMetricAvailability,
     subjectProfiles,
     durationBuckets
   };
