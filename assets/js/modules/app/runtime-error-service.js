@@ -5,6 +5,7 @@
     const win=options.window || window;
     const doc=options.document || document;
     let bound=false;
+    const onRuntimeError=typeof options.onRuntimeError==='function' ? options.onRuntimeError : ()=>{};
 
     function show(message,prefix){
       const box=doc.getElementById('runtimeErrorBanner');
@@ -19,6 +20,7 @@
         event?.error?.message || event?.message || 'Bilinmeyen hata',
         'Uygulamada bir hata oluştu: '
       );
+      try{ onRuntimeError('error'); }catch(error){}
     }
 
     function onRejection(event){
@@ -26,6 +28,7 @@
         event?.reason?.message || String(event?.reason || 'Bilinmeyen hata'),
         'Uygulamada bir işlem tamamlanamadı: '
       );
+      try{ onRuntimeError('unhandledrejection'); }catch(error){}
     }
 
     function onClick(event){
