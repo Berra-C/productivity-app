@@ -23,6 +23,7 @@ const declarations = [
   ['AnalyticsCore', 'const AnalyticsCore=window.ProductivityAnalyticsCore;'],
   ['LearningAnalytics', 'const LearningAnalytics=window.ProductivityLearningAnalytics;'],
   ['InsightEngine', 'const InsightEngine=window.ProductivityInsightEngine;'],
+  ['ProductTelemetry', 'const ProductTelemetry=window.ProductivityProductTelemetry;'],
   ['CalendarCore', 'const CalendarCore=window.ProductivityCalendarCore;'],
   ['ViewFormatters', 'const ViewFormatters=window.ProductivityViewFormatters;'],
   ['SummaryView', 'const SummaryView=window.ProductivitySummaryView;'],
