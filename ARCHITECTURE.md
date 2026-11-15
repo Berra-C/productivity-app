@@ -191,3 +191,27 @@ Schema version 48 adds:
 - `session.distractionTrackingStartedAt`
 
 Session rating changes update `session.updatedAt`, so existing record-level cloud merge semantics remain authoritative.
+
+
+## Product telemetry & admin analytics (v95)
+
+Product telemetry is opt-out and is collected only for users who are signed into a cloud account. Anonymous-device fingerprinting is not used. The local `ProductivityProductTelemetry` module accepts only a fixed event taxonomy and strips arbitrary properties before dispatch. `cloud-sync.js` batches accepted events only while an authenticated cloud session exists.
+
+The Edge Function independently validates the event name, event UUID, timestamp and per-event property whitelist before inserting into `app_telemetry_events`. Task text, subject names, notes, calendar titles and other free-form study content are not accepted by the telemetry schema. The telemetry table has RLS enabled and intentionally has no anon/client policies; reads and writes happen through the Edge Function service role.
+
+Users can disable “Toplu ürün analitiğine katkı sağla” in the cloud-account settings. When disabled, telemetry is not queued or sent from that device. Admin metrics therefore represent signed-in, non-opted-out cloud users rather than every local-only user.
+
+The first admin product-analytics layer focuses on:
+
+- **Growth:** DAU, WAU, MAU and new-account trend.
+- **Meaningful usage:** at least two active days plus two completed focus sessions in the last seven days.
+- **Learning loop:** focus completion + session rating + Analytics use in the last seven days.
+- **Activation:** new account → first task → Task → Focus → completed focus → rating → Analytics within the first seven days.
+- **Retention:** D1/D7/D30 calendar-day return for accounts created after telemetry collection began.
+- **Feature adoption:** unique WAU users reaching privacy-safe feature events.
+- **Reliability:** sync success/failure, resolved conflicts, destructive-sync blocks and coarse runtime-error counts.
+- **Release health:** aggregate active users, focus completions, ratings and sync health by `app_version`.
+
+Retention and cohort views deliberately exclude pre-telemetry historical accounts because the product must not infer past activity that was never recorded. Admin analytics are aggregate product-development signals; account-management data remains a separate operational surface.
+
+The release gate includes an authenticated Chromium telemetry test that verifies approved event batching, free-form task-text exclusion, and immediate opt-out enforcement.
