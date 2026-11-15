@@ -3,6 +3,8 @@
 
   const cfg=window.CLOUD_CONFIG||{};
   const SyncControllerFactory=window.ProductivitySyncController;
+  const APP_VERSION='v95';
+  const TELEMETRY_OPT_OUT='test_product_analytics_optout';
   const LS={
     token:'test_cloud_session',
     username:'test_cloud_username',
@@ -15,6 +17,10 @@
   let syncing=false;
   let suppressDirty=false;
   let account=null;
+  let telemetrySending=false;
+  let telemetryFlushTimer=null;
+  let pageOpenTracked=false;
+  const telemetryQueue=[];
 
   const $=id=>document.getElementById(id);
   const configured=()=>/^https:\/\/.+/.test(String(cfg.supabaseUrl||'')) && String(cfg.anonKey||'').length>20;
@@ -23,6 +29,46 @@
   const clone=value=>JSON.parse(JSON.stringify(value));
 
   function getToken(){ return localStorage.getItem(LS.token)||sessionStorage.getItem(LS.token)||''; }
+  function telemetryEnabled(){ return localStorage.getItem(TELEMETRY_OPT_OUT)!=='1'; }
+  function enqueueTelemetry(detail){
+    if(!telemetryEnabled() || !getToken() || !detail || typeof detail!=='object' || !detail.name || !detail.eventId) return;
+    telemetryQueue.push(detail);
+    if(telemetryQueue.length>100) telemetryQueue.splice(0,telemetryQueue.length-100);
+    scheduleTelemetryFlush(1200);
+  }
+  function scheduleTelemetryFlush(delay=1200){
+    clearTimeout(telemetryFlushTimer);
+    telemetryFlushTimer=setTimeout(flushTelemetry,delay);
+  }
+  async function flushTelemetry(){
+    if(telemetrySending || !configured() || !getToken() || !telemetryQueue.length) return false;
+    telemetrySending=true;
+    const batch=telemetryQueue.slice(0,25);
+    try{
+      await api('telemetry-batch',{
+        sessionToken:getToken(),
+        deviceName:deviceName(),
+        appVersion:APP_VERSION,
+        events:batch
+      });
+      telemetryQueue.splice(0,batch.length);
+      if(telemetryQueue.length) scheduleTelemetryFlush(250);
+      return true;
+    }catch(error){
+      if(error?.status!==401) scheduleTelemetryFlush(30000);
+      return false;
+    }finally{
+      telemetrySending=false;
+    }
+  }
+  function trackCloudTelemetry(name,properties={}){
+    try{ window.ProductivityProductTelemetry?.track(name,properties); }catch(error){}
+  }
+  function trackPageOpen(){
+    if(pageOpenTracked || !telemetryEnabled() || !getToken()) return;
+    pageOpenTracked=true;
+    trackCloudTelemetry('app_opened');
+  }
   function storeToken(token,remember){
     localStorage.removeItem(LS.token); sessionStorage.removeItem(LS.token);
     (remember?localStorage:sessionStorage).setItem(LS.token,token);
@@ -31,6 +77,9 @@
     Object.values(LS).forEach(k=>localStorage.removeItem(k));
     sessionStorage.removeItem(LS.token);
     account=null;
+    pageOpenTracked=false;
+    telemetryQueue.length=0;
+    clearTimeout(telemetryFlushTimer);
   }
   function deviceName(){
     const ua=navigator.userAgent||'';
@@ -164,6 +213,9 @@
         // so the protected local data is not silently considered synced.
         localStorage.setItem(LS.dirty,'1');
         setStatus('pending','Bu cihazdaki veri korundu');
+        trackCloudTelemetry('destructive_sync_blocked',{
+          conflict:result.action==='protect-local-conflict'
+        });
         updateUI();
         return false;
       }
@@ -180,6 +232,10 @@
 
       setStatus('ok','Senkronize');
       updateUI();
+      if(result.action==='conflict-merge-push'){
+        trackCloudTelemetry('sync_conflict',{resolved:true});
+      }
+      trackCloudTelemetry('sync_success',{initial,action:result.action});
 
       if(!silent){
         toast(
@@ -190,6 +246,9 @@
 
       return true;
     }catch(err){
+      if(err.status!==401){
+        trackCloudTelemetry('sync_failed',{status:Number(err.status)||0});
+      }
       if(err.status===401){
         clearAuth();
         updateUI();
@@ -236,6 +295,7 @@
       localStorage.setItem(LS.accountId,result.accountId);
       localStorage.setItem(LS.baseRevision,'0');
       closeLogin(); updateUI();
+      trackPageOpen();
       await syncNow({initial:true});
       await loadDevices();
     }catch(err){ if(error) error.textContent=err.message||'Giriş yapılamadı.'; }
@@ -288,6 +348,7 @@
           localStorage.setItem(LS.accountId,result.accountId);
           localStorage.setItem(LS.baseRevision,'0');
           closeSignup(); updateUI();
+          trackPageOpen();
           await syncNow({initial:true});
           await loadDevices();
           toast('Hesabın oluşturuldu ve giriş yapıldı.','success');
@@ -325,6 +386,8 @@
       <div class="settings-section-title">Hesap ve Senkronizasyon</div>
       <div class="cloud-account-card">
         <div class="cloud-account-top"><div><span class="cloud-kicker">BULUT HESABI</span><strong id="cloudUsername">—</strong></div><span class="cloud-status" id="cloudStatus" data-kind="off">Giriş yapılmadı</span></div>
+        <label class="cloud-remember"><input type="checkbox" id="cloudTelemetryEnabled"> Toplu ürün analitiğine katkı sağla</label>
+        <p class="cloud-muted">Bu seçenek açıkken yalnızca özellik kullanım olayları ve teknik sağlık sinyalleri gönderilir. Görev, ders, not veya etkinlik metinleri gönderilmez.</p>
         <div id="cloudSignedOut"><p class="cloud-muted">Aynı hesabı farklı cihazlarda kullanabilir veya buradan yeni bir bulut hesabı oluşturabilirsin.</p><div class="cloud-actions"><button type="button" class="modal-btn primary" id="cloudOpenLogin">Giriş Yap</button><button type="button" class="modal-btn ghost" id="cloudOpenSignup">Hesap Oluştur</button></div></div>
         <div id="cloudSignedIn" class="cloud-hidden">
           <div class="cloud-sync-meta"><span>Son senkronizasyon</span><b id="cloudLastSync">—</b></div>
@@ -355,6 +418,20 @@
     </div>`;
     document.body.appendChild(signupBackdrop);
 
+    if($('cloudTelemetryEnabled')){
+      $('cloudTelemetryEnabled').checked=telemetryEnabled();
+      $('cloudTelemetryEnabled').addEventListener('change',event=>{
+        const enabled=Boolean(event.target.checked);
+        localStorage.setItem(TELEMETRY_OPT_OUT,enabled?'0':'1');
+        if(!enabled){
+          telemetryQueue.length=0;
+          clearTimeout(telemetryFlushTimer);
+        }else if(getToken()){
+          pageOpenTracked=false;
+          trackPageOpen();
+        }
+      });
+    }
     $('cloudOpenLogin').addEventListener('click',openLogin);
     $('cloudLoginCancel').addEventListener('click',closeLogin);
     $('cloudLoginSubmit').addEventListener('click',login);
@@ -376,14 +453,19 @@
       try{
         const me=await api('me',{sessionToken:getToken(),deviceName:deviceName()});
         account={id:me.accountId,username:me.username}; updateUI();
+        trackPageOpen();
         await syncNow({silent:true,initial:true}); await loadDevices();
       }catch(err){ if(err.status===401){ clearAuth(); updateUI(); } }
     }
   }
 
+  window.addEventListener('app:telemetry',event=>enqueueTelemetry(event.detail));
   window.addEventListener('app:data-saved',markDirty);
   window.addEventListener('online',()=>{ if(getToken()) syncNow({silent:true}); });
-  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&getToken()) syncNow({silent:true}); });
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible'&&getToken()) syncNow({silent:true});
+    if(document.visibilityState==='hidden') flushTelemetry();
+  });
   let resumed=false;
   const start=()=>{ if(resumed) return; resumed=true; resume(); };
   window.addEventListener('app:ready',start,{once:true});
