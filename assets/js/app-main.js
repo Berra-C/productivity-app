@@ -24,6 +24,7 @@
   const AnalyticsCore=window.ProductivityAnalyticsCore;
   const LearningAnalytics=window.ProductivityLearningAnalytics;
   const InsightEngine=window.ProductivityInsightEngine;
+  const ProductTelemetry=window.ProductivityProductTelemetry;
   const CalendarCore=window.ProductivityCalendarCore;
   const ViewFormatters=window.ProductivityViewFormatters;
   const SummaryView=window.ProductivitySummaryView;
@@ -44,7 +45,7 @@
   const ViewCoordinatorFactory=window.ProductivityViewCoordinator;
   const StartupControllerFactory=window.ProductivityStartupController;
 
-  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !LearningAnalytics || !InsightEngine || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
+  if(!StatePersistence || !StateWriterFactory || !TimerCore || !TimerService || !TimerControllerFactory || !SessionRepositoryFactory || !TaskRepositoryFactory || !EventRepositoryFactory || !GamificationCore || !TreeService || !AnalyticsCore || !LearningAnalytics || !InsightEngine || !ProductTelemetry || !CalendarCore || !ViewFormatters || !SummaryView || !CalendarView || !StatsView || !TaskView || !CollectionView || !SessionView || !FocusView || !WorkControlsView || !ModalService || !RecurrenceServiceFactory || !SessionDomainServiceFactory || !TaskDomainServiceFactory || !TaskFocusService || !EventDomainServiceFactory || !StateMigrationFactory || !RecoveryStoreFactory || !StateRecoveryServiceFactory || !DestructiveSyncGuard || !ExternalStateService || !RuntimeErrorService || !ViewCoordinatorFactory || !StartupControllerFactory){
     const missing=[
       !StatePersistence ? 'StatePersistence' : null,
       !StateWriterFactory ? 'StateWriter' : null,
@@ -59,6 +60,7 @@
       !AnalyticsCore ? 'AnalyticsCore' : null,
       !LearningAnalytics ? 'LearningAnalytics' : null,
       !InsightEngine ? 'InsightEngine' : null,
+      !ProductTelemetry ? 'ProductTelemetry' : null,
       !CalendarCore ? 'CalendarCore' : null,
       !ViewFormatters ? 'ViewFormatters' : null,
       !SummaryView ? 'SummaryView' : null,
@@ -87,7 +89,19 @@
     throw new Error('Uygulama modülleri yüklenemedi: '+missing+'. Sayfayı bir kez yenileyin.');
   }
 
-  const RuntimeErrorBinding=RuntimeErrorService.bind({window,document});
+  const RuntimeErrorBinding=RuntimeErrorService.bind({
+    window,
+    document,
+    onRuntimeError:kind=>ProductTelemetry.track('runtime_error',{kind})
+  });
+
+  function trackProductEvent(name,properties={}){
+    try{ return ProductTelemetry.track(name,properties); }catch(error){ return false; }
+  }
+
+  function trackProductEventOnce(key,name,properties={}){
+    try{ return ProductTelemetry.trackOnce(key,name,properties); }catch(error){ return false; }
+  }
 
   const TAB_ID = (()=>{
     try{
@@ -2356,7 +2370,10 @@
       btn.classList.add('active');
       Object.values(el.panels).forEach(p=>p.classList.remove('active'));
       el.panels[btn.dataset.tab].classList.add('active');
-      if(btn.dataset.tab === 'stats') renderStats();
+      if(btn.dataset.tab === 'stats'){
+        trackProductEventOnce('analytics-opened','analytics_opened');
+        renderStats();
+      }
       if(btn.dataset.tab === 'tasks') renderTaskList();
       if(btn.dataset.tab === 'calendar') renderCalendar();
     });
@@ -2854,6 +2871,10 @@
       }
     }
     saveData();
+    trackProductEvent('distraction_logged',{
+      duringFocus:Boolean(data.isWorking && data.activeSessionId),
+      hasCategory:Boolean(category)
+    });
     renderToday(false);
     renderSessionList();
     renderDistractionCategorySummary();
@@ -3302,6 +3323,11 @@
       linkedTaskText:seedTodoText
     });
     const newSession=result.session;
+    trackProductEvent('focus_started',{
+      linkedTask:Boolean(linkedTaskId),
+      hasTarget:Number(targetMinutes)>0,
+      targetBucket:ProductTelemetry.targetBucket(targetMinutes)
+    });
 
     expandedSessions.add(newSession.id);
     renderWorkButtonRow();
@@ -3319,6 +3345,7 @@
     const beforeLevel=getLevelInfo().level;
     const result=timerController.pause();
     const completedList=result.completedList || [];
+    if(result.session) trackProductEvent('focus_paused');
 
     renderWorkButtonRow();
     const pausedSession=data.activeSessionId ? findSession(data.activeSessionId) : null;
@@ -3336,6 +3363,7 @@
   function resumeWorking(){
     const result=timerController.resume();
     if(!result.session) return;
+    trackProductEvent('focus_resumed');
 
     renderWorkButtonRow();
     lastAutosave=Date.now();
@@ -3572,6 +3600,12 @@
       );
       if(rating!==null){
         SessionDomainService.setProductivityRating(result.session,rating);
+        trackProductEvent('session_rated',{
+          rating,
+          editing:false,
+          durationBucket:ProductTelemetry.durationBucket(result.session.duration),
+          linkedTask:Boolean(linked?.taskId)
+        });
       }
     }
 
@@ -3589,6 +3623,16 @@
         }
       }
     }
+
+    const targetSeconds=Math.max(0,Number(result.session?.targetMinutes)||0)*60;
+    trackProductEvent('focus_completed',{
+      durationBucket:ProductTelemetry.durationBucket(result.session?.duration),
+      linkedTask:Boolean(linked?.taskId),
+      ratingEligible:Number(result.session?.duration||0)>=5*60,
+      rated:Number(result.session?.productivityRating)>=1,
+      distractionBucket:ProductTelemetry.distractionBucket(result.session?.distractions),
+      targetReached:targetSeconds>0 ? Number(result.session?.duration||0)>=targetSeconds : null
+    });
 
     saveData();
     refreshUI(['tasks','calendar']);
@@ -3790,6 +3834,12 @@
       );
       if(rating===null) return;
       SessionDomainService.setProductivityRating(session,rating);
+      trackProductEvent('session_rated',{
+        rating,
+        editing:true,
+        durationBucket:ProductTelemetry.durationBucket(session.duration),
+        linkedTask:Boolean(TaskFocusService.sessionTaskId(session))
+      });
       saveData({force:true});
       renderSessionList();
       renderStats();
@@ -4476,6 +4526,16 @@
         model.insights,
         {escapeHtml}
       );
+      (model.insights||[]).forEach(insight=>{
+        trackProductEventOnce(
+          'insight:'+String(insight?.type||'learning'),
+          'insight_seen',
+          {
+            type:insight?.type,
+            confidence:insight?.confidence?.label
+          }
+        );
+      });
     }
 
     if(el.hourlyHeatmapBody){
@@ -4745,6 +4805,11 @@
     const button=event.target.closest('[data-hour-metric]');
     if(!button) return;
     currentHourMetric=button.dataset.hourMetric || 'rating';
+    trackProductEventOnce(
+      'heatmap:'+currentHourMetric,
+      'heatmap_metric_changed',
+      {metric:currentHourMetric}
+    );
     el.hourMetricPills.querySelectorAll('[data-hour-metric]').forEach(item=>
       item.classList.toggle('active',item===button)
     );
@@ -5222,7 +5287,15 @@
     const task=TaskDomainService.createTask(
       text,dueDate,time,tagId,repeat,repeatSourceId,repeatDays,repeatAnchorDay,repeatUntil
     );
-    if(task) saveData();
+    if(task){
+      saveData();
+      trackProductEvent('task_created',{
+        hasDueDate:Boolean(dueDate),
+        hasTime:Boolean(time),
+        hasTag:Boolean(tagId),
+        repeat:String(repeat||'none')
+      });
+    }
     return task;
   }
 
@@ -5396,11 +5469,15 @@
     if(!result.wasDone && result.task.done) spawnNextRecurringTask(result.task);
 
     const activeSession=data.activeSessionId ? findSession(data.activeSessionId) : null;
-    if(
+    const linkedFocus=Boolean(
       activeSession &&
       TaskFocusService.sessionTaskId(activeSession)===result.task.id
-    ){
+    );
+    if(linkedFocus){
       TaskFocusService.syncLinkedTodo(activeSession,result.task.done,{now:Date.now()});
+    }
+    if(!result.wasDone && result.task.done){
+      trackProductEvent('task_completed',{linkedFocus});
     }
 
     saveData();
@@ -5646,6 +5723,10 @@
     startWorking(result.subject,result.minutes,task.text,task.id);
     const active=findSession(data.activeSessionId);
     if(active) TaskFocusService.linkSession(active,task,{now:Date.now()});
+    trackProductEvent('task_focus_started',{
+      hasTag:Boolean(tag),
+      targetBucket:ProductTelemetry.targetBucket(result.minutes)
+    });
     saveData();
     renderTaskList();
     document.querySelector('.tab-btn[data-tab="work"]')?.click();
@@ -6458,7 +6539,9 @@
     logger:console
   });
 
-  StartupController.run();
+  StartupController.run().then(result=>{
+    if(result?.recovered) trackProductEvent('recovery_restored');
+  });
 
 
   // ---------- Geliştirici birim testleri (?test=1) ----------
