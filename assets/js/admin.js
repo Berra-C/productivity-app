@@ -12,6 +12,7 @@ function fmtDate(v){if(!v)return '—';try{return new Date(v).toLocaleString('tr
 function shortDate(v){try{return new Date(v+'T12:00:00').toLocaleDateString('tr-TR',{day:'2-digit',month:'short'})}catch{return v}}
 function fmtDuration(sec){const n=Math.max(0,Number(sec)||0);if(n<60)return Math.round(n)+' sn';if(n<3600)return Math.round(n/60)+' dk';const h=n/3600;return (h>=10?Math.round(h):h.toFixed(1).replace('.',','))+' sa'}
 function fmtCount(n){return new Intl.NumberFormat('tr-TR').format(Number(n)||0)}
+function fmtPct(v){return v===null||v===undefined||!Number.isFinite(Number(v))?'—':'%'+Number(v).toFixed(1).replace('.',',')}
 async function api(action,payload={}){
   if(!configured())throw new Error('cloud-config.js içindeki Supabase bilgileri eksik.');
   const r=await fetch(endpoint(),{method:'POST',headers:{'content-type':'application/json','apikey':cfg.anonKey},body:JSON.stringify({action,adminSecret:secret(),...payload})});
@@ -27,11 +28,15 @@ function credentials(result,label='Yeni kullanıcı'){
     <div><span>6 haneli kod</span><strong>${esc(result.accessCode)}</strong></div>
   </div><div class="admin-warning">${esc(label)} bilgileri yalnızca bu anda açık metin gösterilir. Sonradan görüntülenemez; yeniden sıfırlamak gerekir.</div>`;
 }
-function renderSummary(s={},charts={}){
+function renderSummary(s={},p={}){
+  const ps=p.summary||{},ret=p.retention||{};
   const cards=[
-    ['Toplam hesap',fmtCount(s.totalAccounts),''],
-    ['Toplam çalışma',fmtDuration(s.totalWorkSeconds),'accent'],
-    ['Ort. oturum',s.averageSessionSeconds?fmtDuration(s.averageSessionSeconds):'—','']
+    ['DAU',fmtCount(ps.dau),''],
+    ['WAU',fmtCount(ps.wau),'accent'],
+    ['MAU',fmtCount(ps.mau),''],
+    ['Meaningful WAU',fmtCount(ps.meaningfulWau)+(ps.meaningfulRate===null?'':' · '+fmtPct(ps.meaningfulRate)),'accent'],
+    ['Learning Loop WAU',fmtCount(ps.learningLoopWau),'accent'],
+    ['D7 Retention',fmtPct(ret.d7?.rate),'']
   ];
   const summaryEl=$('adminSummary'); if(!summaryEl) return;
   summaryEl.innerHTML=cards.map(([k,v,c])=>`<div class="admin-stat ${c}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
@@ -128,6 +133,80 @@ function renderCharts(c={}){
   donut($('accountStatusChart'),c.accountStatus||[]);
   const analytics=$('analyticsSection'); if(analytics) analytics.hidden=false;
 }
+
+function renderAdminInsights(rows=[]){
+  const box=$('adminInsights'); if(!box) return;
+  const icons={growth:'📈',opportunity:'🎯',reliability:'⚠️',learning:'🧭'};
+  if(!rows.length){empty(box,'Henüz ürün insightı yok.');return}
+  box.innerHTML=rows.map(item=>`<div class="admin-insight ${esc(item.kind||'learning')}"><div class="admin-insight-icon">${icons[item.kind]||'🧭'}</div><div><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p></div></div>`).join('');
+}
+function renderRetention(ret={}){
+  const box=$('retentionCards'); if(!box) return;
+  const rows=[['D1',ret.d1],['D7',ret.d7],['D30',ret.d30]];
+  box.innerHTML=rows.map(([label,row])=>`<div class="mini-metric"><span>${label}</span><strong>${esc(fmtPct(row?.rate))}</strong><small>${esc(fmtCount(row?.retained||0))} / ${esc(fmtCount(row?.eligible||0))} uygun kullanıcı</small></div>`).join('');
+}
+function renderFunnel(activation={}){
+  const box=$('activationFunnel'); if(!box) return;
+  const rows=activation.rows||[];
+  if(!rows.length||!activation.cohortSize){empty(box,'v95 sonrası yeni kullanıcı verisi biriktikçe funnel oluşacak.');return}
+  box.innerHTML=`<div class="funnel-meta">Son 30 günde oluşturulan ve telemetry kapsamına giren ${esc(fmtCount(activation.cohortSize))} hesap</div>`+rows.map(row=>`<div class="funnel-row"><div class="funnel-label"><span>${esc(row.label)}</span><b>${esc(fmtCount(row.users))} · ${esc(fmtPct(row.rate))}</b></div><div class="funnel-track"><span style="width:${Math.max(0,Math.min(100,Number(row.rate)||0))}%"></span></div></div>`).join('');
+}
+function renderFeatureAdoption(rows=[]){
+  const box=$('featureAdoption'); if(!box) return;
+  if(!rows.length){empty(box);return}
+  box.innerHTML=rows.map(row=>`<div class="adoption-row"><div class="adoption-label"><span>${esc(row.label)}</span><b>${esc(fmtPct(row.rate))}</b></div><div class="adoption-track"><span style="width:${Math.max(0,Math.min(100,Number(row.rate)||0))}%"></span></div><small>${esc(fmtCount(row.users))} WAU kullanıcısı</small></div>`).join('');
+}
+function renderCohorts(rows=[]){
+  const box=$('cohortTable'); if(!box) return;
+  const data=(rows||[]).filter(row=>Number(row.size)>0);
+  if(!data.length){empty(box,'v95 sonrası yeni kullanıcı cohortları biriktikçe burada görünecek.');return}
+  box.innerHTML=`<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Cohort</th><th>Kullanıcı</th><th>W0</th><th>W1</th><th>W2</th><th>W3</th></tr></thead><tbody>${data.map(row=>`<tr><td>${esc(shortDate(row.week))}</td><td>${esc(fmtCount(row.size))}</td><td>${esc(fmtPct(row.w0))}</td><td>${esc(fmtPct(row.w1))}</td><td>${esc(fmtPct(row.w2))}</td><td>${esc(fmtPct(row.w3))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function renderReliability(r={}){
+  const box=$('reliabilityCards'); if(!box) return;
+  const cards=[
+    ['Sync denemesi',fmtCount(r.syncAttempts)],
+    ['Sync hata oranı',fmtPct(r.syncFailureRate)],
+    ['Conflict',fmtCount(r.syncConflicts)],
+    ['Korunan cihaz verisi',fmtCount(r.destructiveBlocks)],
+    ['Runtime hata',fmtCount(r.runtimeErrors)],
+    ['Etkilenen kullanıcı',fmtCount(r.affectedUsers)]
+  ];
+  box.innerHTML=cards.map(([label,value])=>`<div class="mini-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
+}
+function renderReleases(rows=[]){
+  const box=$('releaseTable'); if(!box) return;
+  if(!rows.length){empty(box,'Release telemetry verisi henüz yok.');return}
+  box.innerHTML=`<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Release</th><th>Aktif</th><th>Focus</th><th>Rating</th><th>Sync hata</th><th>Conflict</th></tr></thead><tbody>${rows.slice(0,10).map(row=>`<tr><td><b>${esc(row.version)}</b></td><td>${esc(fmtCount(row.activeUsers))}</td><td>${esc(fmtCount(row.focusCompleted))}</td><td>${esc(fmtCount(row.sessionRatings))}</td><td>${esc(fmtPct(row.syncFailureRate))}</td><td>${esc(fmtCount(row.syncConflicts))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function renderCoreLoop(core={}){
+  const box=$('coreLoopCards'); if(!box) return;
+  const cards=[
+    ['Tamamlanan focus',fmtCount(core.focusCompleted)],
+    ['Rating response',fmtPct(core.ratingResponseRate)],
+    ['Analytics kullanıcı',fmtCount(core.analyticsUsers)],
+    ['Task → Focus kullanıcı',fmtCount(core.taskFocusUsers)]
+  ];
+  box.innerHTML=cards.map(([label,value])=>`<div class="mini-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
+}
+function renderProductAnalytics(p={}){
+  renderAdminInsights(p.insights||[]);
+  renderRetention(p.retention||{});
+  renderFunnel(p.activation||{});
+  renderFeatureAdoption(p.featureAdoption||[]);
+  renderCohorts(p.cohorts||[]);
+  renderReliability(p.reliability||{});
+  renderReleases(p.releases||[]);
+  renderCoreLoop(p.coreLoop||{});
+  svgLine($('dailyActiveChart'),p.daily||[],'activeUsers',{format:v=>fmtCount(Math.round(v))});
+  svgLine($('newAccountsChart'),p.daily||[],'newAccounts',{format:v=>fmtCount(Math.round(v))});
+  const scope=$('telemetryScope');
+  if(scope){
+    const started=p.telemetryStartedAt?fmtDate(p.telemetryStartedAt):'v95 sonrası';
+    scope.textContent=`Telemetry başlangıcı: ${started} · Yalnızca giriş yapılmış ve katkıyı kapatmamış bulut hesapları · İçerik metinleri toplanmaz.`;
+  }
+}
+
 function deviceStatus(d){if(d.revoked)return['revoked','İptal'];if(d.expired)return['expired','Süresi doldu'];return['active','Aktif']}
 function renderUsers(users=[]){
   const box=$('adminUsers'); if(!box) return; if(!users.length){box.innerHTML='<div class="admin-empty">Henüz kullanıcı yok.</div>';return}
@@ -144,8 +223,8 @@ function renderUsers(users=[]){
 }
 async function load(){
   error();if(!secret()){error('Önce yönetici anahtarını gir.');connected(false);return}
-  try{const r=await api('admin-overview');connected(true);renderSummary(r.summary||{},r.charts||{});renderCharts(r.charts||{});renderUsers(r.users||[])}
-  catch(e){connected(false);error('v54 · '+(e?.message||String(e)))}
+  try{const r=await api('admin-overview');connected(true);renderSummary(r.summary||{},r.productAnalytics||{});renderCharts(r.charts||{});renderProductAnalytics(r.productAnalytics||{});renderUsers(r.users||[])}
+  catch(e){connected(false);error('v95 · '+(e?.message||String(e)))}
 }
 $('adminLoad').onclick=load;$('adminRefresh').onclick=load;
 $('adminCreate').onclick=async()=>{error();if(!secret()){error('Önce yönetici anahtarını gir.');return}try{const r=await api('create-user');credentials(r);await load()}catch(e){error(e.message)}};
