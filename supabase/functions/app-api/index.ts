@@ -1,3 +1,4 @@
+import { computeProductAnalytics, sanitizeTelemetryEvent } from './product-analytics.mjs';
 const SUPABASE_URL=Deno.env.get('SUPABASE_URL')||'';
 const LEGACY_SERVICE_KEY=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
 let MODERN_SERVICE_KEY='';
@@ -47,9 +48,28 @@ async function rest(path:string,init:RequestInit={}){
   return {res,body};
 }
 async function select(path:string){ const {res,body}=await rest(path); if(!res.ok) throw new Error(`DB read ${res.status}: ${JSON.stringify(body)}`); return body||[]; }
+async function selectPaged(path:string,pageSize=1000,maxRows=20000){
+  const out:any[]=[];
+  const separator=path.includes('?')?'&':'?';
+  for(let offset=0;offset<maxRows;offset+=pageSize){
+    const rows=await select(`${path}${separator}limit=${pageSize}&offset=${offset}`);
+    out.push(...rows);
+    if(rows.length<pageSize) break;
+  }
+  return out;
+}
 async function insert(table:string,row:unknown,returning=true){
   const {res,body}=await rest(table,{method:'POST',headers:{Prefer:returning?'return=representation':'return=minimal'},body:JSON.stringify(row)});
   if(!res.ok) throw Object.assign(new Error(`DB insert ${res.status}`),{status:res.status,body}); return body;
+}
+async function insertTelemetryRows(rows:any[]){
+  if(!rows.length) return;
+  const {res,body}=await rest('app_telemetry_events?on_conflict=event_id',{
+    method:'POST',
+    headers:{Prefer:'resolution=ignore-duplicates,return=minimal'},
+    body:JSON.stringify(rows)
+  });
+  if(!res.ok) throw Object.assign(new Error(`DB telemetry insert ${res.status}`),{status:res.status,body});
 }
 async function patch(path:string,row:unknown,returning=true){
   const {res,body}=await rest(path,{method:'PATCH',headers:{Prefer:returning?'return=representation':'return=minimal'},body:JSON.stringify(row)});
@@ -249,13 +269,20 @@ async function handle(req:Request,body:any){
 
   if(action==='admin-overview'){
     if(!adminOk(body.adminSecret)) return json({error:'Yönetici anahtarı geçersiz.'},401);
+    const telemetrySince=new Date(Date.now()-120*86400000).toISOString();
     const [accounts,sessions,states]=await Promise.all([
-      select('app_accounts?select=id,username,disabled,created_at,last_login_at&order=created_at.desc&limit=500'),
-      select('app_sessions?select=id,account_id,device_name,created_at,last_seen_at,expires_at,revoked&order=last_seen_at.desc&limit=5000'),
-      select('app_states?select=account_id,state,revision,updated_at&limit=500')
+      selectPaged('app_accounts?select=id,username,disabled,created_at,last_login_at&order=created_at.desc',1000,5000),
+      selectPaged('app_sessions?select=id,account_id,device_name,created_at,last_seen_at,expires_at,revoked&order=last_seen_at.desc',1000,10000),
+      selectPaged('app_states?select=account_id,state,revision,updated_at',1000,5000)
     ]);
+    let telemetryEvents:any[]=[];
+    try{
+      telemetryEvents=await selectPaged(`app_telemetry_events?select=account_id,event_name,event_at,app_version,properties&event_at=gte.${encodeURIComponent(telemetrySince)}&order=event_at.asc`,1000,30000);
+    }catch(error){
+      console.warn('Telemetry tablosu okunamadı; ürün analitiği boş başlayacak.',error);
+    }
 
-    const now=Date.now(), dayMs=86400000;
+    const now=Date.now();
     const sessionsByAccount=new Map<string,any[]>();
     for(const s of sessions){
       if(!sessionsByAccount.has(s.account_id)) sessionsByAccount.set(s.account_id,[]);
@@ -264,13 +291,6 @@ async function handle(req:Request,body:any){
     const statesByAccount=new Map<string,any>();
     for(const s of states) statesByAccount.set(s.account_id,s);
 
-    const activeAccountWithin=(ms:number)=>{
-      const set=new Set<string>();
-      for(const s of sessions){
-        if(!s.revoked && new Date(s.last_seen_at).getTime()>=now-ms) set.add(s.account_id);
-      }
-      return set.size;
-    };
 
     const dailyWork=new Map<string,number>();
     const dailySessions=new Map<string,number>();
@@ -329,118 +349,31 @@ async function handle(req:Request,body:any){
       {label:'Aktif',value:accounts.filter((a:any)=>!a.disabled).length},
       {label:'Devre dışı',value:accounts.filter((a:any)=>!!a.disabled).length}
     ];
-    const activation=[
-      {label:'Giriş yaptı',value:accounts.filter((a:any)=>!!a.last_login_at).length},
-      {label:'Hiç giriş yapmadı',value:accounts.filter((a:any)=>!a.last_login_at).length}
-    ];
-    const recencyCounts={recent7:0,recent30:0,older:0,never:0};
-    for(const a of accounts){
-      if(!a.last_login_at){recencyCounts.never++;continue}
-      const age=now-new Date(a.last_login_at).getTime();
-      if(age<=7*dayMs) recencyCounts.recent7++;
-      else if(age<=30*dayMs) recencyCounts.recent30++;
-      else recencyCounts.older++;
-    }
-    const loginRecency=[
-      {label:'Son 7 gün',value:recencyCounts.recent7},
-      {label:'8–30 gün',value:recencyCounts.recent30},
-      {label:'30+ gün',value:recencyCounts.older},
-      {label:'Hiç giriş yok',value:recencyCounts.never}
-    ];
-
-    let activeSessions=0,revokedSessions=0,expiredSessions=0;
-    for(const s of sessions){
-      const expired=new Date(s.expires_at).getTime()<=now;
-      if(s.revoked) revokedSessions++;
-      else if(expired) expiredSessions++;
-      else activeSessions++;
-    }
-    const sessionStatus=[
-      {label:'Aktif',value:activeSessions},
-      {label:'İptal edildi',value:revokedSessions},
-      {label:'Süresi doldu',value:expiredSessions}
-    ];
-
-    const deviceBuckets={zero:0,one:0,two:0,threePlus:0};
-    for(const a of accounts){
-      const names=new Set((sessionsByAccount.get(a.id)||[]).map((s:any)=>String(s.device_name||'Cihaz')));
-      const n=names.size;
-      if(n===0)deviceBuckets.zero++;
-      else if(n===1)deviceBuckets.one++;
-      else if(n===2)deviceBuckets.two++;
-      else deviceBuckets.threePlus++;
-    }
-    const deviceCountDistribution=[
-      {label:'0 cihaz',value:deviceBuckets.zero},
-      {label:'1 cihaz',value:deviceBuckets.one},
-      {label:'2 cihaz',value:deviceBuckets.two},
-      {label:'3+ cihaz',value:deviceBuckets.threePlus}
-    ];
-
-    const syncBuckets={recent24:0,recent7:0,recent30:0,older:0,never:0};
-    for(const a of accounts){
-      const st=statesByAccount.get(a.id);
-      if(!st?.updated_at){syncBuckets.never++;continue}
-      const age=now-new Date(st.updated_at).getTime();
-      if(age<=dayMs)syncBuckets.recent24++;
-      else if(age<=7*dayMs)syncBuckets.recent7++;
-      else if(age<=30*dayMs)syncBuckets.recent30++;
-      else syncBuckets.older++;
-    }
-    const syncRecency=[
-      {label:'Son 24 saat',value:syncBuckets.recent24},
-      {label:'2–7 gün',value:syncBuckets.recent7},
-      {label:'8–30 gün',value:syncBuckets.recent30},
-      {label:'30+ gün',value:syncBuckets.older},
-      {label:'Hiç sync yok',value:syncBuckets.never}
-    ];
-
     const weekdayNames=['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
     const weekday=weekdayNames.map((label,i)=>({label,workSeconds:Math.round(weekdayWork[i])}));
     const hourly=hourlyWork.map((seconds,hour)=>({label:String(hour).padStart(2,'0')+':00',workSeconds:Math.round(seconds)}));
 
-    const growthKeys=lastDateKeys(30);
-    const accountsBefore=growthKeys.length
-      ? accounts.filter((a:any)=>new Date(a.created_at).getTime()<new Date(`${growthKeys[0]}T00:00:00`).getTime()).length
-      : 0;
-    let cumulative=accountsBefore;
-    const accountGrowth=growthKeys.map(key=>{
-      const created=accounts.filter((a:any)=>localDateKey(new Date(a.created_at))===key).length;
-      cumulative+=created;
-      return {date:key,created,total:cumulative};
-    });
-
-    const enabled=accounts.filter((a:any)=>!a.disabled).length;
-    const active7d=activeAccountWithin(7*dayMs);
-    const activeRatio=enabled>0?Math.round((active7d/enabled)*1000)/10:0;
     const avgSessionSeconds=totalWorkSessions>0?Math.round(totalWorkSeconds/totalWorkSessions):0;
+
+    const productAnalytics=computeProductAnalytics({
+      accounts,
+      events:telemetryEvents,
+      now:Date.now()
+    });
 
     return json({
       summary:{
         totalAccounts:accounts.length,
-        enabledAccounts:enabled,
-        disabledAccounts:accounts.length-enabled,
-        active24h:activeAccountWithin(dayMs),
-        active7d,
-        activeRatio,
         totalWorkSeconds:Math.round(totalWorkSeconds),
-        totalWorkSessions:Math.round(totalWorkSessions),
-        averageSessionSeconds:avgSessionSeconds,
-        activeSessions,
-        syncedAccounts:states.length
+        averageSessionSeconds:avgSessionSeconds
       },
       charts:{
         daily,
         weekday,
         hourly,
-        accountStatus,
-        activation,
-        loginRecency,
-        sessionStatus,
-        deviceCountDistribution,
-        syncRecency,
-        accountGrowth
+        accountStatus
       },
+      productAnalytics,
       users
     });
   }
@@ -464,6 +397,28 @@ async function handle(req:Request,body:any){
   const identity=await auth(body.sessionToken,body.deviceName);
   if(!identity) return json({error:'Oturum geçersiz veya süresi dolmuş.'},401);
   const accountId=identity.account.id, username=String(identity.account.username).toUpperCase();
+
+  if(action==='telemetry-batch'){
+    const rawEvents=Array.isArray(body.events)?body.events.slice(0,25):[];
+    const appVersion=/^v?\d{1,6}(?:[.-][a-z0-9_-]+)?$/i.test(String(body.appVersion||''))
+      ? String(body.appVersion).slice(0,20)
+      : 'unknown';
+    const device=safeDevice(body.deviceName||identity.session.device_name);
+    const rows=rawEvents
+      .map((event:any)=>sanitizeTelemetryEvent(event))
+      .filter(Boolean)
+      .map((event:any)=>({
+        event_id:event.eventId,
+        account_id:accountId,
+        event_name:event.eventName,
+        event_at:event.eventAt,
+        app_version:appVersion,
+        device_name:device,
+        properties:event.properties
+      }));
+    await insertTelemetryRows(rows);
+    return json({accepted:rows.length});
+  }
 
   if(action==='me') return json({accountId,username});
   if(action==='logout'){ await patch(`app_sessions?id=eq.${identity.session.id}`,{revoked:true},false); return json({ok:true}); }
