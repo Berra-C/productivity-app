@@ -5,6 +5,9 @@
     const getState=options.getState;
     const normalizeGroupName=options.normalizeGroupName || (value=>String(value||'').trim().toLocaleLowerCase('tr-TR'));
     const now=typeof options.now==='function' ? options.now : ()=>Date.now();
+    const subjectPalette=Array.isArray(options.subjectPalette) && options.subjectPalette.length
+      ? options.subjectPalette.filter(color=>/^#[0-9a-f]{6}$/i.test(String(color||'')))
+      : ['#74d99f','#ffb703','#ff9f5a','#ef5354','#8ec5ff','#c792ea','#f2a4bd','#6fcf97'];
     const idFactory=typeof options.idFactory==='function'
       ? options.idFactory
       : ()=> 't'+Date.now()+Math.random().toString(36).slice(2,6);
@@ -15,6 +18,32 @@
       const value=getState();
       if(!value || typeof value!=='object') throw new Error('SessionService state gerekli');
       return value;
+    }
+
+    function colorKey(value,subject){
+      const wanted=normalizeGroupName(subject);
+      return Object.keys(value.subjectColors||{}).find(key=>normalizeGroupName(key)===wanted) || null;
+    }
+
+    function ensureSubjectColor(subject){
+      const value=state();
+      const clean=String(subject||'').trim().slice(0,30);
+      if(!clean) return null;
+      if(!value.subjectColors || typeof value.subjectColors!=='object' || Array.isArray(value.subjectColors)) value.subjectColors={};
+      const existingKey=colorKey(value,clean);
+      if(existingKey){
+        if(existingKey!==clean){
+          value.subjectColors[clean]=value.subjectColors[existingKey];
+          delete value.subjectColors[existingKey];
+        }
+        return value.subjectColors[clean];
+      }
+      const used=new Set(Object.values(value.subjectColors).map(color=>String(color).toLowerCase()));
+      const selected=subjectPalette.find(color=>!used.has(String(color).toLowerCase()))
+        || subjectPalette[Object.keys(value.subjectColors).length%subjectPalette.length]
+        || '#74d99f';
+      value.subjectColors[clean]=selected;
+      return selected;
     }
 
     function renameGroupEverywhere(oldValue,newValue){
@@ -58,6 +87,17 @@
         });
       }
 
+      if(value.subjectColors && typeof value.subjectColors==='object'){
+        const oldColorKey=colorKey(value,oldValue);
+        if(oldColorKey){
+          const color=value.subjectColors[oldColorKey];
+          delete value.subjectColors[oldColorKey];
+          value.subjectColors[cleanNew]=color;
+        }else{
+          ensureSubjectColor(cleanNew);
+        }
+      }
+
       return changed;
     }
 
@@ -70,6 +110,7 @@
       value.subjects=value.subjects.filter(item=>String(item||'').toLowerCase()!==lower);
       value.subjects.unshift(clean);
       value.subjects=value.subjects.slice(0,Math.max(1,Number(limit)||12));
+      ensureSubjectColor(clean);
       return true;
     }
 
