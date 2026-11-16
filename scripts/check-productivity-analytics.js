@@ -3,9 +3,11 @@ const path=require('path');
 global.window=global;
 require(path.resolve(__dirname,'../assets/js/modules/analytics/productivity-analytics.js'));
 require(path.resolve(__dirname,'../assets/js/modules/analytics/insight-engine.js'));
+require(path.resolve(__dirname,'../assets/js/modules/analytics/stats-view.js'));
 
 const Analytics=global.ProductivityLearningAnalytics;
 const Insights=global.ProductivityInsightEngine;
+const StatsView=global.ProductivityStatsView;
 
 function assert(condition,message){
   if(!condition) throw new Error(message);
@@ -104,6 +106,18 @@ const sessionIntervals=session=>session.workIntervals||[];
   assert(Math.abs(hour.distractionsPerHour-2)<0.001,'partial tracking rate');
 }
 
+// Personal learning readiness hides premature interpretations.
+{
+  const summary={sessions:3,focusSeconds:95*60,activeDays:2,ratedSessions:2,targetSessions:1,distractionTrackedSeconds:30*60};
+  assert(Analytics.learningReadiness(summary).ready===true,'overall learning readiness threshold');
+  const availability=Analytics.hourlyMetricAvailability(summary);
+  assert(availability.focus===true,'focus graph becomes available');
+  assert(availability.rating===false,'rating graph waits for three ratings');
+  assert(availability.target===false,'target graph waits for three target sessions');
+  assert(availability.distraction===false,'distraction graph waits for tracked focus');
+  assert(Analytics.learningReadiness({sessions:2,focusSeconds:4*3600,activeDays:2}).ready===false,'session threshold blocks premature insights');
+}
+
 // Hour confidence thresholds.
 {
   assert(Analytics.hourConfidence({focusSeconds:20*60,sessionCount:1,uniqueDays:1}).level===0,'hour level 0');
@@ -161,6 +175,26 @@ const sessionIntervals=session=>session.workIntervals||[];
   });
   assert(insight?.type==='best-hour','best-hour insight generated');
   assert(insight.confidence.level===3,'best-hour confidence');
+}
+
+// Analytics presentation uses a real 24-hour chart and subject-specific colors.
+{
+  const hours=Array.from({length:24},(_,hour)=>({
+    hour,focusSeconds:hour===18?3600:hour===19?1800:0,
+    avgProductivityRating:null,distractionsPerHour:null,avgTargetCompletion:null
+  }));
+  const chart=StatsView.buildHourlyChart(hours,{metric:'focus',formatDurationLabel:seconds=>Math.round(seconds/60)+' dk'});
+  assert(chart.includes('hour-chart-bar'),'hourly focus view must render chart bars');
+  assert(!chart.includes('hour-heatmap-cell'),'hourly view must not render heatmap cells');
+  const subject=StatsView.buildSubjectBreakdown([
+    ['Matematik',{seconds:3600,sessions:2,distractions:1,targetSessions:1,reachedTargets:1}],
+    ['Fizik',{seconds:1800,sessions:1,distractions:0,targetSessions:1,reachedTargets:0}]
+  ],{
+    escapeHtml:String,
+    formatDurationLabel:seconds=>seconds+'s',
+    subjectColor:name=>name==='Matematik'?'#112233':'#445566'
+  });
+  assert(subject.includes('background:#112233') && subject.includes('background:#445566'),'subject rows must use distinct configured colors');
 }
 
 // No evidence -> transparent learning state, not a fabricated recommendation.
