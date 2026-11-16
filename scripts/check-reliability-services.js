@@ -25,7 +25,7 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
 
 (async()=>{
   const migration=global.ProductivityStateMigration.create({
-    schemaVersion:48,
+    schemaVersion:49,
     closedIntervalSeconds,
     logger:{error:()=>{}}
   });
@@ -44,12 +44,13 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
     }]},
     tasks:[{id:'t1',text:'Monthly',dueDate:'2026-01-31',repeat:'monthly'}],
     events:[{id:'e1',title:'Monthly event',date:'2026-01-31',repeat:'monthly'}],
+    subjects:['Matematik','Fizik'],
     collection:[]
   };
 
   assert(migration.validate(legacy),'legacy state should validate');
   const migrated=migration.migrate(JSON.parse(JSON.stringify(legacy)));
-  assert(migrated.schemaVersion===48,'schema version');
+  assert(migrated.schemaVersion===49,'schema version');
   assert(migrated.tasks[0].repeatAnchorDay===31,'task monthly anchor');
   assert(migrated.events[0].repeatAnchorDay===31,'event monthly anchor');
   assert(Array.isArray(migrated.sessionLog['2026-01-01'][0].workIntervals),'work interval migration');
@@ -60,14 +61,17 @@ function closedIntervalSeconds(session,{fallbackToDuration=false}={}){
   assert(migrated.sessionLog['2026-01-01'][0].productivityRating===null,'legacy rating remains unknown');
   assert(migrated.sessionLog['2026-01-01'][0].distractionTrackingVersion===0,'legacy timed distraction tracking is not invented');
   assert(Array.isArray(migrated.sessionLog['2026-01-01'][0].distractionEvents),'legacy distraction event array initialized');
+  assert(migrated.subjectColors && typeof migrated.subjectColors==='object','subject color map initialized');
+  assert(/^#[0-9a-f]{6}$/i.test(migrated.subjectColors.Matematik),'legacy subject receives a valid automatic color');
+  assert(migrated.subjectColors.Matematik!==migrated.subjectColors.Fizik,'legacy subjects receive different automatic colors');
   assert(!migration.validate({treeProgress:0,days:{}}),'invalid state rejected');
 
   const store=global.ProductivityRecoveryStore.create({
     indexedDBProvider:()=>null,
-    schemaVersion:48,
+    schemaVersion:49,
     logger:{warn:()=>{}}
   });
-  assert(store.parse({payload:JSON.stringify(migrated)},value=>migration.validate(value))?.schemaVersion===48,'valid recovery parse');
+  assert(store.parse({payload:JSON.stringify(migrated)},value=>migration.validate(value))?.schemaVersion===49,'valid recovery parse');
   assert(store.parse({payload:'{broken'},()=>true)===null,'invalid JSON rejected');
   assert(await store.readRaw()===null,'missing IDB read');
   assert(await store.clear()===false,'missing IDB clear');
