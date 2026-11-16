@@ -786,7 +786,7 @@
             ${[1,2,3,4,5].map(value=>`
               <button type="button" class="session-rating-option${Number(currentRating)===value?' selected':''}" data-rating="${value}" aria-label="${value} üzerinden 5">
                 <span class="session-rating-number">${value}</span>
-                <span class="session-rating-emoji">${['😞','😕','😐','🙂','🔥'][value-1]}</span>
+                <span class="session-rating-meter" aria-hidden="true"><i style="width:${value*20}%"></i></span>
               </button>`).join('')}
           </div>
           <div class="session-rating-labels"><span>Çok düşük</span><span>Çok yüksek</span></div>
