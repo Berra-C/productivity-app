@@ -75,6 +75,27 @@
       if(raw.soundCategories.alarm === undefined) raw.soundCategories.alarm = true;
     }
     if(!Array.isArray(raw.subjects)) raw.subjects = [];
+    const subjectPalette=['#74d99f','#ffb703','#ff9f5a','#ef5354','#8ec5ff','#c792ea','#f2a4bd','#6fcf97','#4dd0e1','#a5d66a','#ff7aa2','#9fa8da'];
+    const validSubjectColor=value=>/^#[0-9a-f]{6}$/i.test(String(value||''));
+    if(!raw.subjectColors || typeof raw.subjectColors!=='object' || Array.isArray(raw.subjectColors)) raw.subjectColors={};
+    const cleanSubjectColors={};
+    Object.entries(raw.subjectColors).forEach(([name,color])=>{
+      const cleanName=String(name||'').trim().slice(0,30);
+      if(cleanName && validSubjectColor(color)) cleanSubjectColors[cleanName]=String(color).toLowerCase();
+    });
+    const colorKeyFor=subject=>Object.keys(cleanSubjectColors).find(key=>key.toLocaleLowerCase('tr-TR')===String(subject||'').trim().toLocaleLowerCase('tr-TR'));
+    raw.subjects.forEach((subject,index)=>{
+      const clean=String(subject||'').trim().slice(0,30);
+      if(!clean) return;
+      const existingKey=colorKeyFor(clean);
+      if(existingKey && existingKey!==clean){
+        cleanSubjectColors[clean]=cleanSubjectColors[existingKey];
+        delete cleanSubjectColors[existingKey];
+      }else if(!existingKey){
+        cleanSubjectColors[clean]=subjectPalette[index%subjectPalette.length];
+      }
+    });
+    raw.subjectColors=cleanSubjectColors;
     if(!raw.notificationCategories || typeof raw.notificationCategories!=='object'){
       raw.notificationCategories = {sessionTarget:true, breakReminder:true, dailyGoal:true};
     }else{
