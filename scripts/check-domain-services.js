@@ -36,12 +36,14 @@ function assert(value,message){
 {
   const state={
     subjects:['Math','math','Physics'],
+    subjectColors:{Math:'#112233',Physics:'#445566'},
     totalTodosCompleted:0,
     sessionLog:{day:[{id:'s1',name:'Math',subject:'Math',todos:[]}]}
   };
   let timestamp=100;
   const service=global.ProductivitySessionService.create({
     getState:()=>state,
+    subjectPalette:['#112233','#445566','#778899'],
     now:()=>timestamp++
   });
 
@@ -49,6 +51,9 @@ function assert(value,message){
   assert(state.sessionLog.day[0].name==='Matematik','session name rename failed');
   assert(state.sessionLog.day[0].subject==='Matematik','session subject rename failed');
   assert(state.subjects.filter(item=>item==='Matematik').length===1,'subject rename must deduplicate suggestions');
+  assert(state.subjectColors.Matematik==='#112233','subject rename must preserve configured color');
+  service.rememberSubject('Kimya');
+  assert(state.subjectColors.Kimya==='#778899','new subjects must receive an unused automatic color');
 
   const todo=service.addTodo(state.sessionLog.day[0],'  Deneme çöz  ');
   const first=service.toggleTodo(state.sessionLog.day[0],todo.id);
