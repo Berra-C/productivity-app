@@ -3,7 +3,7 @@
 
   const cfg=window.CLOUD_CONFIG||{};
   const SyncControllerFactory=window.ProductivitySyncController;
-  const APP_VERSION='v95';
+  const APP_VERSION='v96';
   const TELEMETRY_OPT_OUT='test_product_analytics_optout';
   const LS={
     token:'test_cloud_session',
