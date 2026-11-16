@@ -620,6 +620,27 @@
       if(raw.soundCategories.alarm === undefined) raw.soundCategories.alarm = true;
     }
     if(!Array.isArray(raw.subjects)) raw.subjects = [];
+    const subjectPalette=['#74d99f','#ffb703','#ff9f5a','#ef5354','#8ec5ff','#c792ea','#f2a4bd','#6fcf97','#4dd0e1','#a5d66a','#ff7aa2','#9fa8da'];
+    const validSubjectColor=value=>/^#[0-9a-f]{6}$/i.test(String(value||''));
+    if(!raw.subjectColors || typeof raw.subjectColors!=='object' || Array.isArray(raw.subjectColors)) raw.subjectColors={};
+    const cleanSubjectColors={};
+    Object.entries(raw.subjectColors).forEach(([name,color])=>{
+      const cleanName=String(name||'').trim().slice(0,30);
+      if(cleanName && validSubjectColor(color)) cleanSubjectColors[cleanName]=String(color).toLowerCase();
+    });
+    const colorKeyFor=subject=>Object.keys(cleanSubjectColors).find(key=>key.toLocaleLowerCase('tr-TR')===String(subject||'').trim().toLocaleLowerCase('tr-TR'));
+    raw.subjects.forEach((subject,index)=>{
+      const clean=String(subject||'').trim().slice(0,30);
+      if(!clean) return;
+      const existingKey=colorKeyFor(clean);
+      if(existingKey && existingKey!==clean){
+        cleanSubjectColors[clean]=cleanSubjectColors[existingKey];
+        delete cleanSubjectColors[existingKey];
+      }else if(!existingKey){
+        cleanSubjectColors[clean]=subjectPalette[index%subjectPalette.length];
+      }
+    });
+    raw.subjectColors=cleanSubjectColors;
     if(!raw.notificationCategories || typeof raw.notificationCategories!=='object'){
       raw.notificationCategories = {sessionTarget:true, breakReminder:true, dailyGoal:true};
     }else{
@@ -2328,6 +2349,9 @@
     const getState=options.getState;
     const normalizeGroupName=options.normalizeGroupName || (value=>String(value||'').trim().toLocaleLowerCase('tr-TR'));
     const now=typeof options.now==='function' ? options.now : ()=>Date.now();
+    const subjectPalette=Array.isArray(options.subjectPalette) && options.subjectPalette.length
+      ? options.subjectPalette.filter(color=>/^#[0-9a-f]{6}$/i.test(String(color||'')))
+      : ['#74d99f','#ffb703','#ff9f5a','#ef5354','#8ec5ff','#c792ea','#f2a4bd','#6fcf97'];
     const idFactory=typeof options.idFactory==='function'
       ? options.idFactory
       : ()=> 't'+Date.now()+Math.random().toString(36).slice(2,6);
@@ -2338,6 +2362,32 @@
       const value=getState();
       if(!value || typeof value!=='object') throw new Error('SessionService state gerekli');
       return value;
+    }
+
+    function colorKey(value,subject){
+      const wanted=normalizeGroupName(subject);
+      return Object.keys(value.subjectColors||{}).find(key=>normalizeGroupName(key)===wanted) || null;
+    }
+
+    function ensureSubjectColor(subject){
+      const value=state();
+      const clean=String(subject||'').trim().slice(0,30);
+      if(!clean) return null;
+      if(!value.subjectColors || typeof value.subjectColors!=='object' || Array.isArray(value.subjectColors)) value.subjectColors={};
+      const existingKey=colorKey(value,clean);
+      if(existingKey){
+        if(existingKey!==clean){
+          value.subjectColors[clean]=value.subjectColors[existingKey];
+          delete value.subjectColors[existingKey];
+        }
+        return value.subjectColors[clean];
+      }
+      const used=new Set(Object.values(value.subjectColors).map(color=>String(color).toLowerCase()));
+      const selected=subjectPalette.find(color=>!used.has(String(color).toLowerCase()))
+        || subjectPalette[Object.keys(value.subjectColors).length%subjectPalette.length]
+        || '#74d99f';
+      value.subjectColors[clean]=selected;
+      return selected;
     }
 
     function renameGroupEverywhere(oldValue,newValue){
@@ -2381,6 +2431,17 @@
         });
       }
 
+      if(value.subjectColors && typeof value.subjectColors==='object'){
+        const oldColorKey=colorKey(value,oldValue);
+        if(oldColorKey){
+          const color=value.subjectColors[oldColorKey];
+          delete value.subjectColors[oldColorKey];
+          value.subjectColors[cleanNew]=color;
+        }else{
+          ensureSubjectColor(cleanNew);
+        }
+      }
+
       return changed;
     }
 
@@ -2393,6 +2454,7 @@
       value.subjects=value.subjects.filter(item=>String(item||'').toLowerCase()!==lower);
       value.subjects.unshift(clean);
       value.subjects=value.subjects.slice(0,Math.max(1,Number(limit)||12));
+      ensureSubjectColor(clean);
       return true;
     }
 
@@ -4417,9 +4479,10 @@
     let sessions=0;
     let timedDistractions=0;
     let distractionTrackedSeconds=0;
+    const activeDays=new Set();
 
     (Array.isArray(entries)?entries:[]).forEach(rawEntry=>{
-      const {session}=normalizedEntry(rawEntry);
+      const {key,session}=normalizedEntry(rawEntry);
       if(!session) return;
       const seconds=sessionDuration(session,options);
       if(seconds<=0) return;
@@ -4427,6 +4490,8 @@
       sessions+=1;
       focusSeconds+=seconds;
       distractions+=Math.max(0,finite(session.distractions,0));
+      const activeDay=key || dateKeyFor(session.startedAt,options);
+      if(activeDay) activeDays.add(activeDay);
 
       if(Number(session.distractionTrackingVersion)>=1){
         const trackingStart=finite(
@@ -4463,6 +4528,7 @@
     return {
       focusSeconds:Math.round(focusSeconds),
       sessions,
+      activeDays:activeDays.size,
       distractions,
       distractionsPerHour:focusSeconds>0
         ? distractions/(focusSeconds/3600)
@@ -4481,6 +4547,23 @@
       avgTargetCompletion:targetSessions
         ? targetCompletionTotal/targetSessions
         : null
+    };
+  }
+
+  function learningReadiness(summary={}){
+    const sessions=Math.max(0,finite(summary.sessions,0));
+    const focusSeconds=Math.max(0,finite(summary.focusSeconds,0));
+    const activeDays=Math.max(0,finite(summary.activeDays,0));
+    const ready=sessions>=3 && focusSeconds>=90*60 && activeDays>=2;
+    return {ready,sessions,focusSeconds,activeDays};
+  }
+
+  function hourlyMetricAvailability(summary={}){
+    return {
+      focus:finite(summary.focusSeconds,0)>=90*60,
+      rating:finite(summary.ratedSessions,0)>=3,
+      distraction:finite(summary.distractionTrackedSeconds,0)>=90*60,
+      target:finite(summary.targetSessions,0)>=3
     };
   }
 
@@ -4613,6 +4696,8 @@
     hourConfidence,
     hourlyProfile,
     periodSummary,
+    learningReadiness,
+    hourlyMetricAvailability,
     subjectProfiles,
     durationBuckets
   };
@@ -6472,7 +6557,8 @@
 
   function buildSubjectBreakdown(breakdown=[],{
     escapeHtml=value=>String(value),
-    formatDurationLabel=value=>String(value)
+    formatDurationLabel=value=>String(value),
+    subjectColor=()=> '#74d99f'
   }={}){
     if(!breakdown.length){
       return '<div class="todo-empty">Bu dönemde henüz çalışma kaydı yok.</div>';
@@ -6492,15 +6578,16 @@
         ? Math.round(stats.reachedTargets/stats.targetSessions*100)+'% hedef'
         : 'hedef verisi yok';
 
+      const color=subjectColor(subject);
       return '<div class="subject-row">'
-        +'<div class="subject-row-top"><span>'+escapeHtml(subject)
+        +'<div class="subject-row-top"><span class="subject-row-name"><i style="background:'+color+'"></i>'+escapeHtml(subject)
         +'</span><span>'+formatDurationLabel(stats.seconds)+'</span></div>'
-        +'<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+percent+'%"></div></div>'
+        +'<div class="subject-bar-bg"><div class="subject-bar-fill" style="width:'+percent+'%;background:'+color+'"></div></div>'
         +'<div class="subject-row-meta">'
         +'<span>'+stats.sessions+' oturum</span>'
         +'<span>ort. '+formatDurationLabel(average)+'</span>'
-        +'<span>😕 '+avgDistraction+'/oturum</span>'
-        +'<span>🎯 '+targetRate+'</span>'
+        +'<span>'+avgDistraction+' dikkat/oturum</span>'
+        +'<span>'+targetRate+'</span>'
         +'</div></div>';
     }).join('');
   }
@@ -6620,6 +6707,78 @@
           : '')
         +'</article>';
     }).join('');
+  }
+
+  function buildHourlyChart(hours=[],{
+    metric='focus',
+    formatDurationLabel=value=>String(value)
+  }={}){
+    const rows=Array.isArray(hours)?hours:[];
+    const width=720, height=240;
+    const left=42, right=12, top=14, bottom=34;
+    const plotW=width-left-right, plotH=height-top-bottom;
+    const step=plotW/24;
+
+    const valueFor=hour=>{
+      if(metric==='rating') return hour.avgProductivityRating===null?null:Number(hour.avgProductivityRating);
+      if(metric==='distraction') return hour.distractionsPerHour===null?null:Number(hour.distractionsPerHour);
+      if(metric==='target') return hour.avgTargetCompletion===null?null:Number(hour.avgTargetCompletion)*100;
+      return Number(hour.focusSeconds||0)/60;
+    };
+    const values=rows.map(valueFor).filter(value=>value!==null && Number.isFinite(value));
+    let max=metric==='rating'?5:metric==='target'?100:Math.max(...values,1);
+    if(metric==='focus') max=Math.max(15,Math.ceil(max/15)*15);
+    if(metric==='distraction') max=Math.max(1,Math.ceil(max*2)/2);
+    const min=metric==='rating'?1:0;
+    const range=Math.max(0.001,max-min);
+    const y=value=>top+plotH-(Math.max(min,Math.min(max,value))-min)/range*plotH;
+    const x=hour=>left+step*hour+step/2;
+    const fmt=value=>{
+      if(metric==='focus') return Math.round(value)+' dk';
+      if(metric==='rating') return value.toFixed(1)+'/5';
+      if(metric==='target') return Math.round(value)+'%';
+      return value.toFixed(1)+'/saat';
+    };
+
+    let svg='';
+    [0,.5,1].forEach(frac=>{
+      const yy=top+plotH*(1-frac);
+      const value=min+range*frac;
+      svg+='<line class="hour-chart-grid" x1="'+left+'" y1="'+yy+'" x2="'+(width-right)+'" y2="'+yy+'"></line>';
+      svg+='<text class="hour-chart-y-label" x="'+(left-7)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(value)+'</text>';
+    });
+    rows.forEach(hour=>{
+      if(hour.hour%2===0){
+        svg+='<text class="hour-chart-x-label" x="'+x(hour.hour)+'" y="'+(height-10)+'" text-anchor="middle">'+String(hour.hour).padStart(2,'0')+'</text>';
+      }
+    });
+
+    if(metric==='focus'){
+      rows.forEach(hour=>{
+        const value=valueFor(hour);
+        if(!Number.isFinite(value) || value<=0) return;
+        const xx=left+step*hour.hour+step*.18;
+        const yy=y(value);
+        const barH=top+plotH-yy;
+        svg+='<rect class="hour-chart-bar" x="'+xx+'" y="'+yy+'" width="'+(step*.64)+'" height="'+barH+'" rx="3"><title>'
+          +String(hour.hour).padStart(2,'0')+':00–'+String((hour.hour+1)%24).padStart(2,'0')+':00 · '+formatDurationLabel(hour.focusSeconds)
+          +'</title></rect>';
+      });
+    }else{
+      let previous=null;
+      rows.forEach(hour=>{
+        const value=valueFor(hour);
+        if(value===null || !Number.isFinite(value)){ previous=null; return; }
+        const point={x:x(hour.hour),y:y(value),hour:hour.hour,value};
+        if(previous && hour.hour===previous.hour+1){
+          svg+='<line class="hour-chart-line" x1="'+previous.x+'" y1="'+previous.y+'" x2="'+point.x+'" y2="'+point.y+'"></line>';
+        }
+        svg+='<circle class="hour-chart-point" cx="'+point.x+'" cy="'+point.y+'" r="4"><title>'
+          +String(hour.hour).padStart(2,'0')+':00 · '+fmt(value)+'</title></circle>';
+        previous=point;
+      });
+    }
+    return svg;
   }
 
   function buildHourlyHeatmap(hours=[],{
@@ -6742,6 +6901,7 @@
     buildSubjectBreakdown,
     buildTaskFocusBreakdown,
     buildInsights,
+    buildHourlyChart,
     buildHourlyHeatmap,
     buildSubjectProfiles,
     buildDurationProfile,
@@ -7167,9 +7327,9 @@
       const productivityRatingHtml=canRate
         ? '<button class="session-productivity-rating'+(hasProductivityRating?' rated':'')+'" data-action="rate-session" data-id="'
           +session.id+'" data-tooltip="Bu oturuma verdiğin kişisel verim puanını '+(hasProductivityRating?'değiştir':'ekle')+'">'
-          +(hasProductivityRating?'⭐ '+productivityRating+'/5':'☆ Puanla')+'</button>'
+          +(hasProductivityRating?'Verim '+productivityRating+'/5':'Verimi puanla')+'</button>'
         : (hasProductivityRating
-          ? '<span class="session-productivity-rating rated">⭐ '+productivityRating+'/5</span>'
+          ? '<span class="session-productivity-rating rated">Verim '+productivityRating+'/5</span>'
           : '');
 
       const linkedTaskHtml=linkedTask
@@ -8171,7 +8331,7 @@
             ${[1,2,3,4,5].map(value=>`
               <button type="button" class="session-rating-option${Number(currentRating)===value?' selected':''}" data-rating="${value}" aria-label="${value} üzerinden 5">
                 <span class="session-rating-number">${value}</span>
-                <span class="session-rating-emoji">${['😞','😕','😐','🙂','🔥'][value-1]}</span>
+                <span class="session-rating-meter" aria-hidden="true"><i style="width:${value*20}%"></i></span>
               </button>`).join('')}
           </div>
           <div class="session-rating-labels"><span>Çok düşük</span><span>Çok yüksek</span></div>
@@ -8284,7 +8444,7 @@
   const STORAGE_KEY = 'direncAgaci_v2';
   const BACKUP_KEY = STORAGE_KEY + '_backup';
   const OLD_KEY = 'direncAgaci_v1';
-  const SCHEMA_VERSION = 48;
+  const SCHEMA_VERSION = 49;
 
   // Runtime modules must be initialized before repositories/state consume them.
   // Startup-order checks enforce this invariant.
@@ -8441,6 +8601,8 @@
     now:()=>Date.now(),
     logger:console
   });
+
+  const SUBJECT_PALETTE = ['#74d99f','#ffb703','#ff9f5a','#ef5354','#8ec5ff','#c792ea','#f2a4bd','#6fcf97','#4dd0e1','#a5d66a','#ff7aa2','#9fa8da'];
 
   const RANKS = [
     "Acemi Nöbetçi","Dikkatli Çırak","Kararlı Gözcü","Odak Bekçisi",
@@ -8898,6 +9060,7 @@
       badgeUnlockLog: [],
       dailyGoalMinutes: 60,
       subjects: [],
+      subjectColors: {},
       bestGoalStreak: 0,
       streakFreezes: 0,
       streakFreezeAwardedAt: 0,
@@ -9266,6 +9429,7 @@
   const SessionDomainService=SessionDomainServiceFactory.create({
     getState:()=>data,
     normalizeGroupName,
+    subjectPalette:SUBJECT_PALETTE,
     now:()=>Date.now()
   });
 
@@ -10253,6 +10417,9 @@
     statsWeekNext: document.getElementById('statsWeekNext'),
     statsWeekLabel: document.getElementById('statsWeekLabel'),
     periodWork: document.getElementById('periodWork'),
+    periodRatingCard: document.getElementById('periodRatingCard'),
+    periodTargetCard: document.getElementById('periodTargetCard'),
+    periodDistractCard: document.getElementById('periodDistractCard'),
     periodSessions: document.getElementById('periodSessions'),
     periodAvgSession: document.getElementById('periodAvgSession'),
     periodDistract: document.getElementById('periodDistract'),
@@ -10261,12 +10428,13 @@
     periodTarget: document.getElementById('periodTarget'),
     periodTargetCoverage: document.getElementById('periodTargetCoverage'),
     periodDistractRate: document.getElementById('periodDistractRate'),
+    learningStateCard: document.getElementById('learningStateCard'),
+    analyticsInsightsCard: document.getElementById('analyticsInsightsCard'),
     analyticsInsightsBody: document.getElementById('analyticsInsightsBody'),
     hourMetricPills: document.getElementById('hourMetricPills'),
-    hourlyHeatmapBody: document.getElementById('hourlyHeatmapBody'),
-    hourlyHeatmapNote: document.getElementById('hourlyHeatmapNote'),
-    subjectProfileBody: document.getElementById('subjectProfileBody'),
-    durationProfileBody: document.getElementById('durationProfileBody'),
+    hourlyAnalyticsCard: document.getElementById('hourlyAnalyticsCard'),
+    hourlyChartSvg: document.getElementById('hourlyChartSvg'),
+    hourlyChartNote: document.getElementById('hourlyChartNote'),
     chartTitle: document.getElementById('chartTitle'),
     metricPills: document.querySelectorAll('.metric-pill'),
     typePills: document.querySelectorAll('.type-pill'),
@@ -12416,6 +12584,7 @@
     el.subjectManageList.innerHTML = subjects.length
       ? subjects.map((subject,index)=>
           '<div class="subject-manage-row">'
+          + '<input type="color" class="subject-color-input" data-subject-color-index="'+index+'" value="'+subjectColor(subject)+'" aria-label="'+escapeHtml(subject)+' istatistik rengi">'
           + '<input type="text" maxlength="30" data-subject-index="'+index+'" value="'+escapeHtml(subject)+'" aria-label="Konu adı">'
           + '<button type="button" data-action="save-subject" data-index="'+index+'">Kaydet</button>'
           + '<button type="button" data-action="delete-subject" data-index="'+index+'">Sil</button>'
@@ -12456,9 +12625,14 @@
         showToast('Bu konu zaten önerilerde var.',true); return;
       }
       const oldValue=data.subjects[index];
+      const colorInput=el.subjectManageList.querySelector('input[data-subject-color-index="'+index+'"]');
+      const chosenColor=/^#[0-9a-f]{6}$/i.test(String(colorInput?.value||'')) ? colorInput.value.toLowerCase() : subjectColor(oldValue);
       const beforeState=JSON.parse(JSON.stringify(data.sessionLog || {}));
+      const beforeSubjectColors=JSON.parse(JSON.stringify(data.subjectColors || {}));
       renameSessionGroupEverywhere(oldValue,value);
       data.subjects[index]=value;
+      if(!data.subjectColors || typeof data.subjectColors!=='object') data.subjectColors={};
+      data.subjectColors[value]=chosenColor;
       saveData({force:true});
       renderSubjectManager();
       renderSubjectChips();
@@ -12467,6 +12641,7 @@
       renderCalendar();
       offerUndo('Konu adı ve geçmiş veriler güncellendi.',()=>{
         data.sessionLog=beforeState;
+        data.subjectColors=beforeSubjectColors;
         const currentIndex=data.subjects.findIndex(x=>normalizeGroupName(x)===normalizeGroupName(value));
         if(currentIndex>=0) data.subjects[currentIndex]=oldValue;
         saveData({force:true});
@@ -12679,7 +12854,7 @@
   let currentPeriod = 'day';
   let currentMetric = 'work';
   let currentChartType = 'bar';
-  let currentHourMetric = 'rating';
+  let currentHourMetric = 'focus';
   let statsWeekOffset = 0;
 
   el.periodBtns.forEach(btn=>{
@@ -12789,6 +12964,8 @@
       subjects,
       durationBuckets
     });
+    const readiness=LearningAnalytics.learningReadiness(summary);
+    const metricAvailability=LearningAnalytics.hourlyMetricAvailability(summary);
     return {
       keys,
       summary,
@@ -12796,19 +12973,33 @@
       hours,
       subjects,
       durationBuckets,
-      insights
+      insights,
+      readiness,
+      metricAvailability
     };
   }
 
   function renderLearningAnalytics(snapshot=null){
     const model=snapshot || learningAnalyticsSnapshot();
+    const ready=Boolean(model.readiness?.ready);
+    const meaningfulInsights=(model.insights||[]).filter(insight=>insight?.type!=='learning');
+
+    if(el.learningStateCard) el.learningStateCard.hidden=ready;
+    if(el.analyticsInsightsCard) el.analyticsInsightsCard.hidden=!ready || meaningfulInsights.length===0;
+    if(el.hourlyAnalyticsCard) el.hourlyAnalyticsCard.hidden=!ready;
+
+    if(!ready){
+      if(el.analyticsInsightsBody) el.analyticsInsightsBody.innerHTML='';
+      if(el.hourlyChartSvg) el.hourlyChartSvg.innerHTML='';
+      return model;
+    }
 
     if(el.analyticsInsightsBody){
       el.analyticsInsightsBody.innerHTML=StatsView.buildInsights(
-        model.insights,
+        meaningfulInsights,
         {escapeHtml}
       );
-      (model.insights||[]).forEach(insight=>{
+      meaningfulInsights.forEach(insight=>{
         trackProductEventOnce(
           'insight:'+String(insight?.type||'learning'),
           'insight_seen',
@@ -12820,8 +13011,19 @@
       });
     }
 
-    if(el.hourlyHeatmapBody){
-      el.hourlyHeatmapBody.innerHTML=StatsView.buildHourlyHeatmap(
+    const availability=model.metricAvailability || {focus:true,rating:false,distraction:false,target:false};
+    if(!availability[currentHourMetric]) currentHourMetric='focus';
+    if(el.hourMetricPills){
+      el.hourMetricPills.querySelectorAll('[data-hour-metric]').forEach(button=>{
+        const metric=button.dataset.hourMetric;
+        const available=Boolean(availability[metric]);
+        button.hidden=!available;
+        button.classList.toggle('active',metric===currentHourMetric);
+      });
+    }
+
+    if(el.hourlyChartSvg){
+      el.hourlyChartSvg.innerHTML=StatsView.buildHourlyChart(
         model.hours,
         {
           metric:currentHourMetric,
@@ -12830,28 +13032,14 @@
       );
     }
 
-    if(el.hourlyHeatmapNote){
+    if(el.hourlyChartNote){
       const notes={
-        rating:'Verimlilik: 1–5 puan, o saatteki gerçek odak süresiyle ağırlıklandırılır.',
-        focus:'Odak: workIntervals saat sınırlarında bölünerek gerçek süre gösterilir.',
-        distraction:'Dikkat: yalnızca v94 ve sonrası zaman damgalı kayıtlar / izlenen odak saati.',
-        target:'Hedef: o saatte başlayan hedefli oturumların ortalama tamamlama oranı.'
+        rating:'Verimlilik puanın 1–5 aralığında ve o saatteki gerçek odak süresiyle ağırlıklandırılır.',
+        focus:'Çalışma aralıkların saat sınırlarında bölünür; grafik gerçek odak dakikalarını gösterir.',
+        distraction:'Dikkat oranı yalnızca zaman damgalı kayıtların bulunduğu izlenen odak süresi üzerinden hesaplanır.',
+        target:'Hedef grafiği hedefli oturumların gerçekleşme oranını gösterir.'
       };
-      el.hourlyHeatmapNote.textContent=notes[currentHourMetric] || '';
-    }
-
-    if(el.subjectProfileBody){
-      el.subjectProfileBody.innerHTML=StatsView.buildSubjectProfiles(
-        model.subjects,
-        {escapeHtml,formatDurationLabel}
-      );
-    }
-
-    if(el.durationProfileBody){
-      el.durationProfileBody.innerHTML=StatsView.buildDurationProfile(
-        model.durationBuckets,
-        {formatDurationLabel}
-      );
+      el.hourlyChartNote.textContent=notes[currentHourMetric] || '';
     }
 
     return model;
@@ -12892,7 +13080,7 @@
 
     el.subjectBreakdownBody.innerHTML=StatsView.buildSubjectBreakdown(
       breakdown,
-      {escapeHtml,formatDurationLabel}
+      {escapeHtml,formatDurationLabel,subjectColor}
     );
   }
 
@@ -12965,12 +13153,18 @@
   }
 
   // ---------- Derslere göre grafik verisi ----------
-  const SUBJECT_PALETTE = ['#74d99f','#ffb703','#ff9f5a','#ef5354','#8ec5ff','#c792ea','#f2a4bd','#6fcf97'];
   function subjectColor(subject){
     if(subject === 'Diğer') return '#7d8f88';
-    let hash = 0;
-    for(let i=0;i<subject.length;i++) hash = (hash*31 + subject.charCodeAt(i)) | 0;
-    return SUBJECT_PALETTE[Math.abs(hash) % SUBJECT_PALETTE.length];
+    const normalized=normalizeGroupName(subject);
+    const configuredKey=Object.keys(data.subjectColors||{}).find(key=>normalizeGroupName(key)===normalized);
+    const configured=configuredKey ? data.subjectColors[configuredKey] : null;
+    if(/^#[0-9a-f]{6}$/i.test(String(configured||''))) return String(configured).toLowerCase();
+    const index=(data.subjects||[]).findIndex(item=>normalizeGroupName(item)===normalized);
+    if(index>=0) return SUBJECT_PALETTE[index%SUBJECT_PALETTE.length];
+    let hash=0;
+    const clean=String(subject||'');
+    for(let i=0;i<clean.length;i++) hash=(hash*31+clean.charCodeAt(i))|0;
+    return SUBJECT_PALETTE[Math.abs(hash)%SUBJECT_PALETTE.length];
   }
 
   function buildSubjectChartData(period){
@@ -13086,7 +13280,8 @@
   el.hourMetricPills?.addEventListener('click',event=>{
     const button=event.target.closest('[data-hour-metric]');
     if(!button) return;
-    currentHourMetric=button.dataset.hourMetric || 'rating';
+    if(button.hidden) return;
+    currentHourMetric=button.dataset.hourMetric || 'focus';
     trackProductEventOnce(
       'heatmap:'+currentHourMetric,
       'heatmap_metric_changed',
@@ -13114,31 +13309,17 @@
       : 'henüz oturum yok';
     el.periodDistract.textContent = periodSummary.distractions;
 
-    if(el.periodRating){
-      el.periodRating.textContent=periodSummary.avgProductivityRating===null
-        ? '—'
-        : periodSummary.avgProductivityRating.toFixed(1)+'/5';
-    }
-    if(el.periodRatingCoverage){
-      el.periodRatingCoverage.textContent=periodSummary.ratedSessions
-        ? periodSummary.ratedSessions+' puanlanan oturum'
-        : 'puanlanan oturum yok';
-    }
-    if(el.periodTarget){
-      el.periodTarget.textContent=periodSummary.avgTargetCompletion===null
-        ? '—'
-        : Math.round(periodSummary.avgTargetCompletion*100)+'%';
-    }
-    if(el.periodTargetCoverage){
-      el.periodTargetCoverage.textContent=periodSummary.targetSessions
-        ? periodSummary.targetSessions+' hedefli oturum'
-        : 'hedefli oturum yok';
-    }
-    if(el.periodDistractRate){
-      el.periodDistractRate.textContent=periodSummary.distractionsPerHour===null
-        ? '—'
-        : periodSummary.distractionsPerHour.toFixed(1)+'/s';
-    }
+    const hasRating=periodSummary.avgProductivityRating!==null;
+    const hasTarget=periodSummary.avgTargetCompletion!==null;
+    const hasDistractionRate=periodSummary.distractionsPerHour!==null && periodSummary.focusSeconds>0;
+    if(el.periodRatingCard) el.periodRatingCard.hidden=!hasRating;
+    if(el.periodTargetCard) el.periodTargetCard.hidden=!hasTarget;
+    if(el.periodDistractCard) el.periodDistractCard.hidden=!hasDistractionRate;
+    if(hasRating && el.periodRating) el.periodRating.textContent=periodSummary.avgProductivityRating.toFixed(1)+'/5';
+    if(hasRating && el.periodRatingCoverage) el.periodRatingCoverage.textContent=periodSummary.ratedSessions+' puanlanan oturum';
+    if(hasTarget && el.periodTarget) el.periodTarget.textContent=Math.round(periodSummary.avgTargetCompletion*100)+'%';
+    if(hasTarget && el.periodTargetCoverage) el.periodTargetCoverage.textContent=periodSummary.targetSessions+' hedefli oturum';
+    if(hasDistractionRate && el.periodDistractRate) el.periodDistractRate.textContent=periodSummary.distractionsPerHour.toFixed(1)+'/s';
 
     renderChartDispatch();
     renderSessionAnalytics();
