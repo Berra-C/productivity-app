@@ -157,9 +157,9 @@
       const productivityRatingHtml=canRate
         ? '<button class="session-productivity-rating'+(hasProductivityRating?' rated':'')+'" data-action="rate-session" data-id="'
           +session.id+'" data-tooltip="Bu oturuma verdiğin kişisel verim puanını '+(hasProductivityRating?'değiştir':'ekle')+'">'
-          +(hasProductivityRating?'⭐ '+productivityRating+'/5':'☆ Puanla')+'</button>'
+          +(hasProductivityRating?'Verim '+productivityRating+'/5':'Verimi puanla')+'</button>'
         : (hasProductivityRating
-          ? '<span class="session-productivity-rating rated">⭐ '+productivityRating+'/5</span>'
+          ? '<span class="session-productivity-rating rated">Verim '+productivityRating+'/5</span>'
           : '');
 
       const linkedTaskHtml=linkedTask
