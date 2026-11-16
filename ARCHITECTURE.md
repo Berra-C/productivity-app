@@ -215,3 +215,18 @@ The first admin product-analytics layer focuses on:
 Retention and cohort views deliberately exclude pre-telemetry historical accounts because the product must not infer past activity that was never recorded. Admin analytics are aggregate product-development signals; account-management data remains a separate operational surface.
 
 The release gate includes an authenticated Chromium telemetry test that verifies approved event batching, free-form task-text exclusion, and immediate opt-out enforcement.
+
+
+## Analytics presentation simplification (v96)
+
+The learning analytics engine continues to derive hourly, subject and session-duration datasets, but the user-facing statistics screen deliberately exposes less raw detail.
+
+A new overall learning-readiness gate requires at least 3 sessions, 90 minutes of focus and 2 active days before personalized rhythm/insight surfaces appear. Before that threshold, the learning area shows one compact “Seni tanıyorum” state only. Unknown rating, target and distraction summary cards are hidden rather than rendered as placeholder values.
+
+The 24-hour rhythm is presented as a real chart rather than 24 individual heatmap cells. Focus is the default metric. Rating, distraction and target controls appear only when their own evidence thresholds are satisfied. This preserves the underlying hour-level dataset while reducing visual noise and preventing unsupported interpretations.
+
+Subject profiles and session-duration profile cards are no longer exposed directly to users. Their datasets remain available to the insight engine so strong patterns can still surface as concise recommendations.
+
+Schema version 49 adds `subjectColors`, a user-controlled subject-to-color map used only for statistics presentation. New/legacy subjects receive distinct automatic palette colors up to the subject suggestion limit, and users may override them in the subject manager. Renaming a subject preserves its configured statistics color. Subject charts and subject-breakdown rows consume the same color resolver.
+
+Session productivity rating UI remains 1–5 but uses numeric meter controls rather than emoji. Session cards also use plain “Verim x/5” text.
