@@ -811,6 +811,16 @@ function browserStubs(){
       `)
     );
 
+    const ratingModalShape=await cdp.evaluate(`
+      ({
+        emojiCount:document.querySelectorAll('.session-rating-backdrop .session-rating-emoji').length,
+        meterCount:document.querySelectorAll('.session-rating-backdrop .session-rating-meter').length
+      })
+    `);
+    if(ratingModalShape.emojiCount!==0 || ratingModalShape.meterCount!==5){
+      throw new Error('session productivity rating UI must use clean numeric meters without emoji');
+    }
+
     await cdp.evaluate(`
       document
         .querySelector('.session-rating-backdrop [data-rating="4"]')
@@ -901,30 +911,27 @@ function browserStubs(){
     );
 
     const learningAnalyticsState=await cdp.evaluate(`
-      (()=>{
-        const cells=[...document.querySelectorAll('#hourlyHeatmapBody .hour-heatmap-cell')];
-        return {
-          hourCells:cells.length,
-          hasRatedHour:cells.some(cell=>cell.textContent?.includes('4.0')),
-          hasLearningInsight:document
-            .getElementById('analyticsInsightsBody')
-            ?.textContent
-            ?.includes('öğreniyorum') || false,
-          durationCards:document
-            .querySelectorAll('#durationProfileBody .duration-profile-card')
-            .length
-        };
-      })()
+      (()=>({
+        learningCardVisible:!document.getElementById('learningStateCard')?.hidden,
+        hourlyCardHidden:Boolean(document.getElementById('hourlyAnalyticsCard')?.hidden),
+        insightsCardHidden:Boolean(document.getElementById('analyticsInsightsCard')?.hidden),
+        subjectProfilesRemoved:!document.getElementById('subjectProfileBody'),
+        durationProfilesRemoved:!document.getElementById('durationProfileBody'),
+        hasHourlyChart:Boolean(document.getElementById('hourlyChartSvg'))
+      }))()
     `);
 
     if(
-      learningAnalyticsState.hourCells!==24 ||
-      !learningAnalyticsState.hasRatedHour ||
-      !learningAnalyticsState.hasLearningInsight ||
-      learningAnalyticsState.durationCards!==5
+      !learningAnalyticsState.learningCardVisible ||
+      !learningAnalyticsState.hourlyCardHidden ||
+      !learningAnalyticsState.insightsCardHidden ||
+      !learningAnalyticsState.subjectProfilesRemoved ||
+      !learningAnalyticsState.durationProfilesRemoved ||
+      !learningAnalyticsState.hasHourlyChart
     ){
-      throw new Error('v94 learning analytics DOM is incomplete');
+      throw new Error('v96 sparse-data analytics UI is not simplified correctly');
     }
+
 
     // Browser runtime banner must remain hidden.
     const runtimeBannerVisible=await cdp.evaluate(`
